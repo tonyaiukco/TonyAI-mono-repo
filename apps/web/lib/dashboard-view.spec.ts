@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { axisThousands, buildKpiData, cellsByColumn, compactTonnes, completionRate, emptyInvoiceGridKey, matrixCellLinks, matrixColumns, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { reportingCompanies, axisThousands, buildKpiData, cellsByColumn, compactTonnes, completionRate, emptyInvoiceGridKey, matrixCellLinks, matrixColumns, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
 import { CATEGORIES } from '@/lib/types';
 import { initialEmissionsTab } from './emissions-view';
 import { copyFor } from '@/lib/i18n/testing';
@@ -306,3 +306,15 @@ describe("matrixToSubsidiaries — a row with nothing the reader may see is not 
   });
 });
 
+
+describe("reportingCompanies — the dashboard's reporting set (inc26-group-tree)", () => {
+  it('keeps the holding and the companies, never a sector group or an associate', () => {
+    const list = [
+      { id: 'h', nodeType: 'holding' as const, control: 'controlled' as const },
+      { id: 'g', nodeType: 'sector_group' as const, control: 'controlled' as const },
+      { id: 'a', nodeType: 'company' as const, control: 'controlled' as const },
+      { id: 'x', nodeType: 'company' as const, control: 'associate' as const },
+    ];
+    expect(reportingCompanies(list).map((s) => s.id)).toEqual(['h', 'a']);
+  });
+});

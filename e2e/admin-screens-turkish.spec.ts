@@ -46,7 +46,7 @@ test('Subsidiaries, Review and Audit speak Turkish', async ({ page }) => {
   await expect(page.getByRole('heading', { name: trSubsidiaries.list.title })).toBeVisible();
   await expect(page.getByText(trSubsidiaries.list.register, { exact: true })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: trSubsidiaries.list.columns.legalName })).toBeVisible();
-  const energy = page.locator('tr', { hasText: 'TonyAI Energy' });
+  const energy = page.getByTestId(`tree-row-${SUB.energy}`);
   await expect(energy.getByText(trSubsidiaryStatus.active, { exact: true })).toBeVisible();
 
   await energy.getByRole('button', { name: trSubsidiaries.list.manageLocations }).click();
@@ -103,7 +103,7 @@ test('a coded refusal is worded in Turkish, the English detail beneath it', asyn
   await setLanguage('tr');
   await login(page, ADMIN_EMAIL);
   await page.goto('/subsidiaries');
-  await page.locator('tr', { hasText: 'TonyAI Energy' }).getByRole('button', { name: trSubsidiaries.list.delete }).click();
+  await page.getByTestId(`tree-row-${SUB.energy}`).getByRole('button', { name: trSubsidiaries.list.delete }).click();
   await expect(page.getByRole('alertdialog')).toContainText(trSubsidiaries.list.deleteTitle);
   await page.getByRole('alertdialog').getByRole('button', { name: trSubsidiaries.list.deleteConfirm, exact: true }).click();
 
@@ -113,5 +113,5 @@ test('a coded refusal is worded in Turkish, the English detail beneath it', asyn
   await expect(toast).toBeVisible();
   await expect(toast).toContainText('approved, locked or voided activity record(s)');
   // Still there.
-  await expect(page.locator('tr', { hasText: 'TonyAI Energy' })).toBeVisible();
+  await expect(page.getByTestId(`tree-row-${SUB.energy}`)).toBeVisible();
 });

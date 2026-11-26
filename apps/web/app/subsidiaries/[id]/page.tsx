@@ -33,7 +33,8 @@ import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
 import { LocationsPanel } from "@/components/subsidiaries/locations-panel";
 import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
-import { can, geographyOptions, SUBSIDIARY_STATUSES } from "@/lib/types";
+import { can, SUBSIDIARY_STATUSES } from "@/lib/types";
+import { usePricedGeographies } from "@/lib/use-priced-geographies";
 import type {
   LocationDTO,
   SubsidiaryDTO,
@@ -43,6 +44,7 @@ import type {
 import { showErrorToast, useDescribeError } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
 import { blockerLines, deletableNote, subsidiaryError } from "@/lib/subsidiaries-view";
+import { GroupTreeCard } from "@/components/subsidiaries/group-tree-card";
 import { geographyLabel } from "@/lib/vocabulary";
 
 const statusClass: Record<string, string> = {
@@ -111,6 +113,8 @@ export default function SubsidiaryDetailPage() {
     null,
   );
   const [locksOpen, setLocksOpen] = useState(false);
+  // Only what the factor library prices, plus what the company holds (D10).
+  const pricedGeographies = usePricedGeographies();
 
   // The capability table (design Decision 3): the company itself and its
   // period locks are the masterkey's; facilities a super_admin's too, in the
@@ -325,19 +329,19 @@ export default function SubsidiaryDetailPage() {
                       locations panel below has its own `Geography *`, and a
                       label-scoped selector matching both would be ambiguous. */}
                   <Field label={t("fields.reportingGeography")}>
+                    {/* A sector group's is its parent's (D10): shown, never changed. */}
                     <Select
                       value={form.geographyCode}
-                      disabled={!canManage}
+                      disabled={!canManage || subsidiary.nodeType === "sector_group"}
                       onValueChange={(v) => setForm({ ...form, geographyCode: v })}
                     >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {geographyOptions(
-                          form.geographyCode,
-                          subsidiary.geographyCode,
-                        ).map((code) => (
+                        {/* An existing company: priced geographies, and
+                            the one it already holds (D10). */}
+                        {pricedGeographies.choices(subsidiary.geographyCode).map((code) => (
                           <SelectItem key={code} value={code}>
                             {geographyLabel(code, tGeography)}
                           </SelectItem>
@@ -390,6 +394,9 @@ export default function SubsidiaryDetailPage() {
                   </Field>
                 </CardContent>
               </Card>
+
+              {/* Its place in the group tree (inc26-group-tree). */}
+              <GroupTreeCard subsidiary={subsidiary} canManage={canManage} onSaved={() => load(true)} />
 
               <Card>
                 <CardHeader>
@@ -571,7 +578,7 @@ function DependentsCard({ summary }: { summary: SubsidiarySummaryDTO }) {
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            {deletableNote(summary.locations, { t, locale })}
+            {deletableNote({ t, locale })}
           </p>
         )}
       </CardContent>

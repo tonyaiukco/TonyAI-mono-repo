@@ -30,6 +30,7 @@ import {
   DUPLICATE_RECORD_MESSAGE,
   DuplicateActivityRecordError,
   PeriodLockedError,
+  EntityClosedToDataEntryError,
   SLOT_HOLDS_TYPED_MESSAGE,
   SLOT_HOLDS_UNTYPED_MESSAGE,
 } from '../activity-records/errors';
@@ -524,6 +525,63 @@ describe('BulkUploadService — the batch pre-flight', () => {
     await expect(
       service.import(standardUser(), csvFile(rows), NOTHING),
     ).rejects.toThrow(/limit is 1000/);
+    expect(records.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('BulkUploadService — a row for a node closed to data entry (inc26-group-tree)', () => {
+  const closed = () => new EntityClosedToDataEntryError();
+
+  it("refuses every row naming a closed company for that reason — a repeat of one is not duplicate_in_file (owner's fourth review, P2)", async () => {
+    for (const mode of [NOTHING, DRY]) {
+      const { prisma, records, service } = build();
+      // The caller's closed companies, read once per file.
+      prisma.subsidiary.findMany.mockImplementation((async (args?: { where?: { NOT?: unknown } }) =>
+        args?.where?.NOT !== undefined ? [{ id: SUB_1 }] : []) as never);
+      const report = await service.import(standardUser(), csvFile([row(), row()]), mode);
+      expect(report.errors).toEqual([
+        expect.objectContaining({ row: 2, column: null, code: 'entity_closed_to_data_entry', message: closed().message }),
+        expect.objectContaining({ row: 3, column: null, code: 'entity_closed_to_data_entry' }),
+      ]);
+      expect(records.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it('imports the other two rows and reports the associate row in the record API\'s words', async () => {
+    const { records, service } = build();
+    records.create
+      .mockResolvedValueOnce({ id: 'rec-1', calculation: SNAPSHOT, anomalyFlag: false, varianceReason: null })
+      .mockRejectedValueOnce(closed())
+      .mockResolvedValueOnce({ id: 'rec-3', calculation: SNAPSHOT, anomalyFlag: false, varianceReason: null });
+
+    const report = await service.import(
+      standardUser(),
+      csvFile([row(), row({ periodValue: 'February' }), row({ periodValue: 'March' })]),
+      NOTHING,
+    );
+
+    expect(report.accepted.map((a) => a.row)).toEqual([2, 4]);
+    expect(report.errors).toEqual([
+      expect.objectContaining({ row: 3, column: null, code: 'entity_closed_to_data_entry', message: closed().message }),
+    ]);
+  });
+
+  it('reports the same row the same way in the dry run, which writes nothing', async () => {
+    const { records, service } = build();
+    const preview = records.previewCreate.getMockImplementation();
+    records.previewCreate.mockImplementation(async (user: never, dto: { periodValue: string }) => {
+      if (dto.periodValue === 'February') throw closed();
+      return preview!(user, dto);
+    });
+
+    const report = await service.import(
+      standardUser(),
+      csvFile([row(), row({ periodValue: 'February' }), row({ periodValue: 'March' })]),
+      DRY,
+    );
+
+    expect(report.accepted.map((a) => a.row)).toEqual([2, 4]);
+    expect(report.errors).toEqual([expect.objectContaining({ row: 3, code: 'entity_closed_to_data_entry' })]);
     expect(records.create).not.toHaveBeenCalled();
   });
 });
@@ -1758,16 +1816,20 @@ describe('BulkUploadService — the template', () => {
     expect(text).not.toContain('Their Site');
   });
 
-  it('scopes both queries to the accessible set', async () => {
+  it('scopes both queries to the accessible set, and to the nodes that hold records (inc26-group-tree)', async () => {
     const { prisma, service } = build();
 
     await service.template(standardUser({ accessibleSubsidiaryIds: [SUB_1] }));
 
+    // Neither a sector group nor an associate is offered, nor an associate's facility.
+    const open = { nodeType: { not: 'sector_group' }, control: 'controlled' };
     expect(prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({
       id: { in: [SUB_1] },
+      ...open,
     });
     expect(prisma.location.findMany.mock.calls[0][0].where).toEqual({
       subsidiaryId: { in: [SUB_1] },
+      subsidiary: open,
     });
   });
 

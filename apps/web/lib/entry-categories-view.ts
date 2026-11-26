@@ -1,4 +1,4 @@
-import { can, CATEGORIES, type AuthUser, type Category } from '@/lib/types';
+import { can, CATEGORIES, holdsRecords, type AuthUser, type Category, type ControlKind, type NodeType } from '@/lib/types';
 import type { ViewCopy } from '@/lib/i18n/view-translator';
 
 /**
@@ -72,4 +72,14 @@ export function categoryGateMessage(
     return t('categoryGate.notGranted', { company: names.company, category: names.category(gate.category) });
   }
   return null;
+}
+
+/**
+ * The companies Data Entry offers (inc26-group-tree): the user's nodes that can
+ * hold records — never an associate (outside Scope 1 and 2) or a sector group
+ * (a label). The API refuses a record for either with
+ * `entity_closed_to_data_entry`; the picker does not offer them.
+ */
+export function entryCompanies<S extends { nodeType: NodeType; control: ControlKind }>(subsidiaries: readonly S[]): S[] {
+  return subsidiaries.filter((s) => holdsRecords(s));
 }

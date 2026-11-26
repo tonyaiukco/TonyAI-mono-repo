@@ -781,6 +781,10 @@ const LIST_ROUTES = [
   ]),
   '/bulk-upload/template',
   '/inventory-boundaries?reportingYear=2026',
+  // inc26-group-tree: the organisation, the exclusions note and the roll-up.
+  '/organisation',
+  '/subsidiaries/boundary-exclusions',
+  '/emissions/roll-up?reportingYear=2026',
 ];
 
 describe("every list and aggregate, unfiltered, as each of A's roles: no trace of B", () => {
@@ -1151,7 +1155,21 @@ describe("inside one organisation: a super_admin granted one of two companies re
     { name: 'GET /activity-records/:id/audit-trail', method: 'GET', path: (i: Ids) => `/activity-records/${i.recordId}/audit-trail`, own: { role: 'auditor' } } as Route,
   ];
 
-  it.each(READS.map((r) => [r.name, r] as const))('%s answers the other company as an unknown one', async (_name, route) => {
+  /** The year's open version a super_admin declares its companies in
+   *  (inc26-group-tree, D7): its header is the organisation's, readable to a
+   *  super_admin before it declares anything — never the other company's part. */
+  const OPEN_VERSION_READ = 'GET /inventory-boundaries/:id';
+
+  it("reads the year's open version — the header and its own part, nothing of the other company (D7)", async () => {
+    const res = await call('superAdmin', 'GET', `/inventory-boundaries/${other.boundaryId}`);
+    expect(res.status, res.text.slice(0, 200)).toBe(200);
+    expect(JSON.parse(res.text)).toMatchObject({ view: 'granted_subsidiaries', boundary: { subsidiaryIds: [] }, boundaryGaps: [] });
+    for (const marker of markersOther.filter((m) => m !== other.boundaryId)) {
+      expect(`${res.headers} ${res.text}`, `open version shows ${marker}`).not.toContain(marker);
+    }
+  });
+
+  it.each(READS.filter((r) => r.name !== OPEN_VERSION_READ).map((r) => [r.name, r] as const))('%s answers the other company as an unknown one', async (_name, route) => {
     const missingIds: Ids = Object.fromEntries(Object.keys(other).map((k) => [k, randomUUID()])) as unknown as Ids;
     const foreign = await call('superAdmin', route.method, route.path(other), route.body?.(other));
     const missing = await call('superAdmin', route.method, route.path(missingIds), route.body?.(missingIds));
@@ -1167,7 +1185,9 @@ describe("inside one organisation: a super_admin granted one of two companies re
   it.each(LIST_ROUTES)('GET %s, unfiltered, shows nothing of the other company', async (path) => {
     const res = await call('superAdmin', 'GET', path);
     expect(res.status, `GET ${path}: ${res.text.slice(0, 200)}`).toBeLessThan(500);
-    for (const marker of markersOther) expect(`${res.headers} ${res.text}`, `GET ${path} shows ${marker}`).not.toContain(marker);
+    // The year's open version is listed by its header alone (D7, above).
+    const markers = path.startsWith('/inventory-boundaries') ? markersOther.filter((m) => m !== other.boundaryId) : markersOther;
+    for (const marker of markers) expect(`${res.headers} ${res.text}`, `GET ${path} shows ${marker}`).not.toContain(marker);
   });
 
   it("the totals and the exports count the granted company alone; the masterkey's count the other (control)", async () => {

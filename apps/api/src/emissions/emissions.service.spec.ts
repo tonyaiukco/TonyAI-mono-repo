@@ -15,7 +15,7 @@ import {
 import { LIMIT_DEFAULTS } from '../common/runtime-config';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
-import { everyCategoryOn } from '../../test/helpers';
+import { everyCategoryOn, makeMasterkey } from '../../test/helpers';
 
 // --- Local, DB-free mocks --------------------------------------------------
 
@@ -2225,5 +2225,20 @@ describe('EmissionsService — the record scope (a standard user\'s categories)'
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     expect(where.subsidiaryId).toBe('sub-1');
     expect(where.AND).toEqual([NARROW_SCOPE]);
+  });
+});
+
+describe('the reporting set (inc26-group-tree, 5.4)', () => {
+  it('lists only nodes that hold records in the matrix: no row, no missing cell, for an associate or a sector group', async () => {
+    const prisma = createPrismaMock();
+    const service = new EmissionsService(prisma as unknown as PrismaService);
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.subsidiary.findMany.mockResolvedValue([]);
+    await service.trackingMatrix(makeMasterkey({ accessibleSubsidiaryIds: ['sub-1', 'sub-x'] }), { year: 2026 });
+    expect(prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({
+      id: { in: ['sub-1', 'sub-x'] },
+      nodeType: { not: 'sector_group' },
+      control: 'controlled',
+    });
   });
 });

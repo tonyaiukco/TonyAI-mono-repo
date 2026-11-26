@@ -27,7 +27,8 @@
     "formula_lead": "Reads as a formula",
     "would_block_submit": "Cannot be submitted yet",
     "evidence_required": "Needs an evidence file",
-    "category_not_granted": "Category not assigned to you"
+    "category_not_granted": "Category not assigned to you",
+    "entity_closed_to_data_entry": "Closed to data entry"
   },
   "codes": {
     "bad_request": "The request could not be processed.",
@@ -158,7 +159,16 @@
     "bulk_workbook_too_large": "The workbook is larger than {limitMb} MB once unpacked. Remove unused formatting, or split it into smaller files.",
     "not_record_approver": "This record is decided by another user, not by you.",
     "category_not_granted": "{category} is not assigned to you for this company. A Super Admin of the company assigns categories.",
-    "standard_user_single_company": "A standard user works in one subsidiary only, and this change would give them another. Nothing was changed."
+    "standard_user_single_company": "A standard user works in one subsidiary only, and this change would give them another. Nothing was changed.",
+    "node_placement_invalid": "That type cannot be placed under this parent. A sub-holding or sector group sits under the holding or a sub-holding, a company under the holding, a sub-holding or a sector group, and a child company under a company or a child company. An associate has no child, and only a company or child company can be an associate.",
+    "node_type_fixed": "A company node’s type cannot be changed after it is created.",
+    "tree_cycle": "A company cannot be moved under itself or under a node beneath it.",
+    "node_move_blocked": "This company cannot be moved: it, a node beneath it or one of their facilities holds activity records.",
+    "control_change_blocked": "This company cannot become an associate while it has activity records, user assignments, child companies or a current inventory boundary declaration. Nothing was changed.",
+    "entity_closed_to_data_entry": "This entity is outside the Scope 1 and 2 inventory (an associate or a sector group), so data entry is closed for it.",
+    "subsidiary_not_assignable": "An associate or a sector group cannot be assigned to a user. Nothing was changed.",
+    "boundary_subsidiary_not_reportable": "An associate or a sector group is outside the inventory boundary and cannot be declared in it.",
+    "geography_without_factors": "No emission factor set in this environment can price {geography}. Choose a geography the factor library covers."
   },
   "variants": {
     "variance_reason_required": {

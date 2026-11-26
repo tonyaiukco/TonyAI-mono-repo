@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { UserRole } from '@tonyai/db';
+import { Prisma, UserRole } from '@tonyai/db';
 import type { Category, UserAccessGrantDTO } from '@tonyai/shared-types';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuditService } from '../audit/audit.service';
@@ -153,6 +153,8 @@ const A = 'aaaaaaaa-0000-4000-8000-00000000000a';
 const B = 'bbbbbbbb-0000-4000-8000-00000000000b';
 const C = 'cccccccc-0000-4000-8000-00000000000c';
 const X = 'eeeeeeee-0000-4000-8000-00000000000e'; // another organisation's company
+const ASSOCIATE = 'dddddddd-0000-4000-8000-00000000000d'; // inc26-group-tree: an associate
+const SECTOR_GROUP = 'ffffffff-0000-4000-8000-00000000000f'; // and a sector group
 
 interface ProfileRow { id: string; email: string; role: string; organisationId: string; disabledAt: Date | null }
 interface GrantRow { userId: string; subsidiaryId: string; organisationId: string; categories: string[] }
@@ -165,10 +167,13 @@ interface State {
 }
 
 const SUBSIDIARIES = [
-  { id: A, organisationId: ORG },
-  { id: B, organisationId: ORG },
-  { id: C, organisationId: ORG },
-  { id: X, organisationId: OTHER_ORG },
+  { id: A, organisationId: ORG, nodeType: 'company', control: 'controlled' },
+  { id: B, organisationId: ORG, nodeType: 'company', control: 'controlled' },
+  { id: C, organisationId: ORG, nodeType: 'company', control: 'controlled' },
+  { id: X, organisationId: OTHER_ORG, nodeType: 'company', control: 'controlled' },
+  // inc26-group-tree: nodes closed to data entry, which take no grant.
+  { id: ASSOCIATE, organisationId: ORG, nodeType: 'company', control: 'associate' },
+  { id: SECTOR_GROUP, organisationId: ORG, nodeType: 'sector_group', control: 'controlled' },
 ];
 
 type Seed = { id: string; role: string; grants?: Record<string, readonly string[]>; organisationId?: string; disabled?: boolean };
@@ -236,8 +241,9 @@ function world(seed: Seed[]) {
       }),
     },
     subsidiary: {
-      count: vi.fn(async ({ where }: { where: { id: { in: string[] }; organisationId: string } }) =>
-        SUBSIDIARIES.filter((s) => where.id.in.includes(s.id) && s.organisationId === where.organisationId).length),
+      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] }; organisationId: string } }) =>
+        SUBSIDIARIES.filter((s) => where.id.in.includes(s.id) && s.organisationId === where.organisationId)
+          .map(({ nodeType, control }) => ({ nodeType, control }))),
     },
     userSubsidiaryAccess: {
       findMany: vi.fn(async ({ where }: { where: { userId: string; organisationId: string } }) =>
@@ -390,6 +396,34 @@ describe('Decision 9 — invite', () => {
     await expect(w.service.inviteMember(w.as(actor), invite(role, [{ subsidiaryId: X, categories: [] }])))
       .rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
     expect(w.state()).toEqual(before);
+  });
+
+  it.each([
+    ['an associate', ASSOCIATE],
+    ['a sector group', SECTOR_GROUP],
+  ])('an invitation naming %s is refused as not assignable, nothing written (inc26-group-tree)', async (_what, subsidiaryId) => {
+    const w = world([{ id: MK, role: 'masterkey' }]);
+    const before = snapshot(w);
+    await expect(w.service.inviteMember(w.as(MK), invite('super_admin', [{ subsidiaryId: A, categories: [] }, { subsidiaryId, categories: [] }])))
+      .rejects.toMatchObject({ response: { code: 'subsidiary_not_assignable', statusCode: 409 } });
+    expect(w.state()).toEqual(before);
+  });
+
+  it.each([
+    ['an associate', ASSOCIATE],
+    ['a sector group', SECTOR_GROUP],
+  ])('an access change granting %s is refused as not assignable, the grants unchanged', async (_what, subsidiaryId) => {
+    const w = world([{ id: MK, role: 'masterkey' }, { id: T, role: 'super_admin', grants: { [A]: [] } }]);
+    const before = snapshot(w);
+    await expect(w.service.replaceSubsidiaryAccess(w.as(MK), T, [{ subsidiaryId: A, categories: [] }, { subsidiaryId, categories: [] }]))
+      .rejects.toMatchObject({ response: { code: 'subsidiary_not_assignable' } });
+    expect(w.state()).toEqual(before);
+  });
+
+  it('a closed node of another organisation still answers as unknown, not as not assignable', async () => {
+    const w = world([{ id: MK, role: 'masterkey' }]);
+    await expect(w.service.inviteMember(w.as(MK), invite('super_admin', [{ subsidiaryId: X, categories: [] }, { subsidiaryId: ASSOCIATE, categories: [] }])))
+      .rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
   });
 
   it('a super_admin whose grant for A was withdrawn after authentication cannot invite into A: unknown company, nothing written', async () => {
@@ -571,6 +605,16 @@ describe('Decision 9 — re-sending an invitation is inviting again', () => {
 
 describe('Decision 9 — replace access', () => {
   const grant = (subsidiaryId: string, categories: string[] = []): UserAccessGrantDTO => ({ subsidiaryId, categories: categories as Category[] });
+
+  it('a company ticked associate after the check: TA020 answers subsidiary_not_assignable, never a 500 (inc26-group-tree)', async () => {
+    const w = world([{ id: MK, role: 'masterkey' }, { id: T, role: 'super_admin', grants: { [A]: [] } }]);
+    w.tx.userSubsidiaryAccess.createMany.mockRejectedValueOnce(new Prisma.PrismaClientUnknownRequestError(
+      'Error occurred during query execution: ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "TA020", message: "subsidiary_not_assignable: subsidiary x (a associate company) cannot be assigned to a user", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
+      { clientVersion: 'test' },
+    ));
+    await expect(w.service.replaceSubsidiaryAccess(w.as(MK), T, [grant(A), grant(B)]))
+      .rejects.toMatchObject({ status: 409, response: { code: 'subsidiary_not_assignable' } });
+  });
 
   it('a masterkey adds C to a super_admin holding A and B: A, B and C held, one audit row for the added grant', async () => {
     const w = world([{ id: MK, role: 'masterkey' }, { id: T, role: 'super_admin', grants: { [A]: [], [B]: [] } }]);
@@ -862,7 +906,8 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
     expect(tx.profile.findUnique).toHaveBeenCalledWith({ where: { email: 'ada@example.test' }, select: { id: true } });
     const byModel = Object.fromEntries(writes.map((w) => [w.model, w.data]));
     expect(byModel.organisation).toEqual({ legalName: 'Example Holding', country: 'TR', geographyCode: 'TR', reportingCurrency: 'TRY' });
-    // K1: the company itself, as its one subsidiary — a facility can be added at once.
+    // K1: the company itself, as its one subsidiary — a facility can be added
+    // at once; the root of its tree (inc26-group-tree): a controlled holding.
     expect(byModel.subsidiary).toEqual({
       organisationId: ORG,
       legalName: 'Example Holding',
@@ -872,6 +917,9 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
       reportingStatus: 'pending',
       includedScopes: [1, 2],
       trackingGranularity: 'subsidiary',
+      nodeType: 'holding',
+      control: 'controlled',
+      parentId: null,
     });
     expect(byModel.profile).toEqual({
       id: result.profileId,
@@ -965,7 +1013,7 @@ describe('inviteMember — refusals audited and bounded (pre-g5-security-hardeni
           return {};
         }),
       },
-      subsidiary: { count: vi.fn(async () => 0) },
+      subsidiary: { findMany: vi.fn(async () => []) },
       invitation: { create: vi.fn(async () => ({})) },
       userSubsidiaryAccess: { createMany: vi.fn(async () => ({ count: 0 })) },
     };
@@ -1033,5 +1081,47 @@ describe('inviteMember — refusals audited and bounded (pre-g5-security-hardeni
     await expect(service.inviteMember(user('masterkey'), INVITE)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(refusalRows(audit)).toHaveLength(1);
+  });
+});
+
+describe("a child company's creator (inc26-group-tree, design D5)", () => {
+  /** What `SubsidiariesService.create` does around its insert, in one transaction. */
+  async function createChild(w: ReturnType<typeof world>, actor: RequestUser, parentId: string, childId: string) {
+    return w.prisma.$transaction(async (tx) => {
+      await w.service.lockChildCompanyCreator(tx as never, actor, parentId);
+      await w.service.grantChildCompanyCreator(tx as never, actor, childId);
+    });
+  }
+
+  it('grants a super_admin the child it created under a granted company, with its audit row — and nobody else', async () => {
+    const w = world([{ id: SA, role: 'super_admin', grants: { [A]: [] } }, { id: SAB, role: 'super_admin', grants: { [A]: [], [B]: [] } }]);
+    await createChild(w, w.as(SA), A, C);
+    expect(w.grantsOf(SA)).toEqual({ [A]: [], [C]: [] });
+    expect(w.grantsOf(SAB)).toEqual({ [A]: [], [B]: [] });
+    expect(w.audits()).toEqual([
+      { actorId: SA, actorRole: 'super_admin', action: 'create', entity: 'subsidiary_access', entityId: SA, diff: { subsidiaryId: C } },
+    ]);
+  });
+
+  it('answers a parent outside its grants as unknown, granting nothing', async () => {
+    const w = world([{ id: SA, role: 'super_admin', grants: { [A]: [] } }]);
+    const before = snapshot(w);
+    await expect(createChild(w, w.as(SA), B, C)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+    expect(w.state()).toEqual(before);
+  });
+
+  it('reads the grants as they stand now: a parent withdrawn since authentication answers as unknown', async () => {
+    const w = world([{ id: SA, role: 'super_admin', grants: { [A]: [] } }]);
+    const actor = w.as(SA);
+    w.meanwhile((s) => { s.grants = s.grants.filter((g) => g.userId !== SA); });
+    await expect(createChild(w, actor, A, C)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+  });
+
+  it('refuses a role without the power, and grants a masterkey nothing (it reads the whole organisation)', async () => {
+    const w = world([{ id: MK, role: 'masterkey' }, { id: 'su', role: 'standard_user', grants: { [A]: [] } }]);
+    await expect(createChild(w, w.as('su'), A, C)).rejects.toBeInstanceOf(ForbiddenException);
+    await createChild(w, w.as(MK), A, C);
+    expect(w.grantsOf(MK)).toEqual({});
+    expect(w.audits()).toEqual([]);
   });
 });

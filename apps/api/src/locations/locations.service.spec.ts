@@ -14,6 +14,7 @@ import {
 } from '../../test/helpers';
 
 import { AuditService } from '../audit/audit.service';
+import type { CalculationsService } from '../calculations/calculations.service';
 
 /**
  * Audit writes go through the shared AuditService. A single shared spy lets the
@@ -23,6 +24,17 @@ import { AuditService } from '../audit/audit.service';
 const audit = { record: vi.fn() };
 const auditMock = () => audit as unknown as AuditService;
 
+/** The factor library's coverage (inc26-group-tree, D10): UK and TR priced. */
+const calculations = {
+  coverage: vi.fn(async () => ({
+    entries: [
+      { geographyCode: 'TR', reportingYear: 2026, statuses: ['authoritative'] },
+      { geographyCode: 'UK', reportingYear: 2026, statuses: ['authoritative'] },
+    ],
+  })),
+};
+const calculationsMock = () => calculations as unknown as CalculationsService;
+
 describe('LocationsService', () => {
   let prisma: PrismaMock;
   let service: LocationsService;
@@ -31,7 +43,13 @@ describe('LocationsService', () => {
 
     audit.record.mockClear();
     prisma = createPrismaMock();
-    service = new LocationsService(prisma as unknown as PrismaService, auditMock());
+    // A site's delete counts its records and versions inside the write, after
+    // its actor is re-read (owner's sixth review of WP7): the same rows the
+    // root client's stubs describe.
+    prisma.txClient.activityRecord.count.mockImplementation((args: unknown) => prisma.activityRecord.count(args));
+    prisma.txClient.inventoryBoundarySite.count.mockImplementation((args: unknown) => prisma.inventoryBoundarySite.count(args));
+    calculations.coverage.mockClear();
+    service = new LocationsService(prisma as unknown as PrismaService, auditMock(), calculationsMock());
   });
 
   describe('list', () => {
@@ -42,7 +60,7 @@ describe('LocationsService', () => {
       await service.list(user);
 
       expect(prisma.location.findMany).toHaveBeenCalledWith({
-        where: { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+        where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, subsidiary: { organisationId: 'org-1' } },
         orderBy: { createdAt: 'asc' },
       });
     });
@@ -65,7 +83,7 @@ describe('LocationsService', () => {
       const rows = await service.list(user, 'sub-2');
 
       expect(prisma.location.findMany).toHaveBeenCalledWith({
-        where: { subsidiaryId: 'sub-2' },
+        where: { subsidiaryId: 'sub-2', subsidiary: { organisationId: 'org-1' } },
         orderBy: { createdAt: 'asc' },
       });
       expect(rows[0]).toMatchObject({ subsidiaryId: 'sub-2', name: 'Plant A' });
@@ -155,6 +173,7 @@ describe('LocationsService', () => {
         geographyCode: 'TR',
         address: 'Levent, Istanbul',
         authorizedPerson: 'Aylin Demir',
+        locationType: 'office',
       });
 
       expect(prisma.txClient.location.create).toHaveBeenCalledWith({
@@ -164,7 +183,58 @@ describe('LocationsService', () => {
           geographyCode: 'TR',
           address: 'Levent, Istanbul',
           authorizedPerson: 'Aylin Demir',
+          locationType: 'office',
         },
+      });
+    });
+
+    describe('the group tree (inc26-group-tree)', () => {
+      it('stores a facility with no type as null, and answers it so', async () => {
+        prisma.txClient.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
+        const dto = await service.create(makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-1'] }), {
+          subsidiaryId: 'sub-1', name: 'Depot', geographyCode: 'TR',
+        });
+        expect(prisma.txClient.location.create.mock.calls[0][0].data.locationType).toBeNull();
+        expect(dto.locationType).toBeNull();
+      });
+
+      it('answers the stored facility type', async () => {
+        prisma.txClient.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1', locationType: 'warehouse' }));
+        const dto = await service.create(makeMasterkey(), {
+          subsidiaryId: 'sub-1', name: 'Depot', geographyCode: 'TR', locationType: 'warehouse',
+        });
+        expect(dto.locationType).toBe('warehouse');
+      });
+
+      it('refuses a facility under a sector group, and writes nothing', async () => {
+        prisma.txClient.subsidiary.findUnique.mockResolvedValue({ nodeType: 'sector_group' });
+        await expect(
+          service.create(makeMasterkey(), { subsidiaryId: 'sub-1', name: 'Depot', geographyCode: 'TR' }),
+        ).rejects.toMatchObject({ response: { code: 'node_placement_invalid', statusCode: 400 } });
+        expect(prisma.txClient.location.create).not.toHaveBeenCalled();
+        expect(audit.record).not.toHaveBeenCalled();
+      });
+
+      it('refuses a geography the factor library cannot price with 422, naming it, and writes nothing', async () => {
+        await expect(
+          service.create(makeMasterkey(), { subsidiaryId: 'sub-1', name: 'Munich', geographyCode: 'EU' }),
+        ).rejects.toMatchObject({
+          status: 422,
+          response: { code: 'geography_without_factors', params: { geography: 'EU' } },
+        });
+        expect(prisma.txClient.location.create).not.toHaveBeenCalled();
+      });
+
+      it('answers TA021 reached through a race as node_placement_invalid', async () => {
+        prisma.txClient.location.create.mockRejectedValue(
+          new Prisma.PrismaClientUnknownRequestError(
+            'Error occurred during query execution: ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "TA021", message: "node_placement_invalid: subsidiary x is a sector group and holds no facility", severity: "ERROR", detail: None, column: None, hint: None }) })',
+            { clientVersion: '6' },
+          ),
+        );
+        await expect(
+          service.create(makeMasterkey(), { subsidiaryId: 'sub-1', name: 'Depot', geographyCode: 'TR' }),
+        ).rejects.toMatchObject({ response: { code: 'node_placement_invalid' } });
       });
     });
 
@@ -211,6 +281,57 @@ describe('LocationsService', () => {
     // Granted sub-1 and sub-2; sub-3 is a company of the SAME organisation it
     // is not granted — answered as unknown, never 403, so nothing about it leaks.
     const superAdmin = makeSuperAdmin();
+    /** The account as the write re-reads it under the admin lock. */
+    const standing = (over: Record<string, unknown> = {}) =>
+      prisma.txClient.profile.findUnique.mockResolvedValue({
+        role: 'super_admin', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null },
+        subsidiaryAccess: [{ subsidiaryId: 'sub-1' }, { subsidiaryId: 'sub-2' }], ...over,
+      });
+    beforeEach(() => standing());
+
+    it("writes nothing once its grant on the company was withdrawn, or the company moved to another organisation, while the request waited (owner's fifth review, P2)", async () => {
+      standing({ subsidiaryAccess: [{ subsidiaryId: 'sub-1' }] });
+      await expect(service.create(superAdmin, { subsidiaryId: 'sub-2', name: 'Plant', geographyCode: 'TR' }))
+        .rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+      const loc = makeLocation({ id: 'loc-2', subsidiaryId: 'sub-2' });
+      prisma.location.findUnique.mockResolvedValue(loc);
+      prisma.txClient.location.findUnique.mockResolvedValue(loc);
+      await expect(service.update(superAdmin, 'loc-2', { locationType: 'warehouse' }))
+        .rejects.toMatchObject({ response: { code: 'location_not_found' } });
+      // Granted, but the company is no longer in the actor's organisation.
+      standing();
+      prisma.txClient.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) =>
+        (sql.join('?').includes('FROM subsidiaries') ? [] : [{ id: 'locked' }])) as never);
+      await expect(service.create(superAdmin, { subsidiaryId: 'sub-2', name: 'Plant', geographyCode: 'TR' }))
+        .rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+      await expect(service.update(superAdmin, 'loc-2', { locationType: 'warehouse' }))
+        .rejects.toMatchObject({ response: { code: 'location_not_found' } });
+      expect(prisma.txClient.location.create).not.toHaveBeenCalled();
+      expect(prisma.txClient.location.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it("answers a delete refused by a record filed meanwhile with no count once its grant is gone too (owner's seventh review, P2)", async () => {
+      const loc = makeLocation({ id: 'loc-r', subsidiaryId: 'sub-2' });
+      prisma.location.findUnique.mockResolvedValue(loc);
+      prisma.activityRecord.count.mockResolvedValue(0);
+      prisma.txClient.location.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('fk', { code: 'P2003', clientVersion: 'test' }),
+      );
+      // Granted while the delete ran; withdrawn by the time the refusal is answered.
+      const granted = {
+        role: 'super_admin', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null },
+        subsidiaryAccess: [{ subsidiaryId: 'sub-1' }, { subsidiaryId: 'sub-2' }],
+      };
+      prisma.txClient.profile.findUnique
+        .mockResolvedValueOnce(granted)
+        .mockResolvedValueOnce({ ...granted, subsidiaryAccess: [{ subsidiaryId: 'sub-1' }] });
+      prisma.activityRecord.count.mockResolvedValueOnce(0).mockResolvedValue(4);
+      const answer = (await service.remove(superAdmin, 'loc-r').catch((e: unknown) => e)) as { response?: { code?: string; params?: unknown } };
+      expect(answer.response?.code).toBe('subsidiary_not_found');
+      expect(answer.response?.params).toBeUndefined();
+      expect(JSON.stringify(answer.response)).not.toMatch(/activity record/);
+    });
 
     it('creates a location in a granted company, audited as itself in the same transaction', async () => {
       const created = makeLocation({ subsidiaryId: 'sub-2', name: 'Plant' });
@@ -270,7 +391,7 @@ describe('LocationsService', () => {
     it('lists only its granted companies\' locations', async () => {
       await service.list(superAdmin);
       expect(prisma.location.findMany).toHaveBeenCalledWith({
-        where: { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+        where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, subsidiary: { organisationId: 'org-1' } },
         orderBy: { createdAt: 'asc' },
       });
       prisma.location.findMany.mockClear();
@@ -296,6 +417,54 @@ describe('LocationsService', () => {
       expect(prisma.location.findUnique).not.toHaveBeenCalled();
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('sets, and clears, the facility type (inc26-group-tree)', async () => {
+      const existing = makeLocation({ subsidiaryId: 'sub-1' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.txClient.location.update.mockResolvedValue({ ...existing, locationType: 'factory' });
+      expect((await service.update(makeMasterkey(), existing.id, { locationType: 'factory' })).locationType).toBe('factory');
+      expect(prisma.txClient.location.update).toHaveBeenLastCalledWith({ where: { id: existing.id }, data: { locationType: 'factory' } });
+      prisma.txClient.location.update.mockResolvedValue({ ...existing, locationType: null });
+      await service.update(makeMasterkey(), existing.id, { locationType: null });
+      expect(prisma.txClient.location.update).toHaveBeenLastCalledWith({ where: { id: existing.id }, data: { locationType: null } });
+    });
+
+    it('saves a facility from before the release with its stored, unpriced geography unchanged', async () => {
+      const existing = makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'EU' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.txClient.location.update.mockResolvedValue({ ...existing, name: 'Renamed' });
+      await service.update(makeMasterkey(), existing.id, { name: 'Renamed', geographyCode: 'EU' });
+      expect(calculations.coverage).not.toHaveBeenCalled();
+      expect(prisma.txClient.location.update).toHaveBeenCalled();
+    });
+
+    it('judges the stored-geography exception against the row as locked: a stale edit cannot write an unpriced one back (owner review of WP7, P2)', async () => {
+      // Read as EU; changed to TR by another edit before this one locked it.
+      prisma.location.findUnique.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'EU' }));
+      prisma.txClient.location.findUnique.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'TR' }));
+      await expect(service.update(makeMasterkey(), 'loc-1', { name: 'Renamed', geographyCode: 'EU' })).rejects.toMatchObject({ status: 422 });
+      expect(prisma.txClient.location.update).not.toHaveBeenCalled();
+      // Locked FOR UPDATE before the read.
+      expect((prisma.txClient.$queryRaw.mock.calls[0][0] as unknown as string[]).join('?')).toMatch(/FROM locations WHERE id = \?::uuid FOR UPDATE/);
+    });
+
+    it('refuses a change to an unpriced geography with 422, and writes nothing', async () => {
+      const existing = makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'TR' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      await expect(service.update(makeMasterkey(), existing.id, { geographyCode: 'EU' })).rejects.toMatchObject({
+        status: 422,
+        response: { code: 'geography_without_factors', params: { geography: 'EU' } },
+      });
+      expect(prisma.txClient.location.update).not.toHaveBeenCalled();
+    });
+
+    it('accepts a change to a priced geography', async () => {
+      const existing = makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'UK' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.txClient.location.update.mockResolvedValue({ ...existing, geographyCode: 'TR' });
+      expect((await service.update(makeMasterkey(), existing.id, { geographyCode: 'TR' })).geographyCode).toBe('TR');
+      expect(calculations.coverage).toHaveBeenCalledTimes(1);
     });
 
     it('updates only provided fields and audits with before/after', async () => {
@@ -408,7 +577,30 @@ describe('LocationsService', () => {
       await expect(service.remove(user, existing.id)).rejects.toMatchObject({
         response: { code: 'location_in_boundary', params: { count: 7 } },
       });
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      // Counted inside the write, after the actor is re-read — and nothing deleted.
+      expect(prisma.txClient.location.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.profile.findUnique.mock.invocationCallOrder[0])
+        .toBeLessThan(prisma.txClient.inventoryBoundarySite.count.mock.invocationCallOrder[0]);
+    });
+
+    it("tells a caller whose grant was withdrawn meanwhile nothing of what depends on the site (owner's sixth review, P2)", async () => {
+      const existing = makeLocation({ subsidiaryId: 'sub-2' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.activityRecord.count.mockResolvedValue(3);
+      prisma.inventoryBoundarySite.count.mockResolvedValue(2);
+      prisma.txClient.profile.findUnique.mockResolvedValue({
+        role: 'super_admin', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null }, subsidiaryAccess: [{ subsidiaryId: 'sub-1' }],
+      });
+      await expect(service.remove(makeSuperAdmin(), existing.id)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+      expect(prisma.txClient.activityRecord.count).not.toHaveBeenCalled();
+      expect(prisma.txClient.inventoryBoundarySite.count).not.toHaveBeenCalled();
+    });
+
+    it("audits the row the delete removed, not the read before the transaction (owner's sixth review, P2)", async () => {
+      prisma.location.findUnique.mockResolvedValue(makeLocation({ id: 'loc-9', subsidiaryId: 'sub-1', name: 'Before' }));
+      prisma.txClient.location.delete.mockResolvedValue(makeLocation({ id: 'loc-9', subsidiaryId: 'sub-1', name: 'Renamed meanwhile', locationType: 'warehouse' }));
+      await service.remove(makeMasterkey(), 'loc-9');
+      expect(audit.record.mock.calls.at(-1)![1].diff.before).toMatchObject({ name: 'Renamed meanwhile', locationType: 'warehouse' });
     });
 
     it('answers a version declaring the site between the check and the delete with the same 409, not a 500 (W9)', async () => {
@@ -508,5 +700,20 @@ describe('LocationsService', () => {
       );
       expect(prisma.txClient.location.delete).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("LocationsService — a facility whose company moved to another organisation since the request arrived (owner's seventh review of WP7, P2)", () => {
+  it('is unknown to its detail, and the list asks for the reader\'s organisation only', async () => {
+    const prisma = createPrismaMock();
+    const service = new LocationsService(
+      prisma as unknown as PrismaService,
+      { record: vi.fn(), recordSystem: vi.fn() } as never,
+      { coverage: vi.fn(async () => ({ entries: [] })) } as never,
+    );
+    prisma.location.findUnique.mockResolvedValue(makeLocation({ id: 'loc-x', subsidiaryId: 'sub-1', subsidiary: { organisationId: 'org-2' } } as never));
+    await expect(service.get(makeMasterkey(), 'loc-x')).rejects.toMatchObject({ response: { code: 'location_not_found' } });
+    await service.list(makeMasterkey());
+    expect(prisma.location.findMany.mock.calls[0][0].where.subsidiary).toEqual({ organisationId: 'org-1' });
   });
 });

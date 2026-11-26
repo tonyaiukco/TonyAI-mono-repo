@@ -3,7 +3,7 @@
 import type { ActivityTypeKey, ContextFieldKey, UnitBlockedKey, UnitLabelKey } from "@/lib/i18n/message-keys";
 import { conversionNote, grossToNetRatioOf } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
-import { categoryGate, categoryGateMessage, fallbackCategory } from "@/lib/entry-categories-view";
+import { categoryGate, categoryGateMessage, entryCompanies, fallbackCategory } from "@/lib/entry-categories-view";
 
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -964,10 +964,16 @@ function DataEntryPageInner() {
     (async () => {
       setSubsLoading(true);
       try {
-        const [list, locs] = await Promise.all([
+        const [all, locs] = await Promise.all([
           api.listSubsidiaries(),
           api.listLocations(),
         ]);
+        // Only the nodes that hold records (inc26-group-tree): no associate,
+        // no sector group.
+        // A deep link, the default and a copy resolve from this list too, so a
+        // link to a closed node opens nothing selected — never the node behind
+        // an empty picker (owner review of WP7, P2).
+        const list = entryCompanies(all);
         setSubsidiaries(list);
         setLocations(locs);
 
@@ -1001,7 +1007,12 @@ function DataEntryPageInner() {
         const wantedCategory = searchParams.get("category");
 
         if (wantedSub && !list.some((sub) => sub.id === wantedSub)) {
+          // A link to a company the user cannot enter data for (closed to it,
+          // or not theirs): nothing selected and nothing else of the link
+          // applied — never another company's form filled with the link's
+          // category, year and period (owner's fourth review of WP7, P2).
           toast.error(t("subsidiaryUnavailable"));
+          return;
         }
         const resolvedSub =
           wantedSub && list.some((sub) => sub.id === wantedSub)

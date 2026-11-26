@@ -10,6 +10,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { SupabaseAuthGuard } from './auth/auth.guard';
+import { OrganisationModule } from './organisation/organisation.module';
 import { SubsidiariesModule } from './subsidiaries/subsidiaries.module';
 import { KpiModule } from './kpi/kpi.module';
 import { CalculationsModule } from './calculations/calculations.module';
@@ -38,6 +39,8 @@ import { RequestContextMiddleware } from './observability/request-context.middle
     AuditModule,
     AuthModule,
     SubsidiariesModule,
+    // inc26-group-tree: the organisation's own read and its consolidation approach.
+    OrganisationModule,
     KpiModule,
     CalculationsModule,
     ActivityRecordsModule,

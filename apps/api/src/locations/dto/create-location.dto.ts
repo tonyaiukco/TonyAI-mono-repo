@@ -1,7 +1,7 @@
 import { Transform } from 'class-transformer';
 import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { blankToNull } from '../../common/blank-to-null';
-import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
+import { GEOGRAPHY_CODES, LOCATION_TYPES, type LocationType } from '@tonyai/shared-types';
 
 /**
  * Everything that describes WHAT a location is — the base, mirroring
@@ -43,6 +43,11 @@ export class CreateSubsidiaryLocationDto {
   @Transform(blankToNull)
   @IsString()
   authorizedPerson?: string | null;
+
+  /** Optional facility type (inc26-group-tree, RD12); `null` clears it. */
+  @IsOptional()
+  @IsIn(LOCATION_TYPES as readonly string[])
+  locationType?: LocationType | null;
 }
 
 /**

@@ -29,7 +29,10 @@ import {
   type CategoryCompleteness,
   type SubsidiaryCompletenessDTO,
   type TrackingMatrixRow,
+  type RollUpResponse,
+  type ScopeFigures,
   can,
+  rollUp,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -37,6 +40,8 @@ import { grantedCategories, recordScopeWhere } from '../activity-records/record-
 import { EmissionsSummaryQueryDto } from './dto/emissions-summary-query.dto';
 import { TrackingMatrixQueryDto } from './dto/tracking-matrix-query.dto';
 import { CompletenessQueryDto } from './dto/completeness-query.dto';
+import { RollUpQueryDto } from './dto/roll-up-query.dto';
+import { HOLDS_RECORDS_WHERE } from '../subsidiaries/reporting-set';
 
 /**
  * Only "committed" records feed the emissions inventory. Drafts are
@@ -622,6 +627,91 @@ export class EmissionsService {
   }
 
   /**
+   * Each accessible node's own figure and roll-up for one reporting year
+   * (inc26-group-tree, D9, INC-2.6 §5.2). Own = the node's records as the main
+   * total counts them — the summary's counted statuses and record scope, and
+   * `summariseCounted`'s rules over that node's rows (Scope 1 and 2; a record
+   * with no figure adds nothing) — and the fold is `rollUp()`, read within the
+   * caller's scope only: a node whose parent the caller cannot read is the top
+   * of its own fragment, and `parentId` is answered only for a readable parent
+   * (D4, RD13). A sector group has no own figure; an associate neither figure.
+   */
+  async rollUp(user: RequestUser, query: RollUpQueryDto): Promise<RollUpResponse> {
+    const reportingYear = query.reportingYear;
+    if (user.accessibleSubsidiaryIds.length === 0) return { reportingYear, rows: [] };
+    const recordLimit = this.analyticsBudget(reportingYear);
+    // The tree, its records and the releases' standing read in ONE snapshot
+    // (REPEATABLE READ, read only): a company moved between two separate reads
+    // could otherwise carry a record into a parent that never held it (owner's
+    // fourth review of WP7, P2). Scope 1 and 2 only, filtered before the row
+    // budget: the figures are Scope 1 and 2's, and Scope 3 rows must not spend
+    // the budget and refuse a year they add nothing to.
+    const { nodes, rows, withdrawn } = await this.prisma.$transaction(
+      async (tx) => {
+        const [nodes, rows] = await Promise.all([
+          // In the reader's own organisation too: ids taken when the request
+          // arrived could name a company an operator moved to another one
+          // since — it is neither shown nor counted (owner's fifth review of
+          // WP7, P2).
+          tx.subsidiary.findMany({
+            where: { id: { in: user.accessibleSubsidiaryIds }, organisationId: user.organisationId ?? undefined },
+            select: { id: true, parentId: true, nodeType: true, control: true },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          }),
+          tx.activityRecord.findMany({
+            take: recordLimit + 1,
+            select: SUMMARY_RECORD_SELECT,
+            where: {
+              subsidiaryId: { in: user.accessibleSubsidiaryIds },
+              subsidiary: { organisationId: user.organisationId ?? undefined },
+              AND: [recordScopeWhere(user)],
+              reportingYear,
+              scope: { in: [1, 2] },
+              status: { in: COUNTED_STATUSES },
+            },
+          }),
+        ]);
+        if (rows.length > recordLimit) throw new QueryTooBroadError();
+        return { nodes, rows, withdrawn: await withdrawnReleaseIds(tx, rows) };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15_000 },
+    );
+    const bySubsidiary = new Map<string, SummaryRecord[]>();
+    for (const r of rows) bySubsidiary.set(r.subsidiaryId, [...(bySubsidiary.get(r.subsidiaryId) ?? []), r]);
+    const own = new Map<string, ScopeFigures>();
+    for (const [subsidiaryId, group] of bySubsidiary) {
+      const summary = summariseCounted(group, new Map(), withdrawn);
+      const { scope1, scope2, total } = summary.totals;
+      // Scope 1 and 2's share of the non-authoritative records, as the
+      // figures are Scope 1 and 2's (owner review of WP7, P1).
+      const nonAuthoritativeRecordCount = summary.nonAuthoritativeRecordCount - summary.scope3Records.nonAuthoritativeRecordCount;
+      // And its records with no figure, which a total of zero must not hide
+      // (owner review of WP7, P2).
+      const uncalculatedRecordCount = summary.uncalculatedRecordCount - summary.scope3Records.uncalculatedRecordCount;
+      own.set(subsidiaryId, { scope1, scope2, total, nonAuthoritativeRecordCount, uncalculatedRecordCount });
+    }
+    const readable = new Set(user.accessibleSubsidiaryIds);
+    const shaped = nodes.map((n) => ({
+      id: n.id,
+      parentId: n.parentId !== null && readable.has(n.parentId) ? n.parentId : null,
+      nodeType: n.nodeType,
+      control: n.control,
+    }));
+    const folded = rollUp(shaped, own);
+    return {
+      reportingYear,
+      rows: shaped.map((n) => ({
+        subsidiaryId: n.id,
+        parentId: n.parentId,
+        nodeType: n.nodeType,
+        control: n.control,
+        own: folded.get(n.id)?.own ?? null,
+        rollUp: folded.get(n.id)?.rollUp ?? null,
+      })),
+    };
+  }
+
+  /**
    * Subsidiary × category completeness matrix (FR §2.2). Every accessible
    * subsidiary gets a row; every canonical category gets a cell — cells with
    * no records are "missing", in both readings of `complete` below.
@@ -679,8 +769,10 @@ export class EmissionsService {
         // Bounded as the summary is (LP4-03 K11): past it, `query_too_broad`.
         take: this.analyticsBudget(query.year) + 1,
       }),
+      // The reporting set (inc26-group-tree, D6): an associate or a sector
+      // group has no row, no missing cell, and lowers no completion rate.
       this.prisma.subsidiary.findMany({
-        where: { id: subsidiaryFilter },
+        where: { id: subsidiaryFilter, ...HOLDS_RECORDS_WHERE },
         select: {
           id: true,
           tradingName: true,

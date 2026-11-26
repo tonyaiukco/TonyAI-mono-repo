@@ -12,7 +12,7 @@ import * as uuidPipe from '../common/parse-uuid-param.pipe';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 import * as writerGuard from './boundary-writer.guard';
 import * as dto from './dto/inventory-boundary.dto';
-import { BoundaryWriterGuard, DeclarationSizeGuard } from './boundary-writer.guard';
+import { BoundaryWriterGuard, DeclarationSizeGuard, DeclarationWriterGuard } from './boundary-writer.guard';
 import { InventoryBoundariesController } from './inventory-boundaries.controller';
 
 /**
@@ -54,8 +54,11 @@ describe('InventoryBoundariesController', () => {
       (Reflect.getMetadata(GUARDS_METADATA, InventoryBoundariesController.prototype[name]) ?? []) as unknown[];
     expect(guards('list')).toEqual([]);
     expect(guards('get')).toEqual([]);
-    for (const name of ['create', 'deleteSubsidiary', 'confirm', 'remove'] as const) expect(guards(name), name).toEqual([BoundaryWriterGuard]);
-    expect(guards('putSubsidiary')).toEqual([BoundaryWriterGuard, DeclarationSizeGuard]);
+    // The version lifecycle is the masterkey's; a company's declaration also a
+    // super_admin's for its own companies (inc26-group-tree, D7).
+    for (const name of ['create', 'confirm', 'remove'] as const) expect(guards(name), name).toEqual([BoundaryWriterGuard]);
+    expect(guards('deleteSubsidiary')).toEqual([DeclarationWriterGuard]);
+    expect(guards('putSubsidiary')).toEqual([DeclarationWriterGuard, DeclarationSizeGuard]);
   });
 });
 

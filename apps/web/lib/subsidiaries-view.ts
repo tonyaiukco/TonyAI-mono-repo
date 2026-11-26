@@ -1,8 +1,9 @@
 import { ApiError } from '@/lib/api';
-import { formatNumber } from '@/lib/i18n/number';
+import { formatNumber, parseLocaleDecimal } from '@/lib/i18n/number';
 import type { ErrorDescription } from '@/lib/i18n/errors';
 import type { ViewCopy } from '@/lib/i18n/view-translator';
-import type { SubsidiaryBlockerKind, SubsidiarySummaryDTO } from '@/lib/types';
+import { NACE_CODE_MAX_LENGTH, NACE_CODE_PATTERN } from '@/lib/types';
+import type { Locale, NodeType, SubsidiaryBlockerKind, SubsidiarySummaryDTO } from '@/lib/types';
 
 /**
  * The Subsidiaries screens' sentences (LP4-04 slice 2 PR C): what stands in
@@ -29,14 +30,16 @@ export function blockerLines(
   return counts.map(({ kind, count }) => t(`blockers.${kind}`, { count: formatNumber(count, locale) }));
 }
 
-/** The `subsidiaries` keys the deletable note is worded with. */
-export type DeletableKey = 'dependents.deletableOne' | 'dependents.deletableMany' | 'dependents.deletableNothing';
+/** The `subsidiaries` key the deletable note is worded with. */
+export type DeletableKey = 'dependents.deletableNothing';
 
-/** Said when nothing blocks a delete: what would go with the subsidiary. */
-export function deletableNote(locations: number, { t, locale }: ViewCopy<DeletableKey>): string {
-  if (locations === 0) return t('dependents.deletableNothing');
-  const count = formatNumber(locations, locale);
-  return locations === 1 ? t('dependents.deletableOne', { count }) : t('dependents.deletableMany', { count });
+/**
+ * Said when nothing blocks a delete. Since the group tree (inc26-group-tree,
+ * RD9) a facility blocks the delete like a child node does, so nothing ever
+ * goes with a deleted company.
+ */
+export function deletableNote({ t }: ViewCopy<DeletableKey>): string {
+  return t('dependents.deletableNothing');
 }
 
 /** The `subsidiaries` keys an error is worded with. */
@@ -67,4 +70,114 @@ export type LocationCountKey = 'locations.drawerCountOne' | 'locations.drawerCou
 export function locationCountLine(name: string, count: number, { t, locale }: ViewCopy<LocationCountKey>): string {
   const values = { name, count: formatNumber(count, locale) };
   return count === 1 ? t('locations.drawerCountOne', values) : t('locations.drawerCountMany', values);
+}
+
+// ---------------------------------------------------------------------------
+// The group tree (inc26-group-tree): the company screen draws its nodes
+// nested by `parentId`.
+// ---------------------------------------------------------------------------
+
+/** What a tree row needs of a company node. */
+export interface TreeNode {
+  id: string;
+  parentId: string | null;
+  nodeType: NodeType;
+  legalName: string;
+}
+
+export interface TreeRow<T extends TreeNode> {
+  node: T;
+  /** 0 for a top-level row. */
+  depth: number;
+  hasChildren: boolean;
+}
+
+const TYPE_ORDER: Readonly<Record<NodeType, number>> = {
+  holding: 0,
+  sub_holding: 1,
+  sector_group: 2,
+  company: 3,
+  child_company: 4,
+};
+
+/**
+ * The reader's nodes in tree order: each under its parent, depth-first,
+ * siblings by type (holding, sub-holding, sector group, company, child
+ * company) then name. A node whose parent is not among `nodes` — the reader
+ * may not read it, and the API then sends `null` — is shown at the top level,
+ * with nothing said of that parent. The children of a collapsed node are
+ * left out. A malformed input (a cycle) still terminates, every node once.
+ */
+export function treeRows<T extends TreeNode>(
+  nodes: readonly T[],
+  collapsed: ReadonlySet<string> = new Set(),
+  locale = 'en',
+): TreeRow<T>[] {
+  const ids = new Set(nodes.map((n) => n.id));
+  const children = new Map<string, T[]>();
+  const tops: T[] = [];
+  for (const n of nodes) {
+    if (n.parentId !== null && n.parentId !== n.id && ids.has(n.parentId)) {
+      children.set(n.parentId, [...(children.get(n.parentId) ?? []), n]);
+    } else {
+      tops.push(n);
+    }
+  }
+  const order = (a: T, b: T) =>
+    TYPE_ORDER[a.nodeType] - TYPE_ORDER[b.nodeType] || a.legalName.localeCompare(b.legalName, locale) || a.id.localeCompare(b.id);
+  const rows: TreeRow<T>[] = [];
+  const seen = new Set<string>();
+  // Pre-order with an explicit stack, not recursion: a valid chain of child
+  // companies is not bounded by the call stack (owner's third review of WP7, P3).
+  const walk = (root: T, rootDepth: number, rootVisible: boolean) => {
+    const stack: { n: T; depth: number; visible: boolean }[] = [{ n: root, depth: rootDepth, visible: rootVisible }];
+    while (stack.length > 0) {
+      const { n, depth, visible } = stack.pop()!;
+      if (seen.has(n.id)) continue;
+      seen.add(n.id);
+      const kids = [...(children.get(n.id) ?? [])].sort(order);
+      if (visible) rows.push({ node: n, depth, hasChildren: kids.length > 0 });
+      for (let i = kids.length - 1; i >= 0; i--) stack.push({ n: kids[i], depth: depth + 1, visible: visible && !collapsed.has(n.id) });
+    }
+  };
+  for (const t of [...tops].sort(order)) walk(t, 0, true);
+  // Anything a cycle kept from every top, once, at the top level.
+  for (const n of [...nodes].sort(order)) walk(n, 0, true);
+  return rows;
+}
+
+/**
+ * A tree cell's tCO₂e: one decimal from 1 up, three significant digits below
+ * it — so a positive figure is never shown as 0 (0.04 and 0.00024 stay what
+ * they are; owner's fourth review of WP7, P2) — and a zero as 0.
+ */
+export function treeFigure(value: number, locale: Locale): string {
+  if (!Number.isFinite(value) || value === 0) return formatNumber(0, locale);
+  return Math.abs(value) < 1
+    ? formatNumber(value, locale, { maximumSignificantDigits: 3 })
+    : formatNumber(value, locale, { maximumFractionDigits: 1 });
+}
+
+/**
+ * The create and edit forms' optional share percent, read in the user's
+ * convention: blank is "none" (`null`), anything else a number from 0 to 100
+ * with two decimals at most — the API's bound — or `invalid`.
+ */
+export function parseSharePercent(text: string, locale: Locale): number | null | 'invalid' {
+  if (text.trim() === '') return null;
+  const read = parseLocaleDecimal(text, locale);
+  if (!read.ok) return 'invalid';
+  const v = read.value;
+  // At most two decimals, read with a tolerance: 1.1 * 100 is 110.00000000000001
+  // in binary floating point, and an exact comparison refused about one valid
+  // share in nine (QA review, WP7).
+  if (v < 0 || v > 100 || Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) return 'invalid';
+  return v;
+}
+
+/** The optional NACE code: blank is none, else it must read as one. */
+export function parseNaceCode(text: string): string | null | 'invalid' {
+  const code = text.trim().toUpperCase();
+  if (code === '') return null;
+  return code.length <= NACE_CODE_MAX_LENGTH && NACE_CODE_PATTERN.test(code) ? code : 'invalid';
 }

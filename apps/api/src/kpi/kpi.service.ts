@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { DashboardKpi } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { HOLDS_RECORDS_WHERE } from '../subsidiaries/reporting-set';
 
 @Injectable()
 export class KpiService {
@@ -9,12 +10,14 @@ export class KpiService {
 
   async summary(user: RequestUser): Promise<DashboardKpi> {
     const [subs, totalLocations] = await Promise.all([
+      // The reporting set (inc26-group-tree, D6): the companies that can hold
+      // records, and their facilities — never a sector group or an associate.
       this.prisma.subsidiary.findMany({
-        where: { id: { in: user.accessibleSubsidiaryIds } },
+        where: { id: { in: user.accessibleSubsidiaryIds }, ...HOLDS_RECORDS_WHERE },
         select: { reportingStatus: true, geographyCode: true },
       }),
       this.prisma.location.count({
-        where: { subsidiaryId: { in: user.accessibleSubsidiaryIds } },
+        where: { subsidiaryId: { in: user.accessibleSubsidiaryIds }, subsidiary: HOLDS_RECORDS_WHERE },
       }),
     ]);
 

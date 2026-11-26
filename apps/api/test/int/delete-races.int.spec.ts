@@ -1,17 +1,35 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AuditService } from '../../src/audit/audit.service';
+import { AccessAdminService } from '../../src/auth/access-admin.service';
 import type { RequestUser } from '../../src/auth/auth.types';
+import type { CalculationsService } from '../../src/calculations/calculations.service';
 import { LocationsService } from '../../src/locations/locations.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { SubsidiariesService } from '../../src/subsidiaries/subsidiaries.service';
 import { connect, connectOwner, createTenant, holdBefore, type Tenant } from './db';
 
 /**
- * A subsidiary's delete clears its record-free sites; a `DELETE /locations/:id`
- * for one of them can win the race after the sweep read its list (Codex
- * review of #350). Against real PostgreSQL, so what is proven is that the
- * losing sweep's transaction carries on and commits — not a mock's idea of it.
+ * A company with a facility is not deleted (inc26-group-tree, RD9): the delete
+ * no longer sweeps record-free facilities, so the race it once had with a
+ * `DELETE /locations/:id` (Codex review of #350) is gone, and the one left is
+ * a facility ADDED while the company is being deleted. Against real
+ * PostgreSQL: the delete's row lock (FOR UPDATE) makes the insert's key check
+ * wait, so the facility is refused rather than cascaded away unaudited.
  */
+
+/** Every geography priced: the geography rule is not what these cases test. */
+const pricesAll = {
+  coverage: async () => ({ entries: ['UK', 'TR', 'EU'].map((geographyCode) => ({ geographyCode, reportingYear: 2026, statuses: ['authoritative'] })) }),
+} as unknown as CalculationsService;
+
+function services(client: PrismaService) {
+  const audit = new AuditService(client);
+  const locations = new LocationsService(client, audit, pricesAll);
+  return {
+    locations,
+    subsidiaries: new SubsidiariesService(client, audit, locations, new AccessAdminService(client, audit), pricesAll),
+  };
+}
 
 // Two runtime clients of one connection each: the held request keeps its
 // connection inside its transaction, and the other request needs its own.
@@ -53,39 +71,38 @@ afterEach(async () => {
 
 const auditRows = (entityId: string) => owner.auditLog.findMany({ where: { entityId, action: 'delete' }, select: { entity: true } });
 
-describe('a site deleted on its own while its subsidiary is being deleted', () => {
-  it('the subsidiary delete still commits, and each site has exactly one delete audit row', async () => {
-    // Held before the sweep's first site delete: the list is read, nothing deleted yet.
-    const hold = holdBefore(runtime, 'Location', 'delete');
-    const subsidiaries = new SubsidiariesService(hold.client, new AuditService(hold.client), new LocationsService(hold.client, new AuditService(hold.client)));
-    const sweeping = subsidiaries.remove(admin, subsidiaryId);
-    await hold.reached();
-    // Whichever site the sweep is held on, it reaches the one deleted here
-    // only after this delete has committed.
-    try {
-      await new LocationsService(other, new AuditService(other)).remove(admin, sites[0]);
-    } finally {
-      hold.release();
-    }
+describe('a company with facilities (RD9)', () => {
+  it('is refused as in use, naming its facilities, and neither it nor a facility goes', async () => {
+    await expect(services(runtime).subsidiaries.remove(admin, subsidiaryId)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'subsidiary_in_use', message: expect.stringMatching(/2 facility\(ies\)/) }),
+    });
+    expect(await owner.subsidiary.count({ where: { id: subsidiaryId } })).toBe(1);
+    expect(await owner.location.count({ where: { id: { in: sites } } })).toBe(2);
+    expect(await auditRows(subsidiaryId)).toEqual([]);
+  });
 
-    await expect(sweeping).resolves.toEqual({ id: subsidiaryId, deleted: true });
-    expect(await owner.subsidiary.count({ where: { id: subsidiaryId } })).toBe(0);
-    expect(await owner.location.count({ where: { id: { in: sites } } })).toBe(0);
+  it('goes once its facilities are deleted, each with its own audit row', async () => {
+    for (const site of sites) await services(runtime).locations.remove(admin, site);
+    await expect(services(runtime).subsidiaries.remove(admin, subsidiaryId)).resolves.toEqual({ id: subsidiaryId, deleted: true });
     for (const site of sites) expect(await auditRows(site), site).toEqual([{ entity: 'location' }]);
     expect(await auditRows(subsidiaryId)).toEqual([{ entity: 'subsidiary' }]);
   });
+});
 
-  it('the standalone delete that lost to the sweep answers 404', async () => {
-    const hold = holdBefore(runtime, 'Location', 'delete');
-    const losing = new LocationsService(hold.client, new AuditService(hold.client)).remove(admin, sites[0]);
+describe('a facility added while its company is being deleted', () => {
+  it('waits for the delete, then finds no company: nothing is cascaded away unaudited', async () => {
+    for (const site of sites) await services(runtime).locations.remove(admin, site);
+    // Held after the guard counted no facility, the company's row locked.
+    const hold = holdBefore(runtime, 'Subsidiary', 'delete');
+    const deleting = services(hold.client).subsidiaries.remove(admin, subsidiaryId);
     await hold.reached();
-    try {
-      await expect(new SubsidiariesService(other, new AuditService(other), new LocationsService(other, new AuditService(other))).remove(admin, subsidiaryId))
-        .resolves.toEqual({ id: subsidiaryId, deleted: true });
-    } finally {
-      hold.release();
-    }
-    await expect(losing).rejects.toMatchObject({ response: expect.objectContaining({ code: 'location_not_found' }) });
-    expect(await auditRows(sites[0])).toEqual([{ entity: 'location' }]);
+    const adding = services(other).locations.create(admin, { subsidiaryId, name: 'Int late site', geographyCode: 'UK' });
+    adding.catch(() => undefined);
+    hold.release();
+
+    await expect(deleting).resolves.toEqual({ id: subsidiaryId, deleted: true });
+    await expect(adding).rejects.toBeDefined();
+    expect(await owner.location.count({ where: { subsidiaryId } })).toBe(0);
+    expect(await owner.auditLog.count({ where: { entity: 'location', action: 'create', diff: { path: ['after', 'name'], equals: 'Int late site' } } })).toBe(0);
   });
 });

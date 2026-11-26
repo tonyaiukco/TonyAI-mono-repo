@@ -1166,6 +1166,10 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
       reportingStatus: 'pending',
       includedScopes: [1, 2],
       trackingGranularity: 'subsidiary',
+      // The root of the new organisation's tree (inc26-group-tree).
+      nodeType: 'holding',
+      control: 'controlled',
+      parentId: null,
       locations: [],
       access: [],
       inventoryBoundaries: [],

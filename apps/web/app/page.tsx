@@ -44,6 +44,7 @@ import {
   matrixCellLinks,
   matrixToAlerts,
   matrixToSubsidiaries,
+  reportingCompanies,
 } from '@/lib/dashboard-view';
 import { CATEGORY_SCOPE_MAP, mayAuthorRecords } from '@/lib/types';
 import type {
@@ -170,7 +171,8 @@ function CarbonDashboardInner() {
       // A response from a superseded request must not overwrite a newer one.
       if (mine !== loadSeq.current) return;
       setKpi(kpiData);
-      setSubsidiaries(list);
+      // The reporting set (inc26-group-tree): no sector group, no associate.
+      setSubsidiaries(reportingCompanies(list));
       setSubsidiariesKnown(true);
       setSummary(summaryData?.data ?? null);
       setMatrix(matrixData?.data ?? null);

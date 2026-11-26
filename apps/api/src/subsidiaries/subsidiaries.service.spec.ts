@@ -22,6 +22,23 @@ import {
 
 import { AuditService } from '../audit/audit.service';
 import { LocationsService, TrustedParent } from '../locations/locations.service';
+import type { AccessAdminService } from '../auth/access-admin.service';
+import type { CalculationsService } from '../calculations/calculations.service';
+
+/** The factor library's coverage (inc26-group-tree, D10): UK and TR priced. */
+const calculations = {
+  coverage: vi.fn(async () => ({
+    entries: [
+      { geographyCode: 'TR', reportingYear: 2026, statuses: ['authoritative'] },
+      { geographyCode: 'UK', reportingYear: 2026, statuses: ['authoritative'] },
+    ],
+  })),
+};
+/** The only writer of grants: a child company's creator is granted it (D5). */
+const accessAdmin = {
+  lockChildCompanyCreator: vi.fn(async () => undefined),
+  grantChildCompanyCreator: vi.fn(async () => undefined),
+};
 
 /**
  * Audit writes go through the shared AuditService. A single shared spy lets the
@@ -125,10 +142,15 @@ describe('SubsidiariesService', () => {
       writeLocationForTrustedParent: vi.fn(),
       deleteLocationForTrustedParent: vi.fn(),
     };
+    calculations.coverage.mockClear();
+    accessAdmin.lockChildCompanyCreator.mockReset().mockResolvedValue(undefined);
+    accessAdmin.grantChildCompanyCreator.mockReset().mockResolvedValue(undefined);
     service = new SubsidiariesService(
       prisma as unknown as PrismaService,
       auditMock(),
       locations as unknown as LocationsService,
+      accessAdmin as unknown as AccessAdminService,
+      calculations as unknown as CalculationsService,
     );
   });
 
@@ -145,7 +167,7 @@ describe('SubsidiariesService', () => {
 
       expect(prisma.subsidiary.findMany).toHaveBeenCalledTimes(1);
       expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
-        where: { id: { in: ['sub-1', 'sub-2'] } },
+        where: { id: { in: ['sub-1', 'sub-2'] }, organisationId: 'org-1' },
         orderBy: { createdAt: 'asc' },
       });
       expect(result).toHaveLength(2);
@@ -159,7 +181,7 @@ describe('SubsidiariesService', () => {
       const result = await service.list(user);
 
       expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
-        where: { id: { in: [] } },
+        where: { id: { in: [] }, organisationId: 'org-1' },
         orderBy: { createdAt: 'asc' },
       });
       expect(result).toEqual([]);
@@ -228,12 +250,14 @@ describe('SubsidiariesService', () => {
     });
 
     it.each([
-      ['a scoped super_admin', makeSuperAdmin()],
-      ['an auditor', makeAuditor()],
-    ])('refuses %s with 403 (company.write is the masterkey\'s) — nothing written or audited', async (_who, user) => {
+      // inc26-group-tree: a super_admin creates child companies only, so a
+      // `company` (the default type) is refused before anything is read.
+      ['a scoped super_admin', makeSuperAdmin(), 'A super_admin creates child companies only, under a company it is granted'],
+      ['an auditor', makeAuditor(), 'Only a masterkey may modify subsidiaries'],
+    ])('refuses %s with 403 (company.write is the masterkey\'s) — nothing written or audited', async (_who, user, sentence) => {
       const e = await service.create(user, dto).catch((err: unknown) => err);
       expect(e).toBeInstanceOf(ForbiddenException);
-      expect((e as Error).message).toBe('Only a masterkey may modify subsidiaries');
+      expect((e as Error).message).toBe(sentence);
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(prisma.txClient.subsidiary.create).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
@@ -663,6 +687,7 @@ describe('SubsidiariesService', () => {
         reviewRecords: 1,
         openRecords: 2,
         locations: 2,
+        children: 0,
         periodLocks: 1,
         targets: 3,
         denominators: 4,
@@ -689,7 +714,7 @@ describe('SubsidiariesService', () => {
       countLocations(prisma, { total: 0 });
       await service.summary(user, 'sub-1');
       const scope = { OR: [{ subsidiaryId: 'sub-1', category: { in: ['Electricity'] } }, { subsidiaryId: { in: ['sub-1'] }, createdBy: user.id }] };
-      const recordCounts = prisma.activityRecord.count.mock.calls.map(([args]: [{ where: { AND?: unknown } }]) => args.where.AND);
+      const recordCounts = prisma.txClient.activityRecord.count.mock.calls.map(([args]: [{ where: { AND?: unknown } }]) => args.where.AND);
       expect(recordCounts.length).toBeGreaterThan(0);
       for (const and of recordCounts) expect(and).toEqual([scope]);
     });
@@ -702,57 +727,54 @@ describe('SubsidiariesService', () => {
       expect((await service.summary(user, 'sub-1')).hasBlockingDependents).toBe(false);
     });
 
-    it('a location a concurrent delete removed during the sweep counts as cleared: the subsidiary still goes (Codex review of #350)', async () => {
+    it('a company with an empty facility is not deleted, and neither is the facility (inc26-group-tree, RD9)', async () => {
+      // It used to be: the delete cleared record-free facilities, audited. The
+      // tree lists a facility as a node, and a node with one is not deleted.
       const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      countRecords(prisma, []);
-      countLocations(prisma, { total: 2 });
-      const gone = makeLocation({ id: 'loc-gone', subsidiaryId: 'sub-1' });
-      const kept = makeLocation({ id: 'loc-kept', subsidiaryId: 'sub-1' });
-      prisma.txClient.location.findMany.mockResolvedValue([gone, kept]);
-      locations.deleteLocationForTrustedParent.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-
-      await expect(service.remove(user, 'sub-1')).resolves.toEqual({ id: 'sub-1', deleted: true });
-      expect(locations.deleteLocationForTrustedParent.mock.calls.map((c) => c[2])).toEqual([gone, kept]);
-      expect(prisma.txClient.subsidiary.delete).toHaveBeenCalledWith({ where: { id: 'sub-1' } });
-    });
-
-    it('a record-free location does NOT block — the delete clears it, audited', async () => {
-      // It used to. The refusal existed because the FK cascade destroyed
-      // locations unaudited; writing a row each removes the objection, and PR 3
-      // made the friction routine by requiring a location at create time.
-      const user = makeMasterkey();
-      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
       countLocations(prisma, { total: 1 });
-      const loc = makeLocation({ id: 'loc-1', subsidiaryId: 'sub-1' });
-      prisma.txClient.location.findMany.mockResolvedValue([loc]);
 
       const s = await service.summary(user, 'sub-1');
       expect(s.locations).toBe(1);
-      expect(s.hasBlockingDependents, 'the panel must agree with the guard').toBe(false);
+      expect(s.hasBlockingDependents, 'the panel must agree with the guard').toBe(true);
+      expect(s.blockerCounts).toEqual([{ kind: 'locations', count: 1 }]);
 
-      await expect(service.remove(user, 'sub-1')).resolves.toEqual({
-        id: 'sub-1',
-        deleted: true,
-      });
-      expect(locations.deleteLocationForTrustedParent).toHaveBeenCalledTimes(1);
-      expect(locations.deleteLocationForTrustedParent.mock.calls[0][2]).toBe(loc);
-      // On the TRANSACTION's client. Handing the deleter `this.prisma` instead
-      // survived the whole suite — the assertion above reads argument 2 and
-      // never argument 0.
-      expect(locations.deleteLocationForTrustedParent.mock.calls[0][0]).toBe(
-        prisma.txClient,
-      );
-      // And scoped to THIS subsidiary. Dropping the `where` from the findMany
-      // left 409 tests green while deleting every location in the database,
-      // across every organisation — the single most destructive query this
-      // change adds, and nothing pinned it.
-      expect(prisma.txClient.location.findMany).toHaveBeenCalledWith({
-        where: { subsidiaryId: 'sub-1' },
-      });
+      const e = await service.remove(user, 'sub-1').catch((err: unknown) => err);
+      expect(e).toBeInstanceOf(ConflictException);
+      expect(e).toMatchObject({ response: { code: 'subsidiary_in_use' } });
+      expect((e as Error).message).toMatch(/1 facility\(ies\)/);
+      expect(locations.deleteLocationForTrustedParent).not.toHaveBeenCalled();
+      expect(prisma.txClient.location.findMany).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it('a company with a child company is not deleted, and the refusal names child companies', async () => {
+      const user = makeMasterkey();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      stubRead(prisma, (c) => c.subsidiary.count, 1);
+
+      const e = await service.remove(user, 'sub-1').catch((err: unknown) => err);
+      expect(e).toMatchObject({ response: { code: 'subsidiary_in_use' } });
+      expect((e as Error).message).toMatch(/1 child company node\(s\)/);
+      expect(prisma.txClient.subsidiary.count).toHaveBeenCalledWith({ where: { parentId: 'sub-1' } });
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+      const s = await service.summary(user, 'sub-1');
+      expect(s.children).toBe(1);
+      expect(s.blockerCounts).toEqual([{ kind: 'children', count: 1 }]);
+    });
+
+    it('an empty leaf is deleted, with one audit row and no facility sweep', async () => {
+      const user = makeMasterkey();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+
+      await expect(service.remove(user, 'sub-1')).resolves.toEqual({ id: 'sub-1', deleted: true });
+      expect(audit.record).toHaveBeenCalledTimes(1);
+      expect(audit.record.mock.calls[0][1]).toMatchObject({ action: 'delete', entity: 'subsidiary', entityId: 'sub-1' });
+      expect(locations.deleteLocationForTrustedParent).not.toHaveBeenCalled();
     });
 
     it('a location holding ANOTHER subsidiary\'s record blocks', async () => {
@@ -784,11 +806,9 @@ describe('SubsidiariesService', () => {
 
     it.each([
       'terminalRecords', 'reviewRecords', 'openRecords',
-      // `locations` is deliberately absent: a record-free location is cleared
-      // by the delete now, audited, so it is never something the user must
-      // remove first. `locationsWithRecords` took its place, and blocks for the
-      // geography reason rather than the audit one.
-      'locationsHoldingForeignRecords', 'periodLocks', 'targets', 'denominators',
+      // inc26-group-tree (RD9): any facility and any child node block.
+      'locations', 'children',
+      'periodLocks', 'targets', 'denominators',
     ] as const)('%s alone blocks the delete, so it belongs in the blocker list', async (key) => {
       // `describeBlockers` is now the only thing that decides, so this pins the
       // summary and the guard to it by setting each dependent to 1 ON ITS OWN
@@ -801,8 +821,8 @@ describe('SubsidiariesService', () => {
         terminalRecords: () => countRecords(prisma, ['approved']),
         reviewRecords: () => countRecords(prisma, ['submitted']),
         openRecords: () => countRecords(prisma, ['draft']),
-        locationsHoldingForeignRecords: () =>
-          countLocations(prisma, { total: 1, holdingForeign: 1 }),
+        locations: () => countLocations(prisma, { total: 1 }),
+        children: () => stubRead(prisma, (c) => c.subsidiary.count, 1),
         periodLocks: () => stubRead(prisma, (c) => c.periodLock.count, 1),
         targets: () => stubRead(prisma, (c) => c.target.count, 1),
         denominators: () => stubRead(prisma, (c) => c.subsidiaryDenominator.count, 1),
@@ -833,15 +853,16 @@ describe('SubsidiariesService', () => {
 
       await service.summary(user, 'sub-1');
 
+      // Counted in the summary's own snapshot (owner's seventh review of WP7).
       for (const counter of [
-        prisma.location.count,
-        prisma.periodLock.count,
-        prisma.target.count,
-        prisma.subsidiaryDenominator.count,
+        prisma.txClient.location.count,
+        prisma.txClient.periodLock.count,
+        prisma.txClient.target.count,
+        prisma.txClient.subsidiaryDenominator.count,
       ]) {
         expect(counter).toHaveBeenCalledWith({ where: { subsidiaryId: 'sub-1' } });
       }
-      for (const call of prisma.activityRecord.count.mock.calls) {
+      for (const call of prisma.txClient.activityRecord.count.mock.calls) {
         expect(call[0].where).toMatchObject({ subsidiaryId: 'sub-1' });
       }
     });
@@ -857,7 +878,12 @@ describe('SubsidiariesService', () => {
       await service.summary(user, 'sub-1');
 
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      // One read-only snapshot for the organisation check and the counts —
+      // REPEATABLE READ, no lock (owner's seventh review of WP7, P2).
+      expect(prisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ isolationLevel: 'RepeatableRead' }),
+      );
     });
 
     it('reports the SAME sentences the 409 uses — they cannot diverge', async () => {
@@ -1012,9 +1038,16 @@ describe('SubsidiariesService', () => {
 
       await service.remove(user, 'sub-1');
 
-      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      // The row lock, then (after the counts) the grants' removal (WP7).
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
       const [fragments] = prisma.$queryRaw.mock.calls[0] as [string[]];
       expect(fragments.join('?')).toMatch(/FOR UPDATE/);
+      expect((prisma.$queryRaw.mock.calls[1] as [string[]])[0].join('?')).toMatch(/DELETE FROM user_subsidiary_access/);
+      // The organisation's admin lock comes before the row lock (owner review
+      // of WP7): a grant change holds it and share-locks this row.
+      expect((prisma.$executeRaw.mock.calls[0] as [string[]])[0].join('?')).toMatch(/pg_advisory_xact_lock/);
+      expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(prisma.$queryRaw.mock.invocationCallOrder[0]);
+      expect(prisma.$queryRaw.mock.invocationCallOrder[1]).toBeGreaterThan(prisma.txClient.activityRecord.count.mock.invocationCallOrder[0]);
       // Order is the invariant, not mere presence: a lock taken AFTER the
       // counts protects nothing at all.
       const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
@@ -1060,6 +1093,7 @@ describe('SubsidiariesService', () => {
 
       const s = await service.summary(user, 'sub-1');
       expect(s.blockerCounts).toEqual([
+        { kind: 'locations', count: 2 },
         { kind: 'reviewRecords', count: 1 },
         { kind: 'openRecords', count: 2 },
         { kind: 'locationsHoldingForeignRecords', count: 1 },
@@ -1131,7 +1165,7 @@ describe('SubsidiariesService', () => {
       expect(s.blockers).toEqual(['1 open inventory boundary version(s) declaring it']);
       expect(s.blockerCounts).toEqual([{ kind: 'openBoundaryVersions', count: 1 }]);
       expect(Object.keys(s).sort()).toEqual([
-        'blockerCounts', 'blockers', 'denominators', 'hasBlockingDependents', 'locations', 'openRecords',
+        'blockerCounts', 'blockers', 'children', 'denominators', 'hasBlockingDependents', 'locations', 'openRecords',
         'periodLocks', 'reviewRecords', 'subsidiaryId', 'targets', 'terminalRecords',
       ]);
     });

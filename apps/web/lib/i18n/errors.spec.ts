@@ -42,6 +42,20 @@ describe("a code the catalogue knows", () => {
     expect(describe_(e, "tr").title).toMatch(/^Week 3 2025 raporlama/);
   });
 
+  it("names an unpriced geography by its name in the user's language, the code beside it (inc26-group-tree)", () => {
+    const e = new ApiError("No emission factor set … UK.", 422, "geography_without_factors", { geography: "UK" });
+    expect(describe_(e, "en").title).toBe(
+      "No emission factor set in this environment can price United Kingdom (UK). Choose a geography the factor library covers.",
+    );
+    expect(describe_(e, "tr").title).toMatch(/^Bu ortamdaki hiçbir emisyon faktörü seti Birleşik Krallık \(UK\) için/);
+  });
+
+  it("shows a blocked associate tick's server sentence, which names each blocker", () => {
+    const e = new ApiError("This company cannot become an associate while it has user assignments. Nothing was changed.", 409, "control_change_blocked");
+    expect(describe_(e, "en")).toEqual({ title: e.message });
+    expect(describe_(e, "tr")).toEqual({ title: MESSAGES.tr.errors.codes.control_change_blocked, description: e.message });
+  });
+
   it("a not-found code says which kind of thing, the same for everyone", () => {
     const e = new ApiError("Activity record not found", 404, "record_not_found");
     expect(describe_(e, "tr").title).toBe("Faaliyet kaydı bulunamadı — silinmiş olabilir.");

@@ -47,7 +47,8 @@ const member = (over: Partial<UserSummaryDTO> = {}): UserSummaryDTO => ({
   ...over,
 });
 const grant = (subsidiaryId: string, categories: Category[] = []) => ({ subsidiaryId, categories });
-const companies = (...ids: string[]) => ids.map((id) => ({ id, legalName: id.toUpperCase() }));
+const companies = (...ids: string[]) =>
+  ids.map((id) => ({ id, legalName: id.toUpperCase(), nodeType: 'company' as const, control: 'controlled' as const }));
 
 const masterkey: Reader = { id: 'mk', role: 'masterkey', accessibleSubsidiaryIds: ['a', 'b', 'c'] };
 const superAdmin = (...ids: string[]): Reader => ({ id: 'sa', role: 'super_admin', accessibleSubsidiaryIds: ids });
@@ -164,6 +165,18 @@ describe('The access picker shows and changes the whole selection', () => {
     expect(state).toEqual({ count: 10, total: 10, allSelected: true, noneSelected: false });
     expect(tr('picker.selectedCount', { count: '10', total: '10' })).toBe('10 / 10 seçili');
     expect(en('picker.selectedCount', { count: '10', total: '10' })).toBe('10 of 10 selected');
+  });
+
+  it('lists neither an associate nor a sector group — the eight companies only (inc26-group-tree)', () => {
+    const eight = companies(...'abcdefgh'.split(''));
+    const org = [
+      ...eight,
+      { id: 'assoc', legalName: 'Associate', nodeType: 'company' as const, control: 'associate' as const },
+      { id: 'group', legalName: 'Sector group', nodeType: 'sector_group' as const, control: 'controlled' as const },
+    ];
+    expect(assignableCompanies(masterkey, org).map((s) => s.id)).toEqual('abcdefgh'.split(''));
+    // Even if a scoped reader's list somehow held one.
+    expect(assignableCompanies(superAdmin('a', 'assoc', 'group'), org).map((s) => s.id)).toEqual(['a']);
   });
 
   it('select all keeps a grant the list does not show, and counts only listed companies', () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CATEGORIES, type Category, type UserRole } from '@/lib/types';
 import { copyFor } from '@/lib/i18n/testing';
 import { MESSAGES } from '@/messages';
-import { categoryGate, categoryGateMessage, fallbackCategory, offeredCategories, type EntryUser } from './entry-categories-view';
+import { entryCompanies, categoryGate, categoryGateMessage, fallbackCategory, offeredCategories, type EntryUser } from './entry-categories-view';
 
 /**
  * Spec "Data Entry offers a standard user only granted categories"
@@ -88,5 +88,17 @@ describe('the category gate — edges', () => {
     const gate = categoryGate(standardUser([{ subsidiaryId: A, categories: ['Fuel', 'Electricity'] }]), A, null);
     expect(fallbackCategory(gate, 'Fuel')).toBeNull();
     expect(categoryGateMessage(gate, named('en'), copyFor('dataEntry', 'en'))).toBeNull();
+  });
+});
+
+describe('entryCompanies — the companies Data Entry offers (inc26-group-tree)', () => {
+  it('lists the holding and the companies, never a sector group or an associate', () => {
+    const node = (id: string, nodeType: 'holding' | 'sector_group' | 'company' | 'child_company', control: 'controlled' | 'associate' = 'controlled') =>
+      ({ id, nodeType, control });
+    const list = [
+      node('H', 'holding'), node('G', 'sector_group'), node('A', 'company'), node('B', 'company'),
+      node('C', 'child_company'), node('X', 'company', 'associate'),
+    ];
+    expect(entryCompanies(list).map((s) => s.id)).toEqual(['H', 'A', 'B', 'C']);
   });
 });

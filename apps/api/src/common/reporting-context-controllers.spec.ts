@@ -9,6 +9,7 @@ import * as contextDto from './reporting-context-query.dto';
 import * as summaryDto from '../emissions/dto/emissions-summary-query.dto';
 import * as matrixDto from '../emissions/dto/tracking-matrix-query.dto';
 import * as completenessDto from '../emissions/dto/completeness-query.dto';
+import * as rollUpDto from '../emissions/dto/roll-up-query.dto';
 import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from './coded-validation.pipe';
 import { controllerModule } from './controller-metadata.test-support';
 import type { EmissionsService } from '../emissions/emissions.service';
@@ -23,7 +24,7 @@ const { EmissionsController } = controllerModule<typeof import('../emissions/emi
   resolve(__dirname, '../emissions/emissions.controller.ts'), {
     ...dependencies, './emissions.service': { EmissionsService: class {} },
     './dto/emissions-summary-query.dto': summaryDto, './dto/tracking-matrix-query.dto': matrixDto,
-    './dto/completeness-query.dto': completenessDto,
+    './dto/completeness-query.dto': completenessDto, './dto/roll-up-query.dto': rollUpDto,
   },
 );
 const { IntensityController } = controllerModule<typeof import('../intensity/intensity.controller')>(

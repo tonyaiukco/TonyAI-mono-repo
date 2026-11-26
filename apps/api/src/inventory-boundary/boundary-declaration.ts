@@ -209,6 +209,19 @@ export interface VersionRows {
  * `copyOf`, W8): months and decisions included; each source a new id; names
  * and geography cleared, read live again until the new version freezes (W7).
  */
+/** A version's rows without the named subsidiaries' declarations — every row
+ *  of a declaration carries its subsidiary (a copy leaving a closed node out). */
+export function withoutSubsidiaries(source: VersionRows, left: ReadonlySet<string>): VersionRows {
+  const keep = <T extends { subsidiaryId: string }>(rows: readonly T[]) => rows.filter((r) => !left.has(r.subsidiaryId));
+  return {
+    subsidiaries: keep(source.subsidiaries),
+    sites: keep(source.sites),
+    policies: keep(source.policies),
+    cells: keep(source.cells),
+    sources: keep(source.sources),
+  };
+}
+
 export function copiedRows(source: VersionRows, boundaryId: string, newId: () => string): VersionRows {
   return {
     subsidiaries: source.subsidiaries.map((s) => ({ ...s, boundaryId, subsidiaryName: null, geographyCode: null })),

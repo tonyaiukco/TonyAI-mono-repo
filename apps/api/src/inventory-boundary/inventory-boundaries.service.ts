@@ -1,19 +1,23 @@
 import { ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma, type InventoryBoundary } from '@tonyai/db';
-import { inventoryReportingPeriodsFor, can } from '@tonyai/shared-types';
+import { inventoryReportingPeriodsFor, can, holdsRecords } from '@tonyai/shared-types';
 import type {
   CreateInventoryBoundaryRequest,
   InventoryBoundaryVersionDTO,
   InventoryBoundaryVersionSummary,
+  ControlKind,
   ListInventoryBoundariesParams,
+  NodeType,
   PutInventoryBoundarySubsidiaryRequest,
 } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { lockAndReadActor } from '../auth/access-admin.service';
 import { ResourceNotFoundError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
-import { copiedRows, declarationOf, declarationRows, type DeclarationRows, type VersionRows } from './boundary-declaration';
+import { boundarySubsidiaryNotReportable } from '../subsidiaries/tree-errors';
+import { copiedRows, declarationOf, declarationRows, withoutSubsidiaries, type DeclarationRows, type VersionRows } from './boundary-declaration';
 import { boundaryGaps } from './boundary-gaps';
 import { lockBoundaryHeader } from './boundary-lock';
 import { readBoundaryRows, readDeclaration, readVersionRows } from './boundary-rows';
@@ -45,6 +49,19 @@ import {
  */
 
 const WRITE_TX = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000 };
+/** Companies read FOR SHARE, in id order (no lock-order deadlock between two
+ *  writers): the boundary's closed-node rule (D6) holds against a concurrent
+ *  associate tick, which takes the row FOR NO KEY UPDATE. */
+async function lockCompanies(
+  tx: Tx,
+  ids: readonly string[],
+): Promise<{ id: string; organisationId: string; nodeType: NodeType; control: ControlKind }[]> {
+  if (ids.length === 0) return [];
+  return tx.$queryRaw`
+    SELECT id::text AS id, organisation_id::text AS "organisationId", node_type::text AS "nodeType", control::text AS control
+      FROM subsidiaries WHERE id = ANY(${[...new Set(ids)].sort()}::uuid[]) ORDER BY id FOR SHARE`;
+}
+
 /** A version's rows read in one snapshot: between READ COMMITTED statements a
  * source could arrive at a site the read before it did not load. */
 const READ_TX = { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15_000 };
@@ -90,7 +107,13 @@ export class InventoryBoundariesService {
         organisationId: user.organisationId,
         reportingYear: query.reportingYear,
         ...(can(user.role, 'scope.granted')
-          ? { subsidiaries: { some: { subsidiaryId: { in: user.accessibleSubsidiaryIds } } } }
+          ? {
+              OR: [
+                { subsidiaries: { some: { subsidiaryId: { in: user.accessibleSubsidiaryIds } } } },
+                // The open version a super_admin declares its companies in (D7).
+                ...(can(user.role, 'boundary.write_granted') ? [{ frozenAt: null }] : []),
+              ],
+            }
           : {}),
       },
       orderBy: { version: 'desc' },
@@ -117,6 +140,7 @@ export class InventoryBoundariesService {
   async create(user: RequestUser, dto: CreateInventoryBoundaryRequest): Promise<InventoryBoundaryVersionDTO> {
     const organisationId = this.writerOrganisation(user);
     return this.write('create', dto.copyOf ?? null, async (tx) => {
+      const writer = await this.lockVersionWriter(tx, user, organisationId);
       let copy: VersionRows | null = null;
       if (dto.copyOf !== undefined) {
         if (!(await lockBoundaryHeader(tx, dto.copyOf, organisationId, 'share'))) {
@@ -124,6 +148,12 @@ export class InventoryBoundariesService {
         }
         copy = await readVersionRows(tx, dto.copyOf);
       }
+      // An associate or a sector group is outside the boundary (D6, TA022): a
+      // copy of a version declaring one, from before it was ticked, leaves it
+      // out, and its audit row says so.
+      const leftOut =
+        copy === null ? [] : (await lockCompanies(tx, copy.subsidiaries.map((s) => s.subsidiaryId))).filter((c) => !holdsRecords(c)).map((c) => c.id);
+      if (copy !== null && leftOut.length > 0) copy = withoutSubsidiaries(copy, new Set(leftOut));
       const newest = await tx.inventoryBoundary.findFirst({
         where: { organisationId, reportingYear: dto.reportingYear },
         orderBy: { version: 'desc' },
@@ -135,7 +165,7 @@ export class InventoryBoundariesService {
       });
       if (copy !== null) await insertVersionRows(tx, copiedRows(copy, header.id, randomUUID));
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'create',
           entity: 'inventory_boundary',
@@ -144,11 +174,12 @@ export class InventoryBoundariesService {
             reportingYear: header.reportingYear,
             version: header.version,
             ...(dto.copyOf !== undefined ? { copyOf: dto.copyOf } : {}),
+            ...(leftOut.length > 0 ? { leftOutClosedSubsidiaries: [...leftOut].sort() } : {}),
           },
         },
         tx,
       );
-      return this.versionIn(tx, header.id, organisationId, user);
+      return this.versionIn(tx, header.id, organisationId, writer);
     }, versionTaken);
   }
 
@@ -161,11 +192,18 @@ export class InventoryBoundariesService {
     subsidiaryId: string,
     body: PutInventoryBoundarySubsidiaryRequest,
   ): Promise<InventoryBoundaryVersionDTO> {
-    const organisationId = this.writerOrganisation(user);
+    const organisationId = this.declarationWriterOrganisation(user, subsidiaryId);
     return this.write('put', id, async (tx) => {
-      const header = await this.lockOpen(tx, id, organisationId);
-      const subsidiary = await tx.subsidiary.findFirst({ where: { id: subsidiaryId, organisationId }, select: { id: true } });
-      if (subsidiary === null) throw new ResourceNotFoundError('subsidiary_not_found');
+      // From here on the writer as re-read under the lock: its role and its
+      // companies decide the write AND filter the answer (owner review, P1).
+      const writer = await this.lockDeclarationWriter(tx, user, organisationId, subsidiaryId);
+      const header = await this.lockOpen(tx, id, organisationId, writer);
+      // FOR SHARE: an associate tick locks the row FOR NO KEY UPDATE before it
+      // counts this version's declarations, so the two are serialised.
+      const [subsidiary] = (await lockCompanies(tx, [subsidiaryId])).filter((c) => c.organisationId === organisationId);
+      if (subsidiary === undefined) throw new ResourceNotFoundError('subsidiary_not_found');
+      // An associate or a sector group is outside the boundary (D6).
+      if (!holdsRecords(subsidiary)) throw boundarySubsidiaryNotReportable();
       // Each site one of this subsidiary's own locations — a sibling's, another
       // organisation's and a missing one alike (the key `locations(id, subsidiary_id)`).
       const siteIds = [...new Set(body.sites.map((s) => s.locationId))];
@@ -179,8 +217,10 @@ export class InventoryBoundariesService {
       await tx.inventoryBoundarySubsidiary.deleteMany({ where: { boundaryId: header.id, subsidiaryId: subsidiary.id } });
       const rows = declarationRows({ boundaryId: header.id, organisationId, subsidiaryId: subsidiary.id }, body, randomUUID);
       await insertDeclaration(tx, rows);
+      // Audited as the writer the lock re-read: the role that authorised it
+      // (owner's third review of WP7, P2).
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'update',
           entity: 'inventory_boundary',
@@ -189,23 +229,28 @@ export class InventoryBoundariesService {
         },
         tx,
       );
-      return this.versionIn(tx, header.id, organisationId, user);
+      return this.versionIn(tx, header.id, organisationId, writer);
     }, declaredParentGone);
   }
 
   /** Removes a subsidiary from an open version — the blocker W9's 409 asks to clear. */
   async deleteSubsidiary(user: RequestUser, id: string, subsidiaryId: string): Promise<InventoryBoundaryVersionDTO> {
-    const organisationId = this.writerOrganisation(user);
+    const organisationId = this.declarationWriterOrganisation(user, subsidiaryId);
     return this.write('delete_subsidiary', id, async (tx) => {
-      const header = await this.lockOpen(tx, id, organisationId);
+      // From here on the writer as re-read under the lock: its role and its
+      // companies decide the write AND filter the answer (owner review, P1).
+      const writer = await this.lockDeclarationWriter(tx, user, organisationId, subsidiaryId);
+      const header = await this.lockOpen(tx, id, organisationId, writer);
       // Not declared — another organisation's subsidiary included — reads as none.
       const before = await readDeclaration(tx, header.id, subsidiaryId);
       if (before === null) throw new ResourceNotFoundError('subsidiary_not_found');
       await tx.inventoryBoundarySubsidiary.delete({
         where: { boundaryId_subsidiaryId: { boundaryId: header.id, subsidiaryId: before.subsidiaryId } },
       });
+      // Audited as the writer the lock re-read: the role that authorised it
+      // (owner's third review of WP7, P2).
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'update',
           entity: 'inventory_boundary',
@@ -214,7 +259,7 @@ export class InventoryBoundariesService {
         },
         tx,
       );
-      return this.versionIn(tx, header.id, organisationId, user);
+      return this.versionIn(tx, header.id, organisationId, writer);
     });
   }
 
@@ -227,11 +272,18 @@ export class InventoryBoundariesService {
   async confirm(user: RequestUser, id: string): Promise<InventoryBoundaryVersionDTO> {
     const organisationId = this.writerOrganisation(user);
     return this.write('confirm', id, async (tx) => {
+      const writer = await this.lockVersionWriter(tx, user, organisationId);
       const header = await this.lockVersion(tx, id, organisationId);
       if (header.decision === 'confirmed') throw new BoundaryFrozenError();
       if (header.frozenAt !== null) throw new BoundaryConfirmRequiresCopyError();
       const boundary = buildBoundarySnapshot(await readBoundaryRows(tx, header));
-      if (boundary.subsidiaryIds.length === 0 || boundaryGaps(boundary).length > 0) throw new BoundaryIncompleteError();
+      if (boundary.subsidiaryIds.length === 0) throw new BoundaryIncompleteError();
+      // A company ticked associate after it was declared (D6) is removed from
+      // the version first; read FOR SHARE, so no tick lands meanwhile.
+      if ((await lockCompanies(tx, boundary.subsidiaryIds)).some((c) => !holdsRecords(c))) {
+        throw boundarySubsidiaryNotReportable();
+      }
+      if (boundaryGaps(boundary).length > 0) throw new BoundaryIncompleteError();
       // A cadence no priced record could meet, saved before the rule existed
       // (a monthly Refrigerants policy; PR #360 reviews), is not confirmed:
       // the declaration is saved again with an allowed one first.
@@ -246,7 +298,7 @@ export class InventoryBoundariesService {
         data: { decision: 'confirmed', decidedBy: user.id, decidedAt: now, frozenAt: now },
       });
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'confirm',
           entity: 'inventory_boundary',
@@ -260,7 +312,7 @@ export class InventoryBoundariesService {
         },
         tx,
       );
-      return this.versionIn(tx, header.id, organisationId, user);
+      return this.versionIn(tx, header.id, organisationId, writer);
     });
   }
 
@@ -268,7 +320,29 @@ export class InventoryBoundariesService {
   async remove(user: RequestUser, id: string): Promise<void> {
     const organisationId = this.writerOrganisation(user);
     await this.write('delete', id, async (tx) => {
-      const header = await this.lockOpen(tx, id, organisationId);
+      const writer = await this.lockVersionWriter(tx, user, organisationId);
+      const header = await this.lockOpen(tx, id, organisationId, writer);
+      // Deleting the newest version makes the one before it current again: not
+      // when that one declares a company ticked associate since — a tick
+      // looks at the newest version only (owner reviews of WP7). Its
+      // companies are read FOR SHARE, as a tick locks the row; TA022 holds it
+      // for every writer.
+      const previous = await tx.inventoryBoundary.findFirst({
+        where: { organisationId, reportingYear: header.reportingYear, version: { lt: header.version } },
+        orderBy: { version: 'desc' },
+        select: { id: true },
+      });
+      if (previous !== null) {
+        const declaredBefore = await tx.inventoryBoundarySubsidiary.findMany({
+          where: { boundaryId: previous.id },
+          select: { subsidiaryId: true },
+        });
+        if ((await lockCompanies(tx, declaredBefore.map((d) => d.subsidiaryId))).some((c) => !holdsRecords(c))) {
+          throw boundarySubsidiaryNotReportable(
+            'Deleting this version would make the version before it current again, and that version declares a company now outside the inventory boundary (an associate). Edit or confirm this version instead.',
+          );
+        }
+      }
       const declared = await tx.inventoryBoundarySubsidiary.findMany({
         where: { boundaryId: header.id },
         select: { subsidiaryId: true },
@@ -276,7 +350,7 @@ export class InventoryBoundariesService {
       });
       await tx.inventoryBoundary.delete({ where: { id: header.id } });
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'delete',
           entity: 'inventory_boundary',
@@ -296,6 +370,56 @@ export class InventoryBoundariesService {
     return user.organisationId;
   }
 
+  /**
+   * A company's declaration (inc26-group-tree, D7, ruling R6): a masterkey
+   * anywhere in its organisation, a super_admin in its granted companies —
+   * another company answers as unknown, before anything is read. The version
+   * lifecycle stays on `writerOrganisation`.
+   */
+  private declarationWriterOrganisation(user: RequestUser, subsidiaryId: string): string {
+    if (!can(user.role, 'boundary.write_granted')) {
+      throw new ForbiddenException("Only a masterkey or a company's super_admin may change its inventory boundary declaration");
+    }
+    if (!user.organisationId) throw new ForbiddenException('No organisation context for this user');
+    if (can(user.role, 'scope.granted') && !user.accessibleSubsidiaryIds.includes(subsidiaryId)) {
+      throw new ResourceNotFoundError('subsidiary_not_found');
+    }
+    return user.organisationId;
+  }
+
+  /**
+   * The declaration writer as it stands now, under the organisation's
+   * administrative lock (the lock a grant change takes): a super_admin whose
+   * grant on the company was withdrawn, or who was demoted, while the request
+   * waited writes nothing — the company answers as unknown, as it would to a
+   * new request (owner review of WP7, P2; the same re-read as a child
+   * company's creation).
+   */
+  private async lockDeclarationWriter(tx: Tx, user: RequestUser, organisationId: string, subsidiaryId: string): Promise<RequestUser> {
+    const actor = await lockAndReadActor(tx, user, organisationId, 'boundary.write_granted');
+    if (actor.scope !== null && !actor.scope.has(subsidiaryId)) throw new ResourceNotFoundError('subsidiary_not_found');
+    // The reader the rest of the write — the frozen check and the answer —
+    // is scoped by: its role and companies now, not as authenticated. A
+    // company withdrawn meanwhile is not in the answer (owner review of WP7, P1).
+    return {
+      ...user,
+      role: actor.role,
+      accessibleSubsidiaryIds: actor.scope === null ? user.accessibleSubsidiaryIds : [...actor.scope].sort(),
+    };
+  }
+
+  /**
+   * A version's writer — its creation, confirmation or deletion — as it
+   * stands now, under the organisation's administrative lock and before the
+   * version is locked: a masterkey disabled or demoted while the request waited
+   * changes no version, and the answer and the audit row are the re-read
+   * role's (owner's fourth review of WP7, P2).
+   */
+  private async lockVersionWriter(tx: Tx, user: RequestUser, organisationId: string): Promise<RequestUser> {
+    const actor = await lockAndReadActor(tx, user, organisationId, 'boundary.write');
+    return { ...user, role: actor.role };
+  }
+
   /** The version's header, locked FOR UPDATE — or boundary_not_found. */
   private async lockVersion(tx: Tx, id: string, organisationId: string): Promise<InventoryBoundary> {
     if (!(await lockBoundaryHeader(tx, id, organisationId, 'update'))) throw new ResourceNotFoundError('boundary_not_found');
@@ -303,9 +427,22 @@ export class InventoryBoundariesService {
   }
 
   /** As `lockVersion`, refusing a frozen version (W10). */
-  private async lockOpen(tx: Tx, id: string, organisationId: string): Promise<InventoryBoundary> {
+  private async lockOpen(tx: Tx, id: string, organisationId: string, user: RequestUser): Promise<InventoryBoundary> {
     const header = await this.lockVersion(tx, id, organisationId);
-    if (header.frozenAt !== null) throw new BoundaryFrozenError();
+    if (header.frozenAt !== null) {
+      // A frozen version a scoped writer cannot read (it declares none of its
+      // companies) answers as unknown, as its read does — `boundary_frozen`
+      // would confirm that it exists (security review, WP7).
+      if (
+        can(user.role, 'scope.granted') &&
+        (await tx.inventoryBoundarySubsidiary.count({
+          where: { boundaryId: header.id, subsidiaryId: { in: user.accessibleSubsidiaryIds } },
+        })) === 0
+      ) {
+        throw new ResourceNotFoundError('boundary_not_found');
+      }
+      throw new BoundaryFrozenError();
+    }
     return header;
   }
 

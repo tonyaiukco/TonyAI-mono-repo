@@ -55,6 +55,7 @@ import { useReportingContext } from '@/lib/use-reporting-context';
 import { reportingContextKey } from '@/lib/reporting-context-url';
 import { ReportingContextBar, ReportingContextInvalid, selectionAvailable } from '@/components/reporting-context/reporting-context-bar';
 import { CATEGORY_SCOPE_MAP, REPORT_TEMPLATES, can } from '@/lib/types';
+import { previewConsolidation } from '@/lib/report-consolidation-view';
 import { liveReportNonAuthoritative } from '@/lib/emissions-view';
 import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import type {
@@ -145,6 +146,17 @@ function ReportsPageInner() {
   const [previewFailed, setPreviewFailed] = useState(false);
   const [downloading, setDownloading] = useState<ReportExportType | null>(null);
   const loadSeq = useRef(0);
+
+  // The methodology text's approach and associates come with the preview's own
+  // read — the same snapshot as its figures, re-read with them — and say so
+  // when that read failed or is still running (owner reviews of WP7, P2).
+  const consolidation = previewConsolidation(meta, previewFailed);
+  const approachText =
+    consolidation === 'loading'
+      ? t('methodologyApproachLoading')
+      : consolidation === 'failed'
+        ? t('methodologyApproachUnavailable')
+        : t(`methodologyApproach.${consolidation.approach}`);
 
   const refresh = useCallback(async () => {
     const mine = ++loadSeq.current;
@@ -515,9 +527,20 @@ function ReportsPageInner() {
                       </table>
                     </div>
 
+                    {/* Every live report states the approach and the associates
+                        it leaves out, whatever its options — as the PDF does
+                        beside its coverage (inc26-group-tree, D8; owner's third
+                        review of WP7, P2). */}
+                    <p className="rounded-lg bg-secondary/50 p-3 text-xs text-muted-foreground" data-testid="report-consolidation">
+                      {t.rich('consolidationLine', { strong: (chunks) => <strong>{chunks}</strong>, approach: approachText })}
+                      {typeof consolidation === 'object' && consolidation.associates.length > 0 && (
+                        <> {t('methodologyExclusions', { names: consolidation.associates.join(', ') })}</>
+                      )}
+                      {consolidation === 'failed' && <> {t('methodologyExclusionsUnavailable')}</>}
+                    </p>
                     {includeMethodology && (
                       <p className="rounded-lg bg-secondary/50 p-3 text-xs text-muted-foreground">
-                        {t.rich('methodology', { strong: (chunks) => <strong>{chunks}</strong> })}
+                        {t.rich('methodology', { strong: (chunks) => <strong>{chunks}</strong>, approach: approachText })}
                       </p>
                     )}
                   </CardContent>

@@ -27,7 +27,8 @@
     "formula_lead": "Formül olarak okunuyor",
     "would_block_submit": "Henüz incelemeye gönderilemez",
     "evidence_required": "Kanıt dosyası gerekiyor",
-    "category_not_granted": "Kategori size atanmamış"
+    "category_not_granted": "Kategori size atanmamış",
+    "entity_closed_to_data_entry": "Veri girişine kapalı"
   },
   "codes": {
     "query_too_broad": "Bu istek işleme sınırını aşıyor. Filtreleri daraltın veya daha küçük bir rapor isteyin.",
@@ -158,7 +159,16 @@
     "bulk_workbook_too_large": "Çalışma kitabı açıldığında {limitMb} MB'tan büyük. Kullanılmayan biçimlendirmeyi kaldırın ya da daha küçük dosyalara bölün.",
     "not_record_approver": "Bu kayda siz değil, başka bir kullanıcı karar verir.",
     "category_not_granted": "{category} kategorisi bu şirket için size atanmadı. Kategorileri şirketin bir Süper Yöneticisi atar.",
-    "standard_user_single_company": "Standart kullanıcı yalnızca bir bağlı şirkette çalışır ve bu değişiklik ona bir bağlı şirket daha verirdi. Hiçbir şey değiştirilmedi."
+    "standard_user_single_company": "Standart kullanıcı yalnızca bir bağlı şirkette çalışır ve bu değişiklik ona bir bağlı şirket daha verirdi. Hiçbir şey değiştirilmedi.",
+    "node_placement_invalid": "Bu tür bu üst düğümün altına yerleştirilemez. Alt holding ve sektör grubu holdingin ya da bir alt holdingin, şirket holdingin, bir alt holdingin ya da bir sektör grubunun, alt şirket ise bir şirketin ya da alt şirketin altında yer alır. Öz kaynak şirketinin alt düğümü olmaz ve yalnızca bir şirket ya da alt şirket öz kaynak olabilir.",
+    "node_type_fixed": "Bir şirket düğümünün türü oluşturulduktan sonra değiştirilemez.",
+    "tree_cycle": "Bir şirket kendi altına ya da altındaki bir düğümün altına taşınamaz.",
+    "node_move_blocked": "Bu şirket taşınamaz: kendisinde, altındaki bir düğümde ya da bunların bir tesisinde faaliyet kaydı var.",
+    "control_change_blocked": "Bu şirketin faaliyet kayıtları, kullanıcı atamaları, alt şirketleri ya da güncel bir envanter sınırı beyanı varken öz kaynak yapılamaz. Hiçbir şey değiştirilmedi.",
+    "entity_closed_to_data_entry": "Bu birim Kapsam 1 ve 2 envanterinin dışında (öz kaynak şirketi ya da sektör grubu); bu nedenle veri girişine kapalı.",
+    "subsidiary_not_assignable": "Öz kaynak şirketi ya da sektör grubu bir kullanıcıya atanamaz. Hiçbir şey değiştirilmedi.",
+    "boundary_subsidiary_not_reportable": "Öz kaynak şirketi ya da sektör grubu envanter sınırının dışındadır ve sınırda beyan edilemez.",
+    "geography_without_factors": "Bu ortamdaki hiçbir emisyon faktörü seti {geography} için hesaplama yapamıyor. Faktör kütüphanesinin kapsadığı bir coğrafya seçin."
   },
   "variants": {
     "variance_reason_required": {

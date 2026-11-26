@@ -45,6 +45,7 @@ import {
   ActivityTypeSlotConflictError,
   DuplicateActivityRecordError,
   PeriodLockedError,
+  EntityClosedToDataEntryError,
   SLOT_HOLDS_TYPED_MESSAGE,
   SLOT_HOLDS_UNTYPED_MESSAGE,
 } from '../activity-records/errors';
@@ -59,6 +60,7 @@ import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
 import { isFormulaLead } from '../common/csv-cell';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { PrismaService } from '../prisma/prisma.service';
+import { HOLDS_RECORDS_WHERE } from '../subsidiaries/reporting-set';
 import { StorageService } from '../storage/storage.service';
 import { StorageIntentsService, type ObjectRef } from '../storage/storage-intents.service';
 import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
@@ -234,6 +236,19 @@ export class BulkUploadService {
     const records = groupEquipmentLines(rows);
 
     const storedSlots = await this.loadStoredSlots(user, records);
+    // The caller's companies that are closed to data entry (a sector group, an
+    // associate): a row naming one is refused for that reason, before any slot
+    // check — a repeat of it is not a `duplicate_in_file` (inc26-group-tree;
+    // owner's fourth review of WP7, P2). The record path refuses it again, as
+    // the single entry does.
+    const closedIds = new Set(
+      user.accessibleSubsidiaryIds.length === 0
+        ? []
+        : (await this.prisma.subsidiary.findMany({
+            where: { id: { in: user.accessibleSubsidiaryIds }, NOT: HOLDS_RECORDS_WHERE },
+            select: { id: true },
+          })).map((r) => r.id),
+    );
     // An APPLY gets a batch, created BEFORE the loop so every record can carry
     // its id. A dry run gets none: it must provably write nothing.
     const batchId = dryRun
@@ -266,7 +281,7 @@ export class BulkUploadService {
           await this.processRow(
             user,
             parsed,
-            { dryRun, seenInFile, storedSlots, batchId },
+            { dryRun, seenInFile, storedSlots, batchId, closedIds },
             { accepted, errors, warnings },
           );
         } catch (error) {
@@ -363,8 +378,11 @@ export class BulkUploadService {
    */
   async template(user: RequestUser): Promise<Buffer> {
     const [subsidiaries, locations] = await Promise.all([
+      // Only nodes that hold records (inc26-group-tree): never a sector group
+      // or an associate, nor an associate's facilities — `holdsRecords` as a
+      // query.
       this.prisma.subsidiary.findMany({
-        where: { id: { in: user.accessibleSubsidiaryIds } },
+        where: { id: { in: user.accessibleSubsidiaryIds }, ...HOLDS_RECORDS_WHERE },
         select: {
           id: true,
           legalName: true,
@@ -375,7 +393,7 @@ export class BulkUploadService {
         take: TEMPLATE_ENTITY_LIMIT,
       }),
       this.prisma.location.findMany({
-        where: { subsidiaryId: { in: user.accessibleSubsidiaryIds } },
+        where: { subsidiaryId: { in: user.accessibleSubsidiaryIds }, subsidiary: HOLDS_RECORDS_WHERE },
         select: {
           id: true,
           subsidiaryId: true,
@@ -410,6 +428,7 @@ export class BulkUploadService {
       seenInFile: Set<string>;
       storedSlots: StoredSlots;
       batchId: string | null;
+      closedIds: ReadonlySet<string>;
     },
     out: {
       accepted: BulkUploadAcceptedRow[];
@@ -510,6 +529,14 @@ export class BulkUploadService {
         out.errors.push({ row, column: 'category', code: 'category_not_granted', message: error.message });
         return;
       }
+    }
+
+    // A company closed to data entry: the single entry's own refusal, before
+    // any slot is counted.
+    if (context.closedIds.has(dto.subsidiaryId)) {
+      const closed = new EntityClosedToDataEntryError();
+      out.errors.push({ row, column: null, code: 'entity_closed_to_data_entry', message: closed.message });
+      return;
     }
 
     // The canonical spelling IS the slot's identity. When the value names no
@@ -1416,6 +1443,10 @@ export class BulkUploadService {
     }
     if (error instanceof PeriodLockedError) {
       return { row, column: null, code: 'period_locked', message: error.message };
+    }
+    // The single-record refusal's own words (inc26-group-tree, D6).
+    if (error instanceof EntityClosedToDataEntryError) {
+      return { row, column: null, code: 'entity_closed_to_data_entry', message: error.message };
     }
     // Before the generic 403s: a standard user's row outside its categories
     // is that user's own answer, in the dry run and the apply alike.

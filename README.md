@@ -48,6 +48,7 @@ executives in multi-entity groups across the UK, Türkiye and the EU.
 
 | Area | What it does |
 | --- | --- |
+| Group tree | Companies as one tree of any depth — holding, sub-holdings, sector groups, companies, child companies — with controlled companies and associates, one consolidation approach and a roll-up per node |
 | Data entry | Monthly activity records per subsidiary or site; bulk CSV/XLSX import with a dry run |
 | Review and approval | Submit, review, approve; nobody approves a record they created |
 | Evidence | Files attached to records, stored privately and served through short-lived signed URLs |
@@ -153,8 +154,8 @@ All seed users share the password `TonyAI-CI!2026`, the seed's `TONYAI_TEST_PASS
 
 | Email | Role | Sees |
 | --- | --- | --- |
-| `admin@tonyai.local` | `masterkey` | All 5 subsidiaries |
-| `approver@tonyai.local` | `super_admin` | 4 subsidiaries — all but TonyAI Trading; approves the standard user's records there |
+| `admin@tonyai.local` | `masterkey` | The whole group tree: the root, 5 companies, a sector group, a child company and an associate |
+| `approver@tonyai.local` | `super_admin` | 4 companies — all but TonyAI Trading — and the child company it created under TonyAI Energy; approves the standard user's records there |
 | `entry@tonyai.local` | `standard_user` | 2 subsidiaries, every category (isolation demo) |
 | `review@tonyai.local` | `auditor` | Organisation-wide, read only |
 | `viewer@tonyai.local` | `auditor` | Organisation-wide, read only |

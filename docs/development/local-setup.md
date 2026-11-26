@@ -35,7 +35,7 @@ supabase start
 
 # 4. Create the schema and seed demo data
 pnpm db:migrate     # applies Prisma migrations (incl. RLS policies)
-pnpm db:seed        # 1 org, 5 subsidiaries, 8 locations, 5 users (every role, two auditors), the placeholder factor library for DEMO_YEAR (2026) — insert-if-absent
+pnpm db:seed        # 1 org as a group tree (root, 5 companies, a sector group, a child company, an associate), 8 locations, 5 users (every role, two auditors), the placeholder factor library for DEMO_YEAR (2026) — insert-if-absent
                     # + 96 approved Scope 1&2 records (90 subsidiary-level monthly, 6 location-level),
                     # one demo evidence file each, 3 targets + 12 intensity denominators
                     # A month reported per site is NOT also reported company-wide: the two
@@ -53,8 +53,8 @@ pnpm dev            # web -> http://localhost:3000   api -> http://localhost:300
 
 | Email | Password | Role | Sees |
 | --- | --- | --- | --- |
-| `admin@tonyai.local` | `TonyAI-CI!2026` | `masterkey` | all 5 subsidiaries (no grant) — decides a `super_admin`'s records, its own (a self-approval) and the fallback |
-| `approver@tonyai.local` | `TonyAI-CI!2026` | `super_admin` | 4 subsidiaries — every seed company but TonyAI Trading, which keeps no super_admin so the fallback to the masterkey has a home; decides the standard user's records in its four |
+| `admin@tonyai.local` | `TonyAI-CI!2026` | `masterkey` | the whole group tree — root, 5 companies, a sector group, a child company, an associate (no grant) — decides a `super_admin`'s records, its own (a self-approval) and the fallback |
+| `approver@tonyai.local` | `TonyAI-CI!2026` | `super_admin` | 4 companies — every seed company but TonyAI Trading, which keeps no super_admin so the fallback to the masterkey has a home — and the child company it created under TonyAI Energy; decides the standard user's records in them |
 | `entry@tonyai.local` | `TonyAI-CI!2026` | `standard_user` | 2 subsidiaries (TonyAI Energy and TonyAI Logistics), every category ticked — shaped like an account carried over from the earlier role model (tenant‑isolation demo) |
 | `review@tonyai.local` | `TonyAI-CI!2026` | `auditor` | organisation‑wide read only; no writes |
 | `viewer@tonyai.local` | `TonyAI-CI!2026` | `auditor` | organisation‑wide read only — dashboards, Emissions and reports; no writes |

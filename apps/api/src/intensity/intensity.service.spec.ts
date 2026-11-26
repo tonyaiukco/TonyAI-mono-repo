@@ -46,6 +46,11 @@ function createPrismaMock() {
   };
   return {
     tx,
+    // The reporting set (inc26-group-tree): by default every id asked holds
+    // records; a case that has a closed node says so.
+    subsidiary: {
+      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.map((id) => ({ id }))),
+    },
     subsidiaryDenominator: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
@@ -258,6 +263,17 @@ describe('IntensityService', () => {
     });
   });
 
+  it('leaves a sector group and an associate out of the selection the coverage ratio reads (owner review of WP7, P2)', async () => {
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }]);
+    const user = { ...admin, accessibleSubsidiaryIds: ['sub-1', 'sector', 'associate'] };
+    expect((await service.contextIntensity(user, { year: 2027 })).data.selectedSubsidiaryIds).toEqual(['sub-1']);
+    expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['sub-1', 'sector', 'associate'] }, nodeType: { not: 'sector_group' }, control: 'controlled' },
+      select: { id: true },
+    });
+    expect(prisma.subsidiaryDenominator.findMany.mock.calls[0][0].where.subsidiaryId).toEqual({ in: ['sub-1'] });
+  });
+
   it('restricts group intensity to revenue, including a single accessible subsidiary and the legacy route', async () => {
     const user = { ...admin, accessibleSubsidiaryIds: ['sub-1'] };
     await service.contextIntensity(user, { year: 2027 });
@@ -265,14 +281,14 @@ describe('IntensityService', () => {
     await service.intensity(user, 2027, '');
     expect(prisma.subsidiaryDenominator.findMany).toHaveBeenCalledTimes(3);
     for (const [query] of prisma.subsidiaryDenominator.findMany.mock.calls) {
-      expect(query.where).toEqual({ subsidiaryId: { in: ['sub-1'] }, year: 2027, metric: { in: ['revenue'] } });
+      expect(query.where).toEqual({ subsidiaryId: { in: ['sub-1'] }, subsidiary: { nodeType: { not: 'sector_group' }, control: 'controlled' }, year: 2027, metric: { in: ['revenue'] } });
     }
   });
 
   it.each(['', '  '])('uses the group predicate consistently for a blank internal selector %j', async (subsidiaryId) => {
     await service.contextIntensity(admin, { year: 2027, subsidiaryId });
     expect(prisma.subsidiaryDenominator.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, year: 2027, metric: { in: ['revenue'] } },
+      where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, subsidiary: { nodeType: { not: 'sector_group' }, control: 'controlled' }, year: 2027, metric: { in: ['revenue'] } },
     }));
   });
 
@@ -376,7 +392,7 @@ describe('IntensityService', () => {
     emissions.summary.mockResolvedValue(summaryOf(30, 0));
     const result = await service.contextIntensity(admin, { year: 2027, subsidiaryId: 'sub-1', scope: 2 });
     expect(prisma.subsidiaryDenominator.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { subsidiaryId: { in: ['sub-1'] }, year: 2027 },
+      where: { subsidiaryId: { in: ['sub-1'] }, subsidiary: { nodeType: { not: 'sector_group' }, control: 'controlled' }, year: 2027 },
     }));
     expect(result.data.selectedSubsidiaryIds).toEqual(['sub-1']);
     expect(result.data.metrics[0]).toMatchObject({ metric: 'employees', intensity: 3, contributingSubsidiaryIds: ['sub-1'] });

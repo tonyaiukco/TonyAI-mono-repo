@@ -62,6 +62,7 @@ const SERVER_WORDED: ReadonlySet<GenericErrorCode> = new Set([
 const SERVER_DETAILED: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
   ...CALCULATION_REFUSAL_CODES,
   "subsidiary_in_use",
+  "control_change_blocked",
   "evidence_records_refused",
   "evidence_backs_locked_records",
 ]);
@@ -87,6 +88,8 @@ export function localiseParams(
   for (const [key, value] of Object.entries(params ?? {})) {
     if (key === "period" && t.has(`periods.values.${value}`)) out[key] = t(`periods.values.${value}`);
     else if (key === "category" && t.has(`categories.${value}`)) out[key] = t(`categories.${value}`);
+    // A geography by its name, the code kept beside it: "Türkiye (TR)".
+    else if (key === "geography" && t.has(`geography.${value}`)) out[key] = `${t(`geography.${value}`)} (${value})`;
     // A record's status by its label, never the stored code (WP5): "Under
     // review" / "İncelemede", quoted by the sentences that name it.
     else if (key === "status" && t.has(`recordStatus.label.${value}`)) out[key] = t(`recordStatus.label.${value}`);

@@ -4,6 +4,7 @@ import {
   lockPeriod,
   ADMIN_EMAIL, ENTRY_EMAIL, API_BASE, E2E_YEAR, E2E_PERIOD,
   listAllPages,
+  deleteCompanyWithFacilities,
 } from './helpers';
 
 /**
@@ -78,7 +79,7 @@ test('contact details round-trip, and can be cleared once set', async ({ request
   })).json();
   expect(padded.contactPhone).toBe('+44 7700 900002');
 
-  await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
+  await deleteCompanyWithFacilities(request, token, sub.id);
 });
 
 test('a malformed address is refused before it reaches the column', async ({ request }) => {
@@ -118,15 +119,17 @@ test('summary counts every dependent, and agrees with the delete guard', async (
     periodLocks: 0, targets: 0, denominators: 0, hasBlockingDependents: false,
   });
 
-  // One location: counted, but NOT a blocker — the delete takes the
-  // subsidiary's own record-free locations with it, audited.
+  // One location: counted, and a blocker since the group tree (inc26-group-tree,
+  // RD9): a company with a facility is not deleted, and the summary agrees.
   const loc = await (await request.post(`${API_BASE}/locations`, {
     headers: bearer(token),
     data: { subsidiaryId: sub.id, name: 'E2E Summary Site', geographyCode: 'TR' },
   })).json();
   s = await read();
   expect(s.locations).toBe(1);
-  expect(s.hasBlockingDependents).toBe(false);
+  expect(s.hasBlockingDependents).toBe(true);
+  expect(s.blockerCounts).toEqual([{ kind: 'locations', count: 1 }]);
+  expect(await deleteStatus(), 'summary and guard must agree').toBe(409);
 
   // A draft record moves the open tier, not the terminal one.
   const rec = await (await request.post(`${API_BASE}/activity-records`, {
@@ -158,13 +161,16 @@ test('summary counts every dependent, and agrees with the delete guard', async (
   })).json();
   expect(neighbour.periodLocks, 'a lock on one subsidiary is not a lock on another').toBe(0);
   expect(neighbour.hasBlockingDependents).toBe(false);
-  await request.delete(`${API_BASE}/subsidiaries/${other.id}`, { headers: bearer(token) });
+  await deleteCompanyWithFacilities(request, token, other.id);
 
   // Clear it the way the 409 tells you to, and the two answers flip together.
-  // The location is NOT on that list — it goes with the subsidiary.
+  // The facility is on that list since the group tree (RD9): it goes first.
   expect((await request.delete(`${API_BASE}/period-locks/${lockId}`, { headers: bearer(token) })).status()).toBe(200);
   await request.delete(`${API_BASE}/activity-records/${rec.id}`, { headers: bearer(token) });
-  void loc;
+  s = await read();
+  expect(s.blockerCounts).toEqual([{ kind: 'locations', count: 1 }]);
+  expect(await deleteStatus()).toBe(409);
+  expect((await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) })).status()).toBe(200);
   s = await read();
   expect(s.hasBlockingDependents).toBe(false);
   expect(await deleteStatus()).toBe(200);
@@ -236,5 +242,5 @@ test('summary is tenant-scoped, and a bad id is a 400 not a 500', async ({ reque
   });
   expect(malformed.status()).toBe(400);
 
-  await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(adminToken) });
+  await deleteCompanyWithFacilities(request, adminToken, sub.id);
 });

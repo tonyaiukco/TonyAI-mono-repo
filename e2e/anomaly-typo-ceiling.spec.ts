@@ -13,6 +13,7 @@ import {
   seedTrInputsFixture,
   cleanupTrInputsFixture,
   E2E_TR_INPUTS_YEAR,
+  deleteCompanyWithFacilities,
 } from './helpers';
 
 /**
@@ -170,8 +171,9 @@ test('a first period above its ceiling is flagged, gated and stated; one below i
   } finally {
     await setReviewerLanguage('en');
     await deleteRecordsAsService(request, ids);
-    const removed = await request.delete(`${API_BASE}/subsidiaries/${subsidiaryId}`, { headers: bearer(token) });
+    // Its facilities first: a company with one is not deleted (inc26-group-tree, RD9).
+    const removed = await deleteCompanyWithFacilities(request, token, subsidiaryId);
     // Checked, so a subsidiary left behind fails here rather than in a later spec.
-    expect(removed.ok(), `subsidiary cleanup: ${removed.status()}`).toBe(true);
+    expect(removed, `subsidiary cleanup: ${removed}`).toBe(200);
   }
 });

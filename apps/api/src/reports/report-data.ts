@@ -9,7 +9,7 @@ import type {
   ReportStatus,
   ReportTemplate,
 } from '@tonyai/shared-types';
-import { ANOMALY_BASELINE_PERIODS } from '@tonyai/shared-types';
+import { ANOMALY_BASELINE_PERIODS, type ConsolidationApproach } from '@tonyai/shared-types';
 
 /**
  * The shapes a generated report is assembled INTO, before any writer sees them.
@@ -268,6 +268,12 @@ export interface ReportData {
   /** D16 / K6: the PDF's and the workbook's language. */
   language: Locale;
   organisationName: string;
+  /** The organisation's stored consolidation approach, as the methodology
+   *  text states it (inc26-group-tree, D8). */
+  consolidationApproach: ConsolidationApproach;
+  /** The associates the reader may read, left outside Scope 1 and 2 — named in
+   *  the methodology text; none for a reader granted no associate. */
+  excludedAssociates: string[];
   subsidiaryName: string | null;
   year: number;
   generatedAt: string;

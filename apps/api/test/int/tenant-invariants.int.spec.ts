@@ -132,10 +132,25 @@ describe('the database refuses a grant across organisations', () => {
   });
 
   it('a subsidiary that is granted cannot move to another organisation', async () => {
+    // The tenant's first subsidiary is its tree's root: since the group tree
+    // (inc26-group-tree, WP7 review) TA018 refuses it as the other
+    // organisation's second root before the grant's key is checked.
     const error = await failure(owner, (tx) =>
       tx.subsidiary.update({ where: { id: a.subsidiaryId }, data: { organisationId: b.organisationId } }),
     );
-    expect(error).toMatch(FK_VIOLATION);
+    expect(error).toMatch(/TA018[\s\S]*already has its holding/);
+    // A granted company that is not a root meets the grant's same-organisation key.
+    const granted = await failure(owner, async (tx) => {
+      const company = await tx.subsidiary.create({
+        data: { organisationId: a.organisationId, legalName: 'Int-test granted company', geographyCode: 'UK' },
+      });
+      await tx.userSubsidiaryAccess.create({
+        data: { userId: a.users.standardUser.id, subsidiaryId: company.id, organisationId: a.organisationId },
+      });
+      // Placed under the other organisation's root, so only the grant's key refuses it.
+      await tx.subsidiary.update({ where: { id: company.id }, data: { organisationId: b.organisationId, parentId: b.subsidiaryId } });
+    });
+    expect(granted).toMatch(FK_VIOLATION);
   });
 
   it('deleting an organisation that still has grants succeeds and takes the grants with it', async () => {
@@ -149,13 +164,18 @@ describe('the database refuses a grant across organisations', () => {
   });
 
   it('deleting the subsidiary, or the profile, removes the grant', async () => {
+    // A company with no facility: one with a facility, or one whose facility
+    // went earlier in the transaction, is deleted by no writer (inc26-group-tree,
+    // RD9, TA023), so the tenant's own companies cannot show this.
     const afterSubsidiary = await withRollback(owner, async (tx) => {
-      await tx.activityRecord.deleteMany({ where: { subsidiaryId: a.subsidiaryId } });
-      // A subsidiary an open boundary version declares is not deleted (LP3-04
-      // W9): the version goes first, as its records do.
-      await tx.inventoryBoundary.delete({ where: { id: dataA.boundaryId } });
-      await tx.subsidiary.delete({ where: { id: a.subsidiaryId } });
-      return tx.userSubsidiaryAccess.count({ where: { userId: a.users.standardUser.id } });
+      const company = await tx.subsidiary.create({
+        data: { organisationId: a.organisationId, legalName: 'Int-test granted company', geographyCode: 'UK' },
+      });
+      await tx.userSubsidiaryAccess.create({
+        data: { userId: a.users.superAdmin.id, subsidiaryId: company.id, organisationId: a.organisationId },
+      });
+      await tx.subsidiary.delete({ where: { id: company.id } });
+      return tx.userSubsidiaryAccess.count({ where: { subsidiaryId: company.id } });
     });
     const afterProfile = await withRollback(owner, async (tx) => {
       await tx.profile.delete({ where: { id: a.users.standardUser.id } });

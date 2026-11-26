@@ -188,10 +188,10 @@ test('the panel explains a refused delete in the API\'s own words', async ({ pag
     'adding a location must not discard an unsaved detail edit',
   ).toHaveValue('Unsaved While Adding');
 
-  // A record-free location does not block: the panel says the subsidiary can
-  // still go, and names what would go with it.
-  await expect(page.getByText(/1 facility would go with it/)).toBeVisible();
-  await expect(page.getByText('This subsidiary cannot be deleted')).toHaveCount(0);
+  // A facility blocks the delete since the group tree (inc26-group-tree, RD9):
+  // the panel says so in the API's own words.
+  await expect(page.getByText('This subsidiary cannot be deleted')).toBeVisible();
+  await expect(page.getByText('1 facility(ies)', { exact: false })).toBeVisible();
 
   // Add a draft record, and now something DOES block — in the API's own words,
   // not a sentence the UI wrote.

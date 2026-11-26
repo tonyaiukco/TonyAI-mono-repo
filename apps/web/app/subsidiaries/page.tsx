@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "use-intl";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
@@ -42,19 +42,37 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Building2, CheckCircle2, Clock, Globe, Lock, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, CircleDashed, Clock, Globe, Lock, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
 import { LocationsDrawer } from "@/components/subsidiaries/locations-drawer";
 import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
-import { can, geographyOptions, MAX_LOCATIONS_PER_CREATE, SUBSIDIARY_STATUSES } from "@/lib/types";
+import {
+  admitsChild,
+  can,
+  holdsRecords,
+  MAX_LOCATIONS_PER_CREATE,
+  mayBeAssociate,
+  NODE_TYPES,
+  SUBSIDIARY_STATUSES,
+  selectableReportingYears,
+  type CreateSubsidiaryInput,
+} from "@/lib/types";
 import type {
   CreateSubsidiaryLocationInput,
   LocationDTO,
+  NodeType,
+  RollUpRow,
+  ScopeFigures,
   SubsidiaryDTO,
   SubsidiaryStatus,
 } from "@/lib/types";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ConsolidationCard } from "@/components/subsidiaries/consolidation-card";
+import { NonAuthoritativeWarning } from "@/components/non-authoritative-warning";
+import { usePricedGeographies } from "@/lib/use-priced-geographies";
+import { treeFigure, parseNaceCode, parseSharePercent, treeRows } from "@/lib/subsidiaries-view";
 import { useErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
 import { geographyLabel } from "@/lib/vocabulary";
@@ -70,10 +88,19 @@ const emptyForm = {
   legalName: "",
   tradingName: "",
   location: "",
-  geographyCode: "TR",
+  // Set when the dialog opens, from what the library prices (owner review of WP7).
+  geographyCode: "",
   sector: "",
   reportingStatus: "pending" as SubsidiaryStatus,
+  // The group tree (inc26-group-tree): where the node sits and what it is.
+  parentId: "",
+  nodeType: "company" as NodeType,
+  associate: false,
+  naceCode: "",
+  sharePercent: "",
 };
+
+/** The reporting years the roll-up columns offer: this year and the four before. */
 
 export default function SubsidiariesPage() {
   const tRoles = useTranslations("users");
@@ -109,18 +136,43 @@ export default function SubsidiariesPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [locSubsidiaryId, setLocSubsidiaryId] = useState<string | null>(null);
   const [lockSubsidiaryId, setLockSubsidiaryId] = useState<string | null>(null);
+  // The tree (inc26-group-tree): collapsed branches, the roll-up of the chosen
+  // year, and the geographies the factor library can price.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  // The years every reporting screen offers (owner review of WP7, P3).
+  const [year, setYear] = useState<number>(selectableReportingYears()[0]);
+  const [rollUp, setRollUp] = useState<Map<string, RollUpRow> | null>(null);
+  const [rollUpState, setRollUpState] = useState<"loading" | "ready" | "failed">("loading");
+  // A picker offers only what the library prices (D10; owner review of WP7, P2).
+  const pricedGeos = usePricedGeographies();
 
+  const [listVersion, setListVersion] = useState(0);
+  const [locationsRead, setLocationsRead] = useState(false);
+  const [exclusionsVersion, setExclusionsVersion] = useState(0);
   async function refresh() {
     setLoading(true);
     try {
-      const [list, locs] = await Promise.all([
-        api.listSubsidiaries(),
-        api.listLocations(),
-      ]);
-      setSubsidiaries(list);
-      setLocations(locs);
-    } catch (e) {
-      showError(e);
+      // Each read stands on its own: a failed facilities read must not keep
+      // the company list as it was — a deleted company would stay in the tree
+      // (owner's sixth review of WP7, P2).
+      const [list, locs] = await Promise.allSettled([api.listSubsidiaries(), api.listLocations()]);
+      if (list.status === "fulfilled") {
+        setSubsidiaries(list.value);
+        // Every reading of the list after the first: the exclusions note and
+        // the roll-up read again with it.
+        setListVersion((v) => v + 1);
+      } else {
+        showError(list.reason);
+      }
+      if (locs.status === "fulfilled") {
+        setLocations(locs.value);
+        setLocationsRead(true);
+      } else {
+        // Unknown, not zero: each row's facility count reads "—" (owner's
+        // seventh review of WP7, P3).
+        setLocationsRead(false);
+        if (list.status === "fulfilled") showError(locs.reason);
+      }
     } finally {
       setLoading(false);
     }
@@ -135,6 +187,68 @@ export default function SubsidiariesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    let live = true;
+    setRollUpState("loading");
+    api
+      .rollUp(year)
+      .then((res) => {
+        if (!live) return;
+        setRollUp(new Map(res.rows.map((r) => [r.subsidiaryId, r])));
+        setRollUpState("ready");
+      })
+      .catch(() => {
+        if (live) setRollUpState("failed");
+      });
+    return () => {
+      live = false;
+    };
+  }, [year, listVersion]);
+
+  const rows = useMemo(() => treeRows(subsidiaries, collapsed, locale), [subsidiaries, collapsed, locale]);
+  // A figure that rests, in part, on a factor that is not authoritative now
+  // says so where it is shown, as the dashboard does (owner review of WP7, P1).
+  const figure = (f: ScopeFigures | null | undefined, testId: string) =>
+    f ? (
+      <span className="inline-flex items-center justify-end gap-1">
+        {/* Records with no figure behind it: incomplete, and never a
+            measured zero (owner review of WP7, P2). */}
+        {f.uncalculatedRecordCount > 0 && (
+          <CircleDashed
+            className="h-3.5 w-3.5 text-muted-foreground"
+            data-testid={testId.replace("non-authoritative", "uncalculated")}
+            role="img"
+            aria-label={t("tree.uncalculatedMark", { count: formatNumber(f.uncalculatedRecordCount, locale) })}
+          >
+            <title>{t("tree.uncalculatedMark", { count: formatNumber(f.uncalculatedRecordCount, locale) })}</title>
+          </CircleDashed>
+        )}
+        {f.nonAuthoritativeRecordCount > 0 && (
+          <AlertTriangle
+            className="h-3.5 w-3.5 text-amber-600"
+            data-testid={testId}
+            role="img"
+            aria-label={t("tree.nonAuthoritativeMark", { count: formatNumber(f.nonAuthoritativeRecordCount, locale) })}
+          >
+            <title>{t("tree.nonAuthoritativeMark", { count: formatNumber(f.nonAuthoritativeRecordCount, locale) })}</title>
+          </AlertTriangle>
+        )}
+        {treeFigure(f.total, locale)}
+      </span>
+    ) : (
+      "—"
+    );
+  const anyNonAuthoritative =
+    rollUp !== null && [...rollUp.values()].some((r) => (r.rollUp?.nonAuthoritativeRecordCount ?? 0) > 0);
+  const anyUncalculated =
+    rollUp !== null && [...rollUp.values()].some((r) => (r.rollUp?.uncalculatedRecordCount ?? 0) > 0);
+  function toggle(id: string) {
+    const next = new Set(collapsed);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setCollapsed(next);
+  }
+
   const total = subsidiaries.length;
   const active = subsidiaries.filter((s) => s.reportingStatus === "active").length;
   const pending = subsidiaries.filter((s) => s.reportingStatus === "pending").length;
@@ -146,6 +260,24 @@ export default function SubsidiariesPage() {
   // The capability table (design Decision 3): companies and period locks are
   // the masterkey's; facilities a super_admin's too, in granted companies.
   const canManage = can(user?.role, "company.write");
+  // A super_admin creates child companies under its own (inc26-group-tree, D5).
+  const canCreate = canManage || can(user?.role, "company.create_child");
+  // Where a new node may go, for this role: a masterkey under any node that
+  // admits a child, a super_admin under one of its companies.
+  const parentOptions = subsidiaries.filter((s) =>
+    canManage
+      ? NODE_TYPES.some((type) => admitsChild(s, type))
+      : admitsChild(s, "child_company"),
+  );
+  const formParent = subsidiaries.find((s) => s.id === form.parentId) ?? null;
+  const typeOptions: NodeType[] = !canManage
+    ? ["child_company"]
+    : formParent
+      ? NODE_TYPES.filter((type) => admitsChild(formParent, type))
+      : ["holding"];
+  // A new company and its draft facilities: priced geographies only — a
+  // parent's geography when priced, never one the library does not price.
+  const geographyChoices = (preferred?: string | null) => pricedGeos.choices(undefined, preferred);
   const canManageLocations = can(user?.role, "location.write");
   const canLockPeriods = can(user?.role, "period_lock.write");
   const locSubsidiary = subsidiaries.find((s) => s.id === locSubsidiaryId) ?? null;
@@ -153,8 +285,21 @@ export default function SubsidiariesPage() {
   const locCount = (subsidiaryId: string) =>
     locations.filter((l) => l.subsidiaryId === subsidiaryId).length;
 
+  // Coverage read after the dialog opened: its default, once known.
+  useEffect(() => {
+    if (!addOpen || form.geographyCode !== "" || pricedGeos.priced === null) return;
+    const parent = subsidiaries.find((s) => s.id === form.parentId);
+    setForm((f) => (f.geographyCode === "" ? { ...f, geographyCode: pricedGeos.defaultFor(parent?.geographyCode) } : f));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addOpen, pricedGeos.priced]);
+
   function openAdd() {
-    setForm(emptyForm);
+    // Under the root by default (a masterkey), or the first company a
+    // super_admin may parent a child company under.
+    const root = parentOptions.find((s) => s.nodeType === "holding") ?? parentOptions[0];
+    const parentId = root?.id ?? "";
+    const nodeType: NodeType = !canManage ? "child_company" : root ? "company" : "holding";
+    setForm({ ...emptyForm, parentId, nodeType, geographyCode: pricedGeos.defaultFor(root?.geographyCode) });
     setDraftLocations([]);
     setDraftName("");
     setDraftGeo("");
@@ -177,10 +322,14 @@ export default function SubsidiariesPage() {
       toast.error(t("create.draftCap", { max: formatNumber(MAX_LOCATIONS_PER_CREATE, locale) }));
       return;
     }
-    setDraftLocations([
-      ...draftLocations,
-      { name, geographyCode: draftGeo || form.geographyCode },
-    ]);
+    // Never a facility with no geography — chosen, or the company's once known
+    // (owner review of WP7, P2).
+    const geographyCode = draftGeo || form.geographyCode;
+    if (!geographyCode) {
+      toast.error(t("create.draftGeographyRequired"));
+      return;
+    }
+    setDraftLocations([...draftLocations, { name, geographyCode }]);
     setDraftName("");
     setDraftGeo("");
   }
@@ -194,8 +343,20 @@ export default function SubsidiariesPage() {
     // WP17's completeness denominator is their count — so the form asks for one
     // rather than letting a subsidiary start life with undefined borders. The
     // API stays permissive, deliberately (see CreateSubsidiaryDto).
-    if (draftLocations.length === 0) {
+    if (form.nodeType !== "sector_group" && draftLocations.length === 0) {
       toast.error(t("create.locationRequired"));
+      return;
+    }
+    if (form.nodeType !== "sector_group" && !form.geographyCode) {
+      toast.error(t("fields.geographyRequired"));
+      return;
+    }
+    if (parseSharePercent(form.sharePercent, locale as "en" | "tr") === "invalid") {
+      toast.error(t("tree.sharePercentInvalid"));
+      return;
+    }
+    if (parseNaceCode(form.naceCode) === "invalid") {
+      toast.error(t("tree.naceInvalid"));
       return;
     }
     await persist();
@@ -204,15 +365,24 @@ export default function SubsidiariesPage() {
   async function persist() {
     setSaving(true);
     try {
-      const body = {
+      const common = {
         legalName: form.legalName.trim(),
         tradingName: form.tradingName || null,
         location: form.location || null,
-        geographyCode: form.geographyCode,
         sector: form.sector || null,
         reportingStatus: form.reportingStatus,
+        ...(form.parentId ? { parentId: form.parentId } : {}),
+        ...(canManage && mayBeAssociate(form.nodeType) && form.associate ? { control: "associate" as const } : {}),
+        naceCode: parseNaceCode(form.naceCode) as string | null,
+        sharePercent: parseSharePercent(form.sharePercent, locale as "en" | "tr") as number | null,
       };
-      const created = await api.createSubsidiary({ ...body, locations: draftLocations });
+      // A sector group's geography is its parent's, set by the API (D10); every
+      // other node sends its own.
+      const body: CreateSubsidiaryInput =
+        form.nodeType === "sector_group"
+          ? { ...common, nodeType: "sector_group", locations: [] }
+          : { ...common, nodeType: form.nodeType, geographyCode: form.geographyCode, locations: draftLocations };
+      const created = await api.createSubsidiary(body);
       toast.success(t("list.created"));
       setAddOpen(false);
       setForm(emptyForm);
@@ -233,6 +403,13 @@ export default function SubsidiariesPage() {
     try {
       await api.deleteSubsidiary(deletingId);
       toast.success(t("list.deleted"));
+      // Gone from the tree at once, whatever the re-read below answers.
+      const gone = deletingId;
+      setSubsidiaries((list) => list.filter((s) => s.id !== gone));
+      // The exclusions note is read again at once, whatever the list's own
+      // re-read answers — a deleted associate must not stay named (owner's
+      // fifth review of WP7, P2).
+      setExclusionsVersion((v) => v + 1);
       await refresh();
     } catch (e) {
       showError(e);
@@ -260,8 +437,8 @@ export default function SubsidiariesPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {canManage && (
-                <Button onClick={openAdd} className="gap-2">
+              {canCreate && (
+                <Button onClick={openAdd} className="gap-2" disabled={!canManage && parentOptions.length === 0}>
                   <Plus className="h-4 w-4" />
                   {t("list.add")}
                 </Button>
@@ -277,9 +454,26 @@ export default function SubsidiariesPage() {
             <SummaryCard title={t("list.cards.geographies")} value={formatNumber(geographies, locale)} icon={<Globe className="h-4 w-4 text-primary" />} hint={t("list.cards.geographiesHint")} />
           </div>
 
+          <ConsolidationCard role={user?.role} refreshKey={listVersion + exclusionsVersion} />
+
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between gap-4">
               <CardTitle className="text-base">{t("list.register")}</CardTitle>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>{t("tree.year")}</span>
+                <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
+                  <SelectTrigger className="h-8 w-24" aria-label={t("tree.year")}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectableReportingYears(year).map((y) => (
+                      <SelectItem key={y} value={String(y)}>
+                        {y}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -293,6 +487,9 @@ export default function SubsidiariesPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>{t("list.columns.legalName")}</TableHead>
+                      <TableHead>{t("tree.columns.type")}</TableHead>
+                      <TableHead className="text-right">{t("tree.columns.own")}</TableHead>
+                      <TableHead className="text-right">{t("tree.columns.rollUp")}</TableHead>
                       <TableHead>{t("list.columns.tradingName")}</TableHead>
                       <TableHead>{t("list.columns.location")}</TableHead>
                       <TableHead>{t("list.columns.geo")}</TableHead>
@@ -303,9 +500,43 @@ export default function SubsidiariesPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {subsidiaries.map((s) => (
-                      <TableRow key={s.id}>
-                        <TableCell className="font-medium">{s.legalName}</TableCell>
+                    {rows.map(({ node: s, depth, hasChildren }) => (
+                      <TableRow key={s.id} data-testid={`tree-row-${s.id}`} data-depth={depth}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-1" style={{ paddingLeft: depth * 20 }}>
+                            {hasChildren ? (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={() => toggle(s.id)}
+                                aria-expanded={!collapsed.has(s.id)}
+                                aria-label={collapsed.has(s.id) ? t("tree.expand", { name: s.legalName }) : t("tree.collapse", { name: s.legalName })}
+                              >
+                                {collapsed.has(s.id) ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                              </Button>
+                            ) : (
+                              <span className="inline-block w-6" aria-hidden />
+                            )}
+                            <span>{s.legalName}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Badge variant="outline">{t(`tree.types.${s.nodeType}`)}</Badge>
+                            {s.control === "associate" && (
+                              <Badge variant="outline" className="border-amber-500/30 bg-amber-500/15 text-amber-700">
+                                {t("tree.associateLabel")}
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {rollUpState === "ready" && holdsRecords(s) ? figure(rollUp?.get(s.id)?.own, `non-authoritative-own-${s.id}`) : rollUpState === "ready" ? "—" : ""}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {rollUpState === "ready" ? figure(rollUp?.get(s.id)?.rollUp, `non-authoritative-rollup-${s.id}`) : ""}
+                        </TableCell>
                         <TableCell className="text-muted-foreground">{s.tradingName ?? "—"}</TableCell>
                         <TableCell className="text-muted-foreground">{s.location ?? "—"}</TableCell>
                         <TableCell>{s.geographyCode}</TableCell>
@@ -319,7 +550,7 @@ export default function SubsidiariesPage() {
                             aria-label={t("list.manageLocations")}
                           >
                             <MapPin className="h-3.5 w-3.5" />
-                            {formatNumber(locCount(s.id), locale)}
+                            {locationsRead ? formatNumber(locCount(s.id), locale) : "—"}
                           </Button>
                           <Button
                             variant="ghost"
@@ -337,20 +568,26 @@ export default function SubsidiariesPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
+                          {/* The register is a list; everything about one
+                              company lives on its own page — its contact
+                              details, dependent counts, GHG basis and why an
+                              associate takes no data — so every reader opens
+                              it (owner review of WP7, P2); only a writer edits
+                              there. */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => router.push(`/subsidiaries/${s.id}`)}
+                            aria-label={canManage ? t("list.open") : t("list.view")}
+                          >
+                            {canManage ? (
+                              <Pencil className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                            )}
+                          </Button>
                           {canManage && (
                             <>
-                              {/* The register is a list; everything about one
-                                  subsidiary now lives on its own page, which is
-                                  where contact details and the dependent counts
-                                  are. */}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => router.push(`/subsidiaries/${s.id}`)}
-                                aria-label={t("list.open")}
-                              >
-                                <Pencil className="h-4 w-4 text-muted-foreground" />
-                              </Button>
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -367,6 +604,21 @@ export default function SubsidiariesPage() {
                   </TableBody>
                 </Table>
               )}
+              {rollUpState === "ready" && anyUncalculated && (
+                <p className="pt-3 text-xs text-muted-foreground" data-testid="tree-uncalculated">
+                  {t("tree.uncalculatedNote")}
+                </p>
+              )}
+              {rollUpState === "ready" && anyNonAuthoritative && (
+                <div className="pt-3">
+                  <NonAuthoritativeWarning testId="tree-non-authoritative">{t("tree.nonAuthoritativeNote")}</NonAuthoritativeWarning>
+                </div>
+              )}
+              {!loading && subsidiaries.length > 0 && rollUpState !== "ready" && (
+                <p className="pt-3 text-xs text-muted-foreground" role="status">
+                  {rollUpState === "loading" ? t("tree.figuresLoading") : t("tree.figuresFailed")}
+                </p>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -380,6 +632,50 @@ export default function SubsidiariesPage() {
             <DialogTitle>{t("create.title")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {/* Where the node sits in the group tree (inc26-group-tree). */}
+            {parentOptions.length > 0 && (
+              <div className="grid grid-cols-2 gap-4">
+                <Field label={t("tree.parent")}>
+                  <Select
+                    value={form.parentId}
+                    onValueChange={(v) => {
+                      const parent = subsidiaries.find((s) => s.id === v);
+                      const types = canManage && parent ? NODE_TYPES.filter((type) => admitsChild(parent, type)) : ["child_company" as NodeType];
+                      setForm({ ...form, parentId: v, nodeType: types.includes(form.nodeType) ? form.nodeType : types[0] });
+                    }}
+                  >
+                    <SelectTrigger aria-label={t("tree.parent")}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {parentOptions.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.legalName} · {t(`tree.types.${s.nodeType}`)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label={t("tree.type")}>
+                  <Select
+                    value={form.nodeType}
+                    onValueChange={(v) => setForm({ ...form, nodeType: v as NodeType, associate: mayBeAssociate(v as NodeType) && form.associate })}
+                    disabled={typeOptions.length < 2}
+                  >
+                    <SelectTrigger aria-label={t("tree.type")}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {typeOptions.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {t(`tree.types.${type}`)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+            )}
             <Field label={t("fields.legalNameRequired")}>
               <Input
                 value={form.legalName}
@@ -402,6 +698,15 @@ export default function SubsidiariesPage() {
             </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field label={t("fields.geography")}>
+                {form.nodeType === "sector_group" ? (
+                  // A sector group takes its parent's geography (D10): nothing
+                  // to choose, and nothing priced is needed (owner review of WP7, P2).
+                  <p className="pt-2 text-sm text-muted-foreground" data-testid="sector-group-geography">
+                    {t("fields.geographyFromParent", {
+                      geography: geographyLabel(subsidiaries.find((p) => p.id === form.parentId)?.geographyCode ?? "", tGeography),
+                    })}
+                  </p>
+                ) : (
                 <Select
                   value={form.geographyCode}
                   onValueChange={(v) => setForm({ ...form, geographyCode: v })}
@@ -414,13 +719,17 @@ export default function SubsidiariesPage() {
                         already holds — otherwise editing the seeded EU
                         subsidiary would bind the Select to a value with no
                         matching item and render a blank trigger. */}
-                    {geographyOptions(form.geographyCode).map((g) => (
+                    {geographyChoices(subsidiaries.find((p) => p.id === form.parentId)?.geographyCode).map((g) => (
                       <SelectItem key={g} value={g}>
                         {geographyLabel(g, tGeography)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                )}
+                {pricedGeos.failed && form.nodeType !== "sector_group" && (
+                  <p className="pt-1 text-xs text-destructive">{t("fields.geographyUnavailable")}</p>
+                )}
               </Field>
               <Field label={t("fields.status")}>
                 <Select
@@ -449,6 +758,38 @@ export default function SubsidiariesPage() {
                 placeholder={t("create.sectorPlaceholder")}
               />
             </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label={t("tree.nace")}>
+                <Input
+                  value={form.naceCode}
+                  onChange={(e) => setForm({ ...form, naceCode: e.target.value })}
+                  placeholder={t("tree.naceHint")}
+                />
+              </Field>
+              <Field label={t("tree.sharePercent")}>
+                <Input
+                  inputMode="decimal"
+                  value={form.sharePercent}
+                  onChange={(e) => setForm({ ...form, sharePercent: e.target.value })}
+                  aria-describedby="share-percent-hint"
+                />
+                <p id="share-percent-hint" className="text-xs text-muted-foreground">{t("tree.sharePercentHint")}</p>
+              </Field>
+            </div>
+            {canManage && mayBeAssociate(form.nodeType) && (
+              <label className="flex items-start gap-2 text-sm">
+                <Checkbox
+                  checked={form.associate}
+                  onCheckedChange={(v) => setForm({ ...form, associate: v === true })}
+                  aria-describedby="associate-hint"
+                />
+                <span>
+                  {t("tree.control")}
+                  <span id="associate-hint" className="block text-xs text-muted-foreground">{t("tree.controlHint")}</span>
+                </span>
+              </label>
+            )}
+            <p className="text-xs text-muted-foreground">{t("tree.pricedOnly")}</p>
           </div>
 
           {/* Operational locations, collected as a draft and written with the
@@ -456,6 +797,9 @@ export default function SubsidiariesPage() {
               select is labelled "Facility geography" so it cannot be confused with
               the subsidiary's own "Geography" — they sit in one dialog, and a
               label-scoped selector matching both would be ambiguous. */}
+          {form.nodeType === "sector_group" ? (
+            <p className="rounded-lg border border-border p-3 text-sm text-muted-foreground">{t("tree.noFacilitySectorGroup")}</p>
+          ) : (
           <div className="space-y-3 rounded-lg border border-border p-3">
             <div className="flex items-center gap-2 text-sm font-medium">
               <MapPin className="h-4 w-4 text-primary" />
@@ -508,7 +852,7 @@ export default function SubsidiariesPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {geographyOptions(draftGeo || form.geographyCode).map((code) => (
+                  {geographyChoices(form.geographyCode).map((code) => (
                     <SelectItem key={code} value={code}>
                       {geographyLabel(code, tGeography)}
                     </SelectItem>
@@ -520,6 +864,7 @@ export default function SubsidiariesPage() {
               </Button>
             </div>
           </div>
+          )}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>

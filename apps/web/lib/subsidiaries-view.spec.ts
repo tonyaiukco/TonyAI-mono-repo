@@ -1,8 +1,9 @@
+import type { NodeType } from '@/lib/types';
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
 import { copyFor, describeFor } from '@/lib/i18n/testing';
 import { SUBSIDIARY_BLOCKER_KINDS, type SubsidiaryBlockerCount } from '@/lib/types';
-import { blockerLines, deletableNote, locationCountLine, subsidiaryError } from './subsidiaries-view';
+import { treeFigure, treeRows, parseNaceCode, parseSharePercent, blockerLines, deletableNote, locationCountLine, subsidiaryError } from './subsidiaries-view';
 
 const en = copyFor('subsidiaries');
 const tr = copyFor('subsidiaries', 'tr');
@@ -21,6 +22,9 @@ const SERVER: Record<string, (n: number) => string> = {
   targets: (n) => `${n} reduction target(s)`,
   denominators: (n) => `${n} intensity denominator(s)`,
   openBoundaryVersions: (n) => `${n} open inventory boundary version(s) declaring it`,
+  // inc26-group-tree (RD9): a child node and any facility block.
+  children: (n) => `${n} child company node(s)`,
+  locations: (n) => `${n} facility(ies)`,
 };
 
 describe('blockerLines', () => {
@@ -48,15 +52,12 @@ describe('blockerLines', () => {
 });
 
 describe('deletableNote', () => {
-  it('says what goes with the subsidiary, one or many, in both languages', () => {
-    expect(deletableNote(0, en)).toBe('Nothing depends on this subsidiary, so it can be deleted from the register.');
-    expect(deletableNote(1, en)).toBe(
-      'This subsidiary can be deleted from the register. Its 1 facility would go with it, each recorded in the audit log.',
-    );
-    expect(deletableNote(2, en)).toMatch(/^This subsidiary can be deleted from the register\. Its 2 facilities would go/);
-    expect(deletableNote(1000, tr)).toMatch(/1\.000 tesisi/);
+  it('says nothing goes with the company: a facility now blocks the delete (inc26-group-tree, RD9)', () => {
+    expect(deletableNote(en)).toBe('Nothing depends on this subsidiary, so it can be deleted from the register.');
+    expect(deletableNote(tr)).toBe(tr.t('dependents.deletableNothing'));
   });
 });
+
 
 describe('locationCountLine', () => {
   it('counts the locations beside the name', () => {
@@ -80,5 +81,89 @@ describe('subsidiaryError', () => {
     const inUse = new ApiError('This subsidiary still holds 1 reduction target(s). …', 409, 'subsidiary_in_use');
     expect(subsidiaryError(inUse, en, describeEn)).toEqual({ title: inUse.message });
     expect(subsidiaryError(inUse, tr, describeTr).description).toBe(inUse.message);
+  });
+});
+
+describe('treeRows — the company screen as a tree (inc26-group-tree)', () => {
+  const n = (id: string, parentId: string | null, nodeType: NodeType, legalName = id) => ({ id, parentId, nodeType, legalName });
+  const TREE = [
+    n('C2', 'H', 'company', 'Zeta'),
+    n('B', 'A', 'child_company'),
+    n('H', null, 'holding'),
+    n('A', 'G', 'company', 'Alpha'),
+    n('G', 'H', 'sector_group'),
+    n('S', 'H', 'sub_holding'),
+    n('C1', 'H', 'company', 'Beta'),
+  ];
+  const shape = (rows: ReturnType<typeof treeRows>) => rows.map((r) => `${'  '.repeat(r.depth)}${r.node.id}${r.hasChildren ? '+' : ''}`);
+
+  it("walks a chain far deeper than the call stack, in order (owner's third review of WP7, P3)", () => {
+    const depth = 50_000;
+    const chain = Array.from({ length: depth }, (_, k) => n(`n${k}`, k === 0 ? null : `n${k - 1}`, k === 0 ? 'holding' : 'child_company'));
+    const rows = treeRows(chain.reverse());
+    expect(rows).toHaveLength(depth);
+    expect(rows[0].node.id).toBe('n0');
+    expect(rows[depth - 1]).toMatchObject({ depth: depth - 1, hasChildren: false });
+    expect(treeRows(chain, new Set(['n0']))).toHaveLength(1);
+  });
+
+  it('puts the root first and every node under its parent, siblings by type then name', () => {
+    expect(shape(treeRows(TREE))).toEqual(['H+', '  S', '  G+', '    A+', '      B', '  C1', '  C2']);
+  });
+
+  it('leaves out the children of a collapsed node, and only those', () => {
+    expect(shape(treeRows(TREE, new Set(['G'])))).toEqual(['H+', '  S', '  G+', '  C1', '  C2']);
+    expect(shape(treeRows(TREE, new Set(['H'])))).toEqual(['H+']);
+  });
+
+  it('shows a node whose parent the reader cannot read at the top level (the API sends null)', () => {
+    // A super_admin granted a child company and its child, not the company above.
+    expect(shape(treeRows([n('B', null, 'child_company'), n('D', 'B', 'child_company')]))).toEqual(['B+', '  D']);
+    // A parent id left in (an older API) but absent from the list: still a top.
+    expect(shape(treeRows([n('B', 'A', 'child_company')]))).toEqual(['B']);
+  });
+
+  it('terminates on a malformed cycle, each node once', () => {
+    const rows = treeRows([n('X', 'Y', 'company'), n('Y', 'X', 'child_company')]);
+    expect(rows.map((r) => r.node.id).sort()).toEqual(['X', 'Y']);
+  });
+});
+
+describe('the share percent and NACE fields (inc26-group-tree)', () => {
+  it('reads a share in the user\'s convention, blank as none, and refuses what the API would', () => {
+    expect(parseSharePercent('', 'en')).toBeNull();
+    expect(parseSharePercent('20', 'en')).toBe(20);
+    expect(parseSharePercent('12.5', 'en')).toBe(12.5);
+    expect(parseSharePercent('12,5', 'tr')).toBe(12.5);
+    for (const bad of ['101', '-1', '12.345', '0.001', '99.999', 'abc']) expect(parseSharePercent(bad, 'en'), bad).toBe('invalid');
+  });
+
+  it('reads every share from 0 to 100 with up to two decimals, in both languages', () => {
+    const refused: string[] = [];
+    for (let hundredths = 0; hundredths <= 10_000; hundredths++) {
+      const en = (hundredths / 100).toFixed(2);
+      if (parseSharePercent(en, 'en') !== Number(en)) refused.push(en);
+      if (parseSharePercent(en.replace('.', ','), 'tr') !== Number(en)) refused.push(`tr ${en}`);
+    }
+    expect(refused).toEqual([]);
+    for (const ok of ['1.1', '2.01', '0.07']) expect(parseSharePercent(ok, 'en'), ok).toBe(Number(ok));
+    expect(parseSharePercent('1,1', 'tr')).toBe(1.1);
+  });
+
+  it("never shows a positive tonnage as 0 — one decimal from 1 up, three significant digits below (owner's fourth review, P2)", () => {
+    expect(treeFigure(0.04, 'en')).toBe('0.04');
+    expect(treeFigure(0.00024, 'en')).toBe('0.00024');
+    expect(treeFigure(0.04, 'tr')).toBe('0,04');
+    expect(treeFigure(0.00024, 'tr')).toBe('0,00024');
+    expect(treeFigure(12.345, 'en')).toBe('12.3');
+    expect(treeFigure(12345.67, 'tr')).toBe('12.345,7');
+    expect(treeFigure(0, 'en')).toBe('0');
+  });
+
+  it('reads a NACE code, upper-cased, blank as none', () => {
+    expect(parseNaceCode('')).toBeNull();
+    expect(parseNaceCode(' c10.11 ')).toBe('C10.11');
+    for (const ok of ['C', '10', '10.1', '35.21']) expect(parseNaceCode(ok), ok).toBe(ok);
+    for (const bad of ['Z', '1', '10.111', 'C10.11.1', 'hello']) expect(parseNaceCode(bad), bad).toBe('invalid');
   });
 });

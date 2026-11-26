@@ -27,11 +27,12 @@ describe('KpiService.summary', () => {
     await service.summary(user);
 
     expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
-      where: { id: { in: ['sub-1', 'sub-2'] } },
+      // Only nodes that hold records (inc26-group-tree): no sector group, no associate.
+      where: { id: { in: ['sub-1', 'sub-2'] }, ...{ nodeType: { not: 'sector_group' }, control: 'controlled' } },
       select: { reportingStatus: true, geographyCode: true },
     });
     expect(prisma.location.count).toHaveBeenCalledWith({
-      where: { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+      where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, subsidiary: { nodeType: { not: 'sector_group' }, control: 'controlled' } },
     });
   });
 
@@ -106,7 +107,7 @@ describe('KpiService.summary', () => {
 
     await service.summary(user);
 
-    expect(prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({ id: { in: ['sub-2'] } });
-    expect(prisma.location.count.mock.calls[0][0].where).toEqual({ subsidiaryId: { in: ['sub-2'] } });
+    expect(prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({ id: { in: ['sub-2'] }, ...{ nodeType: { not: 'sector_group' }, control: 'controlled' } });
+    expect(prisma.location.count.mock.calls[0][0].where).toEqual({ subsidiaryId: { in: ['sub-2'] }, subsidiary: { nodeType: { not: 'sector_group' }, control: 'controlled' } });
   });
 });

@@ -73,7 +73,7 @@ import { calculationInputs } from '../common/calculation-inputs';
 /** The CSV's words: English, whatever the caller's language (D16's machine-readable export). */
 const CSV_VOCABULARY = reportVocabulary('en');
 import { PdfRenderer } from '../common/pdf-renderer';
-import { can } from '@tonyai/shared-types';
+import { can, type ConsolidationApproach } from '@tonyai/shared-types';
 
 // Single source of truth for "committed": imported from the emissions service so
 // a report's summary tables and its own ledger can never silently diverge.
@@ -265,6 +265,37 @@ export class ReportsService {
     });
   }
 
+  /**
+   * The organisation's stored consolidation approach and the associates the
+   * caller may read (inc26-group-tree, D8), read in the report's snapshot. A
+   * scoped reader is granted no associate (no grant can name one), so its
+   * report names none.
+   */
+  private async consolidationOf(
+    db: Prisma.TransactionClient,
+    user: RequestUser,
+    /** The selection's companies: none readable, nothing more is read (`readHead`). */
+    selected: readonly string[],
+  ): Promise<{ approach: ConsolidationApproach; associates: string[] }> {
+    const org = user.organisationId
+      ? await db.organisation.findUnique({ where: { id: user.organisationId }, select: { consolidationApproach: true } })
+      : null;
+    // A scoped reader's report names no associate: no grant can name one, and
+    // ids taken when the request arrived could name a company withdrawn from
+    // it and ticked since (owner's third review of WP7, P2).
+    const associates = selected.length === 0 || user.accessibleSubsidiaryIds.length === 0 || !can(user.role, 'scope.organisation')
+      ? []
+      : await db.subsidiary.findMany({
+          where: { id: { in: user.accessibleSubsidiaryIds }, organisationId: user.organisationId ?? undefined, control: 'associate' },
+          select: { legalName: true, tradingName: true },
+          orderBy: [{ legalName: 'asc' }, { id: 'asc' }],
+        });
+    return {
+      approach: org?.consolidationApproach ?? 'operational_control',
+      associates: associates.map((a) => a.tradingName || a.legalName),
+    };
+  }
+
   /** The organisation, the snapshot's clock and the selection's status counts — Scope 1/2 only (K4). */
   private async readHead(snapshot: CaptureSnapshot, user: RequestUser, ids: string[], selection: LiveSelection) {
     const db = CaptureSnapshot.txOf(snapshot);
@@ -276,10 +307,13 @@ export class ReportsService {
         })
       : null;
     const organisationName = org?.tradingName || org?.legalName || 'TonyAI';
+    const consolidation = await this.consolidationOf(db, user, ids);
     const empty: ReportMeta = {
       status: 'contains_incomplete_data',
       recordLimit: this.limits.REPORT_RECORD_LIMIT,
       organisationName,
+      consolidationApproach: consolidation.approach,
+      excludedAssociates: consolidation.associates,
       totalCount: 0,
       committedCount: 0,
       incompleteCount: 0,
@@ -457,6 +491,8 @@ export class ReportsService {
       throw new QueryTooBroadError();
     }
     const nameById = await this.namesOf(db, ids);
+    // Read once, with the head, in this snapshot.
+    const consolidation = { approach: head.meta.consolidationApproach, associates: head.meta.excludedAssociates };
     // Scope 1 and 2 only (K4): Scope 3 is not covered, so its records are
     // disclosed (`readTail`) and never in the ledger, a total or a percentage.
     const scopes = inventoryScopeFilter(q.scope);
@@ -733,6 +769,8 @@ export class ReportsService {
         REPORT_TEMPLATES.find((t) => t.id === q.template)?.name ?? q.template,
       language,
       organisationName: meta.organisationName,
+      consolidationApproach: consolidation.approach,
+      excludedAssociates: consolidation.associates,
       subsidiaryName: q.subsidiaryId ? (nameById.get(q.subsidiaryId) ?? null) : null,
       year: q.year,
       // The snapshot's own clock: every figure below is as of this moment.
@@ -786,6 +824,13 @@ export class ReportsService {
       ...contextLabels(data.context, data.subsidiaryName, data.language),
       [v.text('excelStatus'), statusLabel(data.status, v)],
       [v.text('excelCoverage'), ...coverageSentences(data, v)],
+      // The approach and the associates left outside Scope 1 and 2, on every
+      // live workbook (inc26-group-tree, D8; owner review of WP7, P2).
+      [v.text('excelConsolidation'), v.text(`approach ${data.consolidationApproach}`)],
+      [
+        v.text('excelExcludedAssociates'),
+        data.excludedAssociates.length > 0 ? data.excludedAssociates.join(', ') : v.text('excelNone'),
+      ],
       // Stated here and not only on the Withdrawn Records sheet: a reader who
       // opens Summary and nothing else must still learn that figures left, and
       // in tonnes — materiality is not measured in rows.

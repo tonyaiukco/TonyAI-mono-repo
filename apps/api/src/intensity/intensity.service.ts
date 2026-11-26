@@ -17,6 +17,7 @@ import type {
   IntensityResponseDTO,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import { HOLDS_RECORDS_WHERE } from '../subsidiaries/reporting-set';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { EmissionsService } from '../emissions/emissions.service';
@@ -265,12 +266,24 @@ export class IntensityService {
     user: RequestUser,
     context: ReportingContext,
   ): Promise<ReportingIntensityData> {
-    const selectedSubsidiaryIds = [...new Set(this.scopeIds(user, context.subsidiaryId))].sort();
+    // The reporting set (inc26-group-tree): a sector group or an associate is
+    // neither in the numerator nor the denominator, nor counted as a company
+    // whose denominator is missing — the screen's coverage ratio reads this
+    // list (owner review of WP7, P2).
+    const scoped = [...new Set(this.scopeIds(user, context.subsidiaryId))];
+    const open = scoped.length === 0
+      ? []
+      : await this.prisma.subsidiary.findMany({ where: { id: { in: scoped }, ...HOLDS_RECORDS_WHERE }, select: { id: true } });
+    const selectedSubsidiaryIds = open.map((r) => r.id).sort();
     const empty = { selectedSubsidiaryIds, metrics: [] };
     if (selectedSubsidiaryIds.length === 0) return empty;
     const denoms = await this.prisma.subsidiaryDenominator.findMany({
       where: {
         subsidiaryId: { in: selectedSubsidiaryIds },
+        // The reporting set (inc26-group-tree): a sector group or an associate
+        // adds nothing to the numerator, so its revenue or headcount must not
+        // enter the denominator either (architect review, P2-1).
+        subsidiary: HOLDS_RECORDS_WHERE,
         year: context.year,
         ...(!hasSelectedSubsidiary(context.subsidiaryId) ? { metric: { in: [...GROUP_INTENSITY_METRICS] } } : {}),
       },

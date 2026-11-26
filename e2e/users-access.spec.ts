@@ -2,7 +2,7 @@ import { test, expect, request as playwrightRequest, type APIRequestContext, typ
 import enUsers from '../apps/web/messages/en/users.json';
 import trUsers from '../apps/web/messages/tr/users.json';
 import enCategories from '../apps/web/messages/en/categories.json';
-import type { SubsidiaryDTO, UserSummaryDTO } from '@tonyai/shared-types';
+import { holdsRecords, type SubsidiaryDTO, type UserSummaryDTO } from '@tonyai/shared-types';
 import {
   ADMIN_EMAIL,
   API_BASE,
@@ -73,11 +73,13 @@ async function seedUser(email: string): Promise<UserSummaryDTO> {
   });
 }
 
+/** The companies the access picker lists: those that can hold a grant —
+ *  never a sector group or an associate (inc26-group-tree). */
 async function subsidiaries(): Promise<SubsidiaryDTO[]> {
   return withApi(async (api, token) => {
     const res = await api.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) });
     expect(res.ok()).toBe(true);
-    return (await res.json()) as SubsidiaryDTO[];
+    return ((await res.json()) as SubsidiaryDTO[]).filter((s) => holdsRecords(s));
   });
 }
 
@@ -123,11 +125,12 @@ test('the access column names the grants; a masterkey edits a super admin\'s com
   await login(page, ADMIN_EMAIL);
   await openUsers(page, enUsers);
 
-  // Four companies: three names in name order, then "+1 more" — never "Subsidiaries: 4".
+  // Five companies (inc26-group-tree adds the child company it created): three
+  // names in name order, then "+2 more" — never "Subsidiaries: 5".
   const row = rowOf(page, APPROVER_EMAIL);
   const four = sortedNames(subs, SEED_APPROVER_GRANTS, 'en');
   await expect(row.getByTestId('user-access-names')).toHaveText(four.slice(0, 3).join(', '));
-  await expect(row).toContainText(fill(enUsers.accessMore, { count: 1 }));
+  await expect(row).toContainText(fill(enUsers.accessMore, { count: SEED_APPROVER_GRANTS.length - 3 }));
   await expect(row).toContainText(enUsers.roles.super_admin);
 
   // A standard user's row is named but not the masterkey's to edit (ruling R3).
@@ -147,20 +150,21 @@ test('the access column names the grants; a masterkey edits a super admin\'s com
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(enUsers.accessDialog.superAdminDescription)).toBeVisible();
   await expect(dialog.getByTestId('subsidiary-picker-count')).toHaveText(
-    fill(enUsers.picker.selectedCount, { count: 4, total: subs.length }),
+    fill(enUsers.picker.selectedCount, { count: SEED_APPROVER_GRANTS.length, total: subs.length }),
   );
   // A super admin's grant carries no category list.
   await expect(dialog.getByTestId('category-picker')).toHaveCount(0);
   const trading = subs.find((s) => s.id === SUB.trading)!.legalName;
   await dialog.getByRole('checkbox', { name: trading }).click();
   await expect(dialog.getByTestId('subsidiary-picker-count')).toHaveText(
-    fill(enUsers.picker.selectedCount, { count: 5, total: subs.length }),
+    fill(enUsers.picker.selectedCount, { count: SEED_APPROVER_GRANTS.length + 1, total: subs.length }),
   );
-  await expect(dialog.getByRole('button', { name: enUsers.picker.selectAll })).toBeDisabled();
+  // The group's root is assignable too (inc26-group-tree), so not every company is ticked yet.
+  await expect(dialog.getByRole('button', { name: enUsers.picker.selectAll })).toBeEnabled();
   await dialog.getByRole('button', { name: enUsers.accessDialog.submit }).click();
   await expect(page.getByText(enUsers.accessSaved)).toBeVisible();
 
-  await expect(row).toContainText(fill(enUsers.accessMore, { count: 2 }));
+  await expect(row).toContainText(fill(enUsers.accessMore, { count: SEED_APPROVER_GRANTS.length + 1 - 3 }));
   const after = await seedUser(APPROVER_EMAIL);
   expect(after.access.map((g) => g.subsidiaryId).sort()).toEqual([...SEED_APPROVER_GRANTS, SUB.trading].sort());
   expect(after.access.every((g) => g.categories.length === 0)).toBe(true);
@@ -378,7 +382,7 @@ test('the access copy speaks Turkish', async ({ page }) => {
   await openUsers(page, trUsers);
   const row = rowOf(page, APPROVER_EMAIL);
   await expect(row.getByTestId('user-access-names')).toHaveText(names.slice(0, 3).join(', '));
-  await expect(row).toContainText(fill(trUsers.accessMore, { count: 1 }));
+  await expect(row).toContainText(fill(trUsers.accessMore, { count: SEED_APPROVER_GRANTS.length - 3 }));
   await expect(row).toContainText(trUsers.roles.super_admin);
   await expect(rowOf(page, AUDITOR_EMAIL)).toContainText(trUsers.wholeOrganisation);
   await expect(rowOf(page, AUDITOR_EMAIL)).toContainText(trUsers.roles.auditor);

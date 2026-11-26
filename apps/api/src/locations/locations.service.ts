@@ -10,6 +10,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { boundaryGuardRefused } from '../inventory-boundary/errors';
 import { errorBody, ResourceNotFoundError } from '../common/api-error';
+import { lockAndReadActor } from '../auth/access-admin.service';
 // `CreateSubsidiaryLocationDto` is the base of `CreateLocationDto` and is what
 // the shared writer takes: the parameter used to build its own
 // `Omit<CreateLocationDto, 'subsidiaryId'>`, which made the shape's THIRD
@@ -20,6 +21,9 @@ import {
 } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { can } from '@tonyai/shared-types';
+import { CalculationsService } from '../calculations/calculations.service';
+import { assertPricedGeography } from '../common/priced-geography';
+import { nodePlacementInvalid, treeTriggerRefusal } from '../subsidiaries/tree-errors';
 
 /**
  * A subsidiary that some caller has already established the right to write to.
@@ -60,6 +64,7 @@ export class LocationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly calculations: CalculationsService,
   ) {}
 
   private toDTO(l: Location): LocationDTO {
@@ -70,6 +75,7 @@ export class LocationsService {
       geographyCode: l.geographyCode,
       address: l.address,
       authorizedPerson: l.authorizedPerson,
+      locationType: l.locationType,
       createdAt: l.createdAt.toISOString(),
       updatedAt: l.updatedAt.toISOString(),
     };
@@ -89,14 +95,21 @@ export class LocationsService {
    * is outside the caller's accessible set are treated as not found.
    */
   private async loadScoped(user: RequestUser, id: string): Promise<Location> {
-    const location = await this.prisma.location.findUnique({ where: { id } });
+    const location = await this.prisma.location.findUnique({
+      where: { id },
+      include: { subsidiary: { select: { organisationId: true } } },
+    });
     if (
       !location ||
-      !user.accessibleSubsidiaryIds.includes(location.subsidiaryId)
+      !user.accessibleSubsidiaryIds.includes(location.subsidiaryId) ||
+      // Its company moved to another organisation since the request arrived:
+      // unknown here (owner's seventh review of WP7, P2).
+      location.subsidiary?.organisationId !== user.organisationId
     ) {
       throw new ResourceNotFoundError('location_not_found');
     }
-    return location;
+    const { subsidiary: _company, ...row } = location;
+    return row;
   }
 
   async list(
@@ -114,8 +127,11 @@ export class LocationsService {
       subsidiaryFilter = { in: user.accessibleSubsidiaryIds };
     }
 
+    // In the reader's own organisation too: ids taken when the request
+    // arrived could name a company an operator moved to another one since
+    // (owner's seventh review of WP7, P2).
     const rows = await this.prisma.location.findMany({
-      where: { subsidiaryId: subsidiaryFilter },
+      where: { subsidiaryId: subsidiaryFilter, subsidiary: { organisationId: user.organisationId ?? undefined } },
       orderBy: { createdAt: 'asc' },
     });
     return rows.map((l) => this.toDTO(l));
@@ -161,15 +177,29 @@ export class LocationsService {
     parent: TrustedParent,
     input: CreateSubsidiaryLocationDto,
   ): Promise<LocationDTO> {
-    const created = await db.location.create({
-      data: {
-        subsidiaryId: parent.subsidiaryId,
-        name: input.name,
-        geographyCode: input.geographyCode,
-        address: input.address ?? null,
-        authorizedPerson: input.authorizedPerson ?? null,
-      },
-    });
+    // inc26-group-tree: a sector group is a label and holds no facility (the
+    // database's TA021 holds the same for every writer), and a facility takes
+    // only a geography the factor library prices (D10).
+    const node = await db.subsidiary.findUnique({ where: { id: parent.subsidiaryId }, select: { nodeType: true } });
+    if (node?.nodeType === 'sector_group') {
+      throw nodePlacementInvalid('A sector group holds no facility: add the facility to a company beneath it.');
+    }
+    await assertPricedGeography(this.calculations, input.geographyCode);
+    let created: Location;
+    try {
+      created = await db.location.create({
+        data: {
+          subsidiaryId: parent.subsidiaryId,
+          name: input.name,
+          geographyCode: input.geographyCode,
+          address: input.address ?? null,
+          authorizedPerson: input.authorizedPerson ?? null,
+          locationType: input.locationType ?? null,
+        },
+      });
+    } catch (e) {
+      throw treeTriggerRefusal(e) ?? e;
+    }
     await this.audit.record(
       user,
       {
@@ -196,9 +226,47 @@ export class LocationsService {
     // rows and audit entries. Wrapped in a transaction here too — this endpoint
     // used to write its audit row outside the mutation, so a crash between them
     // left a location with no trail.
-    return this.prisma.$transaction((tx) =>
-      this.writeLocationForTrustedParent(tx, user, parent, dto),
-    );
+    return this.prisma.$transaction(async (tx) => {
+      const writer = await this.lockWritableParent(tx, user, dto.subsidiaryId);
+      return this.writeLocationForTrustedParent(tx, writer, parent, dto);
+    });
+  }
+
+  /**
+   * A count a refused delete answers with, read only once its caller is
+   * re-authorised (a fresh write transaction, the actor and company re-read):
+   * a caller whose grant was withdrawn after the delete's own check learns no
+   * count — the company answers as unknown (owner's seventh review of WP7, P2).
+   */
+  private async recountAuthorised(
+    user: RequestUser,
+    subsidiaryId: string,
+    count: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockWritableParent(tx, user, subsidiaryId);
+      await count(tx);
+    });
+  }
+
+  /**
+   * The facility writer and its company as they stand, inside the write (owner's
+   * fifth review of WP7, P2): the actor re-read under the organisation's
+   * administrative lock — a super_admin whose grant on the company was
+   * withdrawn, or an account disabled or demoted, while the request waited
+   * writes nothing — then the company locked FOR SHARE in the actor's own
+   * organisation, so one an operator moved to another organisation meanwhile
+   * answers as unknown and stays where it is until this write ends. Returns the
+   * re-read actor, whose role the audit row names.
+   */
+  private async lockWritableParent(tx: Prisma.TransactionClient, user: RequestUser, subsidiaryId: string): Promise<RequestUser> {
+    const organisationId = user.organisationId as string;
+    const actor = await lockAndReadActor(tx, user, organisationId, 'location.write');
+    if (actor.scope !== null && !actor.scope.has(subsidiaryId)) throw new ResourceNotFoundError('subsidiary_not_found');
+    const [held] = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM subsidiaries WHERE id = ${subsidiaryId}::uuid AND organisation_id = ${organisationId}::uuid FOR SHARE`;
+    if (!held) throw new ResourceNotFoundError('subsidiary_not_found');
+    return { ...user, role: actor.role };
   }
 
   async update(
@@ -207,7 +275,8 @@ export class LocationsService {
     dto: UpdateLocationDto,
   ): Promise<LocationDTO> {
     this.assertCanWrite(user);
-    const existing = await this.loadScoped(user, id);
+    // The tenant check; the row itself is read again, locked, below.
+    await this.loadScoped(user, id);
 
     const data: Prisma.LocationUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -216,17 +285,40 @@ export class LocationsService {
     if (dto.authorizedPerson !== undefined) {
       data.authorizedPerson = dto.authorizedPerson;
     }
+    if (dto.locationType !== undefined) data.locationType = dto.locationType;
 
     // Same as create and delete now: mutation and audit in one transaction.
     const updated = await this.prisma.$transaction(async (tx) => {
+      // The row as it stands once locked: a stored geography stays valid
+      // until it is changed, and a new one must be priced (D10) — judged
+      // against THIS value, so an edit that read an older one cannot write
+      // back a geography the library no longer prices; the audit's `before`
+      // is this row too (owner review of WP7, P2).
+      // The actor, then the facility, then its company — the admin lock first,
+      // as every writer of grants and the tree takes it.
+      const organisationId = user.organisationId as string;
+      const actor = await lockAndReadActor(tx, user, organisationId, 'location.write');
+      await tx.$queryRaw`SELECT id FROM locations WHERE id = ${id}::uuid FOR UPDATE`;
+      const current = await tx.location.findUnique({ where: { id } });
+      if (!current) throw new ResourceNotFoundError('location_not_found');
+      // Its company in the actor's organisation and, for a scoped actor, still
+      // granted (owner's fifth review of WP7, P2).
+      if (actor.scope !== null && !actor.scope.has(current.subsidiaryId)) throw new ResourceNotFoundError('location_not_found');
+      const [held] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM subsidiaries WHERE id = ${current.subsidiaryId}::uuid AND organisation_id = ${organisationId}::uuid FOR SHARE`;
+      if (!held) throw new ResourceNotFoundError('location_not_found');
+      const writer = { ...user, role: actor.role };
+      if (dto.geographyCode !== undefined && dto.geographyCode !== current.geographyCode) {
+        await assertPricedGeography(this.calculations, dto.geographyCode);
+      }
       const row = await tx.location.update({ where: { id }, data });
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'update',
           entity: 'location',
           entityId: id,
-          diff: { before: this.toDTO(existing), after: this.toDTO(row) },
+          diff: { before: this.toDTO(current), after: this.toDTO(row) },
         },
         tx,
       );
@@ -241,8 +333,8 @@ export class LocationsService {
    * each operated. An open version can drop it; a frozen one keeps it, and so
    * the site stays.
    */
-  private async assertNotDeclared(locationId: string): Promise<void> {
-    const versions = await this.prisma.inventoryBoundarySite.count({ where: { locationId } });
+  private async assertNotDeclared(locationId: string, db: Prisma.TransactionClient | PrismaService = this.prisma): Promise<void> {
+    const versions = await db.inventoryBoundarySite.count({ where: { locationId } });
     if (versions > 0) {
       throw new ConflictException(
         errorBody(
@@ -270,8 +362,8 @@ export class LocationsService {
    * The count is part of the message because "you cannot delete this" without a
    * number leaves the user with no idea what to do next.
    */
-  private async assertNoRecords(locationId: string): Promise<void> {
-    const count = await this.prisma.activityRecord.count({
+  private async assertNoRecords(locationId: string, db: Prisma.TransactionClient | PrismaService = this.prisma): Promise<void> {
+    const count = await db.activityRecord.count({
       where: { locationId },
     });
     if (count > 0) {
@@ -318,8 +410,9 @@ export class LocationsService {
     user: RequestUser,
     location: Location,
   ): Promise<boolean> {
+    let deleted: Location;
     try {
-      await db.location.delete({ where: { id: location.id } });
+      deleted = await db.location.delete({ where: { id: location.id } });
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') return false;
       throw err;
@@ -330,7 +423,10 @@ export class LocationsService {
         action: 'delete',
         entity: 'location',
         entityId: location.id,
-        diff: { before: this.toDTO(location) },
+        // The row the delete removed, not the read before the transaction —
+        // a rename or a new type meanwhile is what was deleted (owner's sixth
+        // review of WP7, P2).
+        diff: { before: this.toDTO(deleted) },
       },
       db,
     );
@@ -343,14 +439,19 @@ export class LocationsService {
   ): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
-    await this.assertNoRecords(id);
-    await this.assertNotDeclared(id);
     // Delete + audit in one transaction (see subsidiaries.remove).
     try {
       await this.prisma.$transaction(async (tx) => {
+        // The actor and the company as they stand (owner's fifth review of WP7, P2).
+        const writer = await this.lockWritableParent(tx, user, existing.subsidiaryId);
+        // Only then what depends on the site: a caller whose grant was
+        // withdrawn meanwhile learns no count of its records or versions
+        // (owner's sixth review of WP7, P2).
+        await this.assertNoRecords(id, tx);
+        await this.assertNotDeclared(id, tx);
         // Deleted by a concurrent request since it was read: the answer it
         // would get now, not a 500 (pre-pilot defects).
-        if (!(await this.deleteLocationForTrustedParent(tx, user, existing))) {
+        if (!(await this.deleteLocationForTrustedParent(tx, writer, existing))) {
           throw new ResourceNotFoundError('location_not_found');
         }
       });
@@ -359,14 +460,14 @@ export class LocationsService {
       // (LP4-01), so the delete is refused rather than re-filing it at company
       // level. The same 409 as the check, with the count as it is now.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
-        await this.assertNoRecords(id);
+        await this.recountAuthorised(user, existing.subsidiaryId, (tx) => this.assertNoRecords(id, tx));
       }
       // A boundary version declaring the site since the check: its guard
       // refuses the cascade (TA014, W9). The same 409 as the check — and a 409
       // still if that version is gone by the recount: the delete did not
       // happen either way (Codex's B9 review).
       if (boundaryGuardRefused(err)) {
-        await this.assertNotDeclared(id);
+        await this.recountAuthorised(user, existing.subsidiaryId, (tx) => this.assertNotDeclared(id, tx));
         throw new ConflictException(
           errorBody(
             'location_declared_during_delete',

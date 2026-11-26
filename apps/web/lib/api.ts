@@ -45,6 +45,10 @@ import type {
   CreateSubsidiaryInput,
   CreateTargetInput,
   DashboardKpi,
+  BoundaryExclusionDTO,
+  OrganisationDTO,
+  RollUpResponse,
+  UpdateConsolidationApproachInput,
   DenominatorDTO,
   EvidenceDTO,
   EvidenceDetachDTO,
@@ -546,7 +550,21 @@ export const api = {
     apiFetch<{ id: string; deleted: true }>(`/subsidiaries/${id}`, {
       method: "DELETE",
     }),
+  /** inc26-group-tree: the associates the caller can read (the
+   *  boundary-exclusions note); empty for anyone holding no associate. */
+  listBoundaryExclusions: () => apiFetch<BoundaryExclusionDTO[]>("/subsidiaries/boundary-exclusions"),
   kpi: () => apiFetch<DashboardKpi>("/kpi"),
+
+  // --- The organisation (inc26-group-tree) ---
+  getOrganisation: () => apiFetch<OrganisationDTO>("/organisation"),
+  setConsolidationApproach: (body: UpdateConsolidationApproachInput) =>
+    apiFetch<OrganisationDTO>("/organisation/consolidation-approach", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  /** Each node's own figure and roll-up for a year, within the caller's scope. */
+  rollUp: (reportingYear: number) =>
+    apiFetch<RollUpResponse>(`/emissions/roll-up?reportingYear=${encodeURIComponent(String(reportingYear))}`),
 
   // --- Operational locations ---
   listLocations: (subsidiaryId?: string) =>

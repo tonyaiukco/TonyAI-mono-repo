@@ -15,6 +15,7 @@ import {
   CalculationStaleError,
   CreateRoleRefusedError,
   DuplicateActivityRecordError,
+  EntityClosedToDataEntryError,
   EvidenceRequiredError,
   PeriodLockedError,
   RecordChangedError,
@@ -33,6 +34,7 @@ import {
 } from './errors';
 import {
   EVIDENCE_REQUIRED_CATEGORIES,
+  holdsRecords,
   canonicalPeriodValue,
   CATEGORY_SCOPE_MAP,
   type AnomalyVerdict,
@@ -63,6 +65,7 @@ import {
   REPORTING_PERIODS,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import { treeTriggerRefusal } from '../subsidiaries/tree-errors';
 import { generationFuelRecords } from './generation-fuel-records';
 import { quoteCallerText } from '../common/caller-text';
 import {
@@ -910,6 +913,11 @@ export class ActivityRecordsService {
     if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
       throw new ResourceNotFoundError('subsidiary_not_found');
     }
+    // A node closed to data entry — an associate or a sector group — takes no
+    // record, whoever asks (inc26-group-tree, D6); after the tenant gate, so a
+    // foreign id still answers as unknown. The database's TA019 holds the same
+    // for every writer, under a row lock that closes the race with a tick.
+    await this.assertEntityOpen(dto.subsidiaryId);
     // A standard user enters only in the categories ticked on its grant for
     // the company (INC-2.6 §1, §7.3) — after the role and scope checks.
     assertCategoryGranted(user, dto.subsidiaryId, dto.category);
@@ -1057,9 +1065,21 @@ export class ActivityRecordsService {
       if (recordTriggerCode(e) === 'TA002') {
         throw new ActivityTypeSlotConflictError(activityType !== null);
       }
+      // TA019: the company was ticked associate after the early check.
+      const closed = treeTriggerRefusal(e);
+      if (closed) throw closed;
       throw asLostRace(e);
     }
     return this.toDTO(created, 0, await this.actorsFor(user, [created]), created.fuelRecords, NO_APPROVERS);
+  }
+
+  /** The record gate of design D6: `holdsRecords` on the company named. */
+  private async assertEntityOpen(subsidiaryId: string): Promise<void> {
+    const node = await this.prisma.subsidiary.findUnique({
+      where: { id: subsidiaryId },
+      select: { nodeType: true, control: true },
+    });
+    if (node && !holdsRecords(node)) throw new EntityClosedToDataEntryError();
   }
 
   async update(

@@ -70,6 +70,9 @@ export function createPrismaMock() {
     subsidiary: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      // inc26-group-tree: a parent or the root is looked up, and children counted.
+      findFirst: vi.fn(),
+      count: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
@@ -104,15 +107,30 @@ export function createPrismaMock() {
     subsidiaryDenominator: { count: vi.fn() },
     // LP3-04 PR B: a subsidiary or site declared in an inventory boundary
     // version is not deleted (W9) — the delete guards count these too.
-    inventoryBoundarySubsidiary: { count: vi.fn() },
+    inventoryBoundarySubsidiary: { count: vi.fn(), findMany: vi.fn() },
     inventoryBoundarySite: { count: vi.fn() },
+    // inc26-group-tree: ticking associate reads the grants and the newest
+    // boundary version of each declared year; a delete reads the grants it
+    // cascades, to audit each.
+    userSubsidiaryAccess: { count: vi.fn(), findMany: vi.fn() },
+    inventoryBoundary: { findFirst: vi.fn() },
     // The object handed to `$transaction` callbacks, with its OWN spies for
     // every model — see `createTxClient` below.
     txClient: null as unknown as typeof mock,
     // The subsidiary delete locks its row (`SELECT … FOR UPDATE`) before
     // counting children, so the guard cannot be raced by a concurrent insert.
     // A row lock reads back the row it locked, as Postgres answers one that exists.
-    $queryRaw: vi.fn().mockResolvedValue([{ id: 'locked' }]),
+    // A company's delete removes its grants with `DELETE … RETURNING` (WP7):
+    // none unless a spec says so.
+    $queryRaw: vi.fn(async (sql: TemplateStringsArray) =>
+      (Array.isArray(sql) && sql.join('?').includes('DELETE FROM user_subsidiary_access') ? [] : [{ id: 'locked' }])),
+    // inc26-group-tree: a move or a control tick takes the organisation's tree
+    // lock (`pg_advisory_xact_lock`) before it locks the node.
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    // A company's update and delete re-read their actor under the
+    // organisation's administrative lock (owner review of WP7): by default
+    // the masterkey as authenticated.
+    profile: { findUnique: vi.fn() },
     $transaction: vi.fn(),
   };
   mock.txClient = createTxClient(mock);
@@ -132,8 +150,25 @@ export function createPrismaMock() {
       client.subsidiaryDenominator,
       client.inventoryBoundarySubsidiary,
       client.inventoryBoundarySite,
+      client.subsidiary,
+      client.userSubsidiaryAccess,
     ]) {
       model.count.mockResolvedValue(0);
+    }
+    client.subsidiary.findFirst.mockResolvedValue(null);
+    client.inventoryBoundarySubsidiary.findMany.mockResolvedValue([]);
+    client.userSubsidiaryAccess.findMany.mockResolvedValue([]);
+    client.profile.findUnique.mockResolvedValue({
+      role: 'masterkey', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null }, subsidiaryAccess: [],
+    });
+    client.inventoryBoundary.findFirst.mockResolvedValue(null);
+    // A subsidiary update reads its row again inside the transaction, after
+    // locking it (owner review of WP7): the same row a spec stubs on the root
+    // client, unless the spec stubs the transaction's own read.
+    if (client === mock.txClient) {
+      client.subsidiary.findUnique.mockImplementation((args: unknown) => mock.subsidiary.findUnique(args));
+      // …and a location update reads its row the same way (owner review of WP7).
+      client.location.findUnique.mockImplementation((args: unknown) => mock.location.findUnique(args));
     }
     // Same reasoning one step further: an unstubbed `findMany` resolves to
     // `undefined`, and a service that iterates it dies with "not iterable" —
@@ -177,6 +212,14 @@ export function makeSubsidiary(overrides: Partial<Subsidiary> = {}): Subsidiary 
     // `toEqual` ignores undefined-valued keys — so every assertion over this
     // fixture passed while the DTO silently lacked the field.
     trackingGranularity: 'subsidiary',
+    // inc26-group-tree, listed for the reason above: a controlled company
+    // under the fixture organisation's root.
+    parentId: 'sub-root',
+    nodeType: 'company',
+    control: 'controlled',
+    sharePercent: null,
+    naceCode: null,
+    createdByRole: null,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -196,8 +239,12 @@ export function makeLocation(
     geographyCode: 'UK',
     address: null,
     authorizedPerson: null,
+    locationType: null,
     createdAt: now,
     updatedAt: now,
+    // The company's organisation, as the facility's scoped read includes it
+    // (owner's seventh review of WP7): the callers' 'org-1' by default.
+    subsidiary: { organisationId: 'org-1' },
     ...overrides,
   } as import('@tonyai/db').Location;
 }

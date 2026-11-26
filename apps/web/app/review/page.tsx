@@ -72,6 +72,7 @@ import {
   type EvidenceDTO,
   type Locale,
   type SubsidiaryDTO,
+  holdsRecords,
 } from "@/lib/types";
 import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
@@ -605,7 +606,9 @@ export default function ReviewPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={ANY}>{t("allSubsidiaries")}</SelectItem>
-                    {subsidiaries.map((s) => (
+                    {/* Companies that hold records only: a sector group's or an
+                        associate's queue is always empty (owner's fourth review of WP7, P3). */}
+                    {subsidiaries.filter((s) => holdsRecords(s)).map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.legalName}
                       </SelectItem>

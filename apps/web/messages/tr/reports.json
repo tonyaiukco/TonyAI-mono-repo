@@ -47,7 +47,16 @@
   },
   "scopeValue": "Kapsam {scope}",
   "noCommittedData": "Bu seçim için sayılan veri yok.",
-  "methodology": "<strong>Yöntem:</strong> her hesaplama kullandığı emisyon faktörünün (değer, kaynak, sürüm) değiştirilemez bir anlık görüntüsünü saklar — faktörlerin tam eki üretilen PDF/Excel'dedir. Sınır: operasyonel kontrol. ISO 14064-1 / GHG Protokolü ile uyumludur.",
+  "methodology": "<strong>Yöntem:</strong> her hesaplama kullandığı emisyon faktörünün (değer, kaynak, sürüm) değiştirilemez bir anlık görüntüsünü saklar — faktörlerin tam eki üretilen PDF/Excel'dedir. Konsolidasyon yaklaşımı: {approach}. ISO 14064-1 / GHG Protokolü ile uyumludur.",
+  "methodologyApproach": {
+    "operational_control": "operasyonel kontrol",
+    "financial_control": "finansal kontrol"
+  },
+  "methodologyExclusions": "Öz kaynak şirketi olarak Kapsam 1 ve 2 dışında tutulanlar (konsolide edilmez): {names}.",
+  "consolidationLine": "<strong>Konsolidasyon yaklaşımı:</strong> {approach}.",
+  "methodologyApproachLoading": "okunuyor…",
+  "methodologyApproachUnavailable": "burada okunamadı",
+  "methodologyExclusionsUnavailable": "Kapsam 1 ve 2 dışında bırakılan öz kaynak şirketleri de burada okunamadı.",
   "generate": "Oluştur ve indir",
   "cannotGenerate": "Rolünüz rapor verilerini görebilir ancak rapor oluşturamaz veya dışa aktaramaz.",
   "downloadPdf": "PDF indir",

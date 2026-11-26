@@ -18,6 +18,7 @@ import { readInventoryBoundary } from '../../src/inventory-boundary/boundary-rea
 import { LocationsService } from '../../src/locations/locations.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { SubsidiariesService } from '../../src/subsidiaries/subsidiaries.service';
+import { AccessAdminService } from '../../src/auth/access-admin.service';
 import {
   backendPid,
   connect,
@@ -643,13 +644,16 @@ describe('deletion: a declared subsidiary or site stays (W9); the organisation t
         }),
         `site, frozen ${frozen}`,
       ).toBe('TA014');
+      // A subsidiary with a site is refused first for holding a facility
+      // (inc26-group-tree, RD9, TA023); the company-only case below is where
+      // the declaration's own check (TA014) answers.
       expect(
         await refusedAsOwner(async (tx) => {
           await createBoundary(tx, a, { locationId: siteA, frozen });
           await tx.subsidiary.delete({ where: { id: a.subsidiaryId } });
         }),
         `subsidiary, frozen ${frozen}`,
-      ).toBe('TA014');
+      ).toBe('TA023');
       // Declared at company level alone — no site of it in the version, so
       // the subsidiary's own check, not a site's, is what refuses.
       expect(
@@ -688,8 +692,9 @@ describe('deletion: a declared subsidiary or site stays (W9); the organisation t
 
   it('answers the API 409, not 500, for a declared site or subsidiary — and for a version declaring the site after the check', async () => {
     const audit = new AuditService(runtime);
-    const locations = new LocationsService(runtime, audit);
-    const subsidiaries = new SubsidiariesService(runtime, audit, locations);
+    const calculations = new CalculationsService(runtime, INT_FACTOR_POLICY);
+    const locations = new LocationsService(runtime, audit, calculations);
+    const subsidiaries = new SubsidiariesService(runtime, audit, locations, new AccessAdminService(runtime, audit), calculations);
     const site = (await owner.location.create({ data: { subsidiaryId: a.subsidiaryId, name: 'Int-test declared site', geographyCode: 'UK' } })).id;
     const open = await createBoundary(owner, a, { locationId: site, version: 20 });
     try {
@@ -717,7 +722,7 @@ describe('deletion: a declared subsidiary or site stays (W9); the organisation t
     // The race: the check passes, then a version declares the site before
     // the delete runs — the guard's TA014 answers the same 409.
     const hold = holdBefore(runtime, 'Location', 'delete');
-    const raced = new LocationsService(hold.client, new AuditService(hold.client)).remove(a.users.masterkey, site);
+    const raced = new LocationsService(hold.client, new AuditService(hold.client), new CalculationsService(hold.client, INT_FACTOR_POLICY)).remove(a.users.masterkey, site);
     let late: { boundaryId: string } | undefined;
     try {
       await hold.reached();

@@ -85,17 +85,26 @@ describe("versionState", () => {
 });
 
 describe("boundaryActions — only masterkey writes, only on the open version", () => {
-  // `boundary.write` is the masterkey's (a super_admin's own company waits for inc26-group-tree).
-  const ROLES: UserRole[] = ["super_admin", "standard_user", "auditor"];
+  // `boundary.write` is the masterkey's; a super_admin declares its own
+  // companies in the open version (inc26-group-tree, D7).
+  const ROLES: UserRole[] = ["standard_user", "auditor"];
 
   it.each(ROLES)("%s may not create, edit or confirm", (role) => {
     const a = boundaryActions({ role, versions: [summary(1, CONFIRMED)], selected: dto() });
     expect(a.create).toBe(false);
     expect(a.edit).toBe(false);
+    expect(a.lifecycle).toBe(false);
+  });
+
+  it("a super_admin declares its own companies in the open version, and never starts, confirms or deletes one", () => {
+    const open = boundaryActions({ role: "super_admin", versions: [summary(1)], selected: { ...dto(), view: "granted_subsidiaries" } });
+    expect(open).toMatchObject({ create: false, edit: true, lifecycle: false });
+    const frozen = { ...dto(), view: "granted_subsidiaries" as const, frozenAt: "2026-10-16T08:00:00.000Z" };
+    expect(boundaryActions({ role: "super_admin", versions: [summary(1, CONFIRMED)], selected: frozen as never }).edit).toBe(false);
   });
 
   it("an unknown role (user not loaded) writes nothing", () => {
-    expect(boundaryActions({ role: undefined, versions: [], selected: null })).toEqual({ create: false, edit: false, confirmBlock: null });
+    expect(boundaryActions({ role: undefined, versions: [], selected: null })).toEqual({ create: false, edit: false, lifecycle: false, confirmBlock: null });
   });
 
   it("masterkey starts a version only when the year has no open one (boundary_draft_open)", () => {
@@ -159,5 +168,18 @@ describe("undeclaredSubsidiaries", () => {
   it("the subsidiaries the caller sees that a confirmation would leave out", () => {
     expect(undeclaredSubsidiaries(dto(), [subsidiary("energy", "Energy TR"), subsidiary("mfg", "Mfg EU")]).map((s) => s.id))
       .toEqual(["mfg"]);
+  });
+});
+
+describe("closed nodes are never offered to declare (inc26-group-tree)", () => {
+  it("leaves an associate and a sector group out of the rows and of the confirmation's warning", () => {
+    const v = dto({}, []);
+    const list = [
+      { ...subsidiary("a", "Alpha"), nodeType: "company", control: "controlled" },
+      { ...subsidiary("x", "Associate"), nodeType: "company", control: "associate" },
+      { ...subsidiary("g", "Group"), nodeType: "sector_group", control: "controlled" },
+    ] as SubsidiaryDTO[];
+    expect(subsidiaryRows(v, list).map((r) => r.id)).toEqual(["a"]);
+    expect(undeclaredSubsidiaries(v, list).map((s) => s.id)).toEqual(["a"]);
   });
 });

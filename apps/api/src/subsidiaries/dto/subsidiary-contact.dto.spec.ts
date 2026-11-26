@@ -324,3 +324,36 @@ describe('subsidiary free-text fields — bounded', () => {
     expect(updateErrors({})).toHaveLength(0);
   });
 });
+
+describe('the group tree fields (inc26-group-tree)', () => {
+  it("accepts the seed's fixed ids as a parent — the shape, not RFC 4122's version bits", () => {
+    for (const errors of [createErrors, updateErrors]) {
+      expect(errors({ parentId: '22222222-2222-2222-2222-222222220002' })).toHaveLength(0);
+      expect(errors({ parentId: 'not-a-uuid' })).not.toHaveLength(0);
+    }
+    const dto = plainToInstance(CreateSubsidiaryDto, { legalName: 'New Co', geographyCode: 'UK', parentId: 'AAAAAAAA-0000-4000-8000-00000000000A' });
+    expect(dto.parentId).toBe('aaaaaaaa-0000-4000-8000-00000000000a');
+  });
+
+  it('bounds the type, the control, the share percent and the NACE code', () => {
+    expect(createErrors({ nodeType: 'sector_group', control: 'associate', sharePercent: 12.5, naceCode: 'C10.11' })).toHaveLength(0);
+    for (const bad of [{ nodeType: 'division' }, { control: 'joint' }, { sharePercent: 101 }, { sharePercent: -1 }, { sharePercent: 1.234 }, { naceCode: 'ZZ' }]) {
+      expect(createErrors(bad), JSON.stringify(bad)).not.toHaveLength(0);
+    }
+    expect(createErrors({ naceCode: '' })).toHaveLength(0);
+  });
+
+  it("requires a geography of every node but a sector group, which takes its parent's (owner review of WP7, P2)", () => {
+    expect(createErrors({ nodeType: 'sector_group', geographyCode: undefined })).toHaveLength(0);
+    expect(createErrors({ nodeType: 'company', geographyCode: undefined })).not.toHaveLength(0);
+    expect(createErrors({ geographyCode: undefined })).not.toHaveLength(0);
+    expect(createErrors({ nodeType: 'sector_group', geographyCode: 'XX' })).not.toHaveLength(0);
+  });
+
+  it('refuses a null control on an update — absent leaves it, null was a 500 (WP7 review)', () => {
+    expect(updateErrors({ control: null })).not.toHaveLength(0);
+    expect(updateErrors({})).toHaveLength(0);
+    expect(updateErrors({ control: 'associate' })).toHaveLength(0);
+    expect(updateErrors({ sharePercent: 1.1 })).toHaveLength(0);
+  });
+});
