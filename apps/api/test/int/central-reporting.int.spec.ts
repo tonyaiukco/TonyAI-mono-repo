@@ -1050,3 +1050,92 @@ describe('the exact repeat and the slot kind, through the service (QA review of 
       .rejects.toMatchObject({ response: expect.objectContaining({ code: 'slot_holds_untyped' }) });
   });
 });
+
+describe("the owner's second review of WP8 (2026-11-26)", () => {
+  const dto = {
+    subsidiaryId: '', reportingYear: 2026, reportingPeriod: 'monthly' as const, periodValue: 'August',
+    category: 'Electricity' as const, activityValue: 100, activityUnit: 'kWh',
+  };
+  async function asRequest(id: string, role: 'standard_user' | 'super_admin', extra: Partial<RequestUser> = {}): Promise<RequestUser> {
+    const profile = await owner.profile.findUniqueOrThrow({ where: { id } });
+    return { id, email: profile.email, fullName: profile.fullName, role, organisationId: tenant.organisationId, accessibleSubsidiaryIds: [S()], ...extra };
+  }
+
+  it('P1: a super_admin made a standard user while its create waits writes nothing', async () => {
+    const admin = await addMember(owner, tenant, UserRole.super_admin, { grants: [S()] });
+    const user = await asRequest(admin.id, 'super_admin');
+    const hold = holdBefore(runtime, 'PeriodLock', 'findFirst');
+    const create = lifecycleServices(hold.client).records.create(user, { ...dto, subsidiaryId: S() });
+    await hold.reached();
+    await accessAdmin(owner).setRole(tenant.users.masterkey, admin.id, UserRole.standard_user);
+    hold.release();
+    await expect(create).rejects.toMatchObject({ response: expect.objectContaining({ code: 'record_create_forbidden' }) });
+    expect(await owner.activityRecord.count({ where: { createdBy: admin.id } })).toBe(0);
+  });
+
+  it('P1: an author disabled while its create waits writes nothing', async () => {
+    const admin = await addMember(owner, tenant, UserRole.super_admin, { grants: [S()] });
+    const user = await asRequest(admin.id, 'super_admin');
+    const hold = holdBefore(runtime, 'PeriodLock', 'findFirst');
+    const create = lifecycleServices(hold.client).records.create(user, { ...dto, subsidiaryId: S() });
+    await hold.reached();
+    await owner.profile.update({ where: { id: admin.id }, data: { disabledAt: new Date() } });
+    hold.release();
+    await expect(create).rejects.toMatchObject({ response: expect.objectContaining({ code: 'record_create_forbidden' }) });
+    expect(await owner.activityRecord.count({ where: { createdBy: admin.id } })).toBe(0);
+  });
+
+  it("P1: a super_admin's company withdrawn while its create waits is refused as unknown", async () => {
+    const other = await company('Int-test second granted company');
+    const admin = await addMember(owner, tenant, UserRole.super_admin, { grants: [S(), other] });
+    const user = await asRequest(admin.id, 'super_admin', { accessibleSubsidiaryIds: [S(), other] });
+    const hold = holdBefore(runtime, 'PeriodLock', 'findFirst');
+    const create = lifecycleServices(hold.client).records.create(user, { ...dto, subsidiaryId: S() });
+    await hold.reached();
+    await owner.userSubsidiaryAccess.delete({ where: { userId_subsidiaryId: { userId: admin.id, subsidiaryId: S() } } });
+    hold.release();
+    await expect(create).rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
+  });
+
+  it("P2: a grant change that removes one company and re-ticks another waits for a create, and neither deadlocks", async () => {
+    await setOwnCategories(['Water']);
+    const reporterId = await reporterAt(['Electricity']);
+    // Its id sorts last, so a create that locked rows one by one would hold S's row
+    // while it waited on this one's — the deadlock the profile lock prevents.
+    const second = (await owner.subsidiary.create({
+      data: { id: `ffffffff-${randomUUID().slice(9)}`, organisationId: tenant.organisationId, legalName: 'Int-test second grant company', geographyCode: 'UK' },
+      select: { id: true },
+    })).id;
+    expect(second > S() && second > T()).toBe(true);
+    await runtime.userSubsidiaryAccess.create({
+      data: { userId: reporterId, subsidiaryId: second, organisationId: tenant.organisationId, kind: 'central_reporter', categories: ['Electricity'] },
+    });
+    const user = await asRequest(reporterId, 'standard_user', {
+      accessibleSubsidiaryIds: [T(), S(), second],
+      categoryGrants: { [T()]: ['Water'], [S()]: ['Electricity'], [second]: ['Electricity'] },
+      grantKinds: { [T()]: 'assigned', [S()]: 'central_reporter', [second]: 'central_reporter' },
+    });
+    const a = connect();
+    const b = connect();
+    try {
+      // The grant change, held after it removed one company's row and before it re-ticks the other.
+      const hold = holdBefore(a, 'UserSubsidiaryAccess', 'update');
+      const change = accessAdmin(hold.client).setCentralReporterGrant(tenant.users.masterkey, reporterId, {
+        subsidiaryIds: [S()], categories: ['Electricity', 'Fuel'],
+      });
+      await hold.reached();
+      // The create waits on the account's profile, holding none of its rows…
+      const pidB = await backendPid(b);
+      const create = lifecycleServices(b).records.create(user, { ...dto, subsidiaryId: S() });
+      expect(await settledOrBlocked(create, pidB, observer)).toBe('blocked');
+      // …so the change completes, and the create follows it.
+      hold.release();
+      await change;
+      const record = await create;
+      expect(record.reportedBySubsidiaryId).toBe(T());
+    } finally {
+      await a.$disconnect();
+      await b.$disconnect();
+    }
+  });
+});

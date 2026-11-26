@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "use-intl";
 import { AlertTriangle } from "lucide-react";
@@ -16,6 +16,16 @@ import type { AuthUser } from "@/lib/types";
  * rather than the dashboard. Forgotten once the tab leaves the wizard.
  */
 let finishedInThisTab = false;
+
+/**
+ * The account the gate decided on, for the screens inside it: the wizard
+ * fills the store from it, so the profile's language applies on its first
+ * screen without a second `/me` (owner's second review of WP8, P2).
+ */
+const GateAccount = createContext<AuthUser | null>(null);
+export function useGateAccount(): AuthUser | null {
+  return useContext(GateAccount);
+}
 export function noteOnboardingFinished(): void {
   finishedInThisTab = true;
 }
@@ -24,8 +34,9 @@ export function noteOnboardingFinished(): void {
  * The setup wizard's gate (inc26-central-reporter-onboarding, D9), inside the
  * session gate on every protected path. It reads `GET /me` itself, so it never
  * waits for a page that is waiting for it, and decides from the account the
- * store holds when there is one (a page's read, the wizard's included, or
- * Finish's answer), else from its own read. A masterkey of
+ * store holds when there is one (a page's read, or Finish's answer), else from
+ * its own read — which it hands the screens inside it (`useGateAccount`; the
+ * wizard fills the store from it). A masterkey of
  * an unfinished organisation is replaced to `/onboarding` from any other path;
  * anyone else away from `/onboarding`. Nothing of the tool renders before the
  * answer. It reads again when the session's account changes (the store is
@@ -122,5 +133,5 @@ export function OnboardingGate({ path, children }: { path: string; children: Rea
     );
   }
   if (!user || target) return null;
-  return <>{children}</>;
+  return <GateAccount.Provider value={user}>{children}</GateAccount.Provider>;
 }

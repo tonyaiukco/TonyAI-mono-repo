@@ -28,7 +28,14 @@ export interface BoundaryCalls {
    * version, this first saved declaration opens one; a version opened by
    * someone else meanwhile answers the API's own refusal.
    */
-  declare(versionId: string | null, reportingYear: number, subsidiaryId: string, request: PutInventoryBoundarySubsidiaryRequest): Promise<InventoryBoundaryVersionDTO>;
+  declare(
+    versionId: string | null,
+    reportingYear: number,
+    subsidiaryId: string,
+    request: PutInventoryBoundarySubsidiaryRequest,
+    /** The version this call opened, told before the write: a write that then fails is retried into it (owner's second review, P2). */
+    onOpened?: (opened: InventoryBoundaryVersionDTO) => void,
+  ): Promise<InventoryBoundaryVersionDTO>;
 }
 
 export const boundaryCalls: BoundaryCalls = {
@@ -39,8 +46,12 @@ export const boundaryCalls: BoundaryCalls = {
   confirm: (versionId) => api.confirmInventoryBoundary(versionId),
   sitesOf: async (subsidiaryId) =>
     (await api.listLocations(subsidiaryId)).filter((l) => l.subsidiaryId === subsidiaryId).map((l) => ({ id: l.id, name: l.name })),
-  declare: async (versionId, reportingYear, subsidiaryId, request) =>
-    boundaryCalls.writeDeclaration(versionId ?? (await boundaryCalls.openNew(reportingYear)).id, subsidiaryId, request),
+  declare: async (versionId, reportingYear, subsidiaryId, request, onOpened) => {
+    if (versionId !== null) return boundaryCalls.writeDeclaration(versionId, subsidiaryId, request);
+    const opened = await boundaryCalls.openNew(reportingYear);
+    onOpened?.(opened);
+    return boundaryCalls.writeDeclaration(opened.id, subsidiaryId, request);
+  },
 };
 
 /** The calls, for a component. */

@@ -20,7 +20,8 @@ import {
   boundaryCompanies,
   companiesOf,
   companyParents,
-  grantCandidates,
+  boundaryStepView,
+  grantCandidatesIn,
   holdingAction,
   rootOf,
   sectorGroupsOf,
@@ -340,35 +341,38 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
   // Each load is numbered: an answer for a year the bar has left is dropped
   // (security review), so the version on screen is always the year's.
   const loadSeq = useRef(0);
-  // Nothing is declared until the year's versions are read: a save before then
-  // could open a version beside a confirmed one it never saw.
-  const [loaded, setLoaded] = useState(false);
+  // Nothing is declared or confirmed until the selected year's versions are
+  // read (`boundaryStepView`): a save before then could open a version beside a
+  // confirmed one it never saw, a confirm freeze the year the bar has left.
+  const [loadedFor, setLoadedFor] = useState<number | null>(null);
   const load = useCallback(async () => {
     if (year === null) return;
     const seq = ++loadSeq.current;
-    setLoaded(false);
+    setLoadedFor(null);
+    setDetail(null);
     const newest = (await boundaryCalls.listYear(year))[0];
     const opened = newest ? await boundaryCalls.open(newest.id) : null;
     if (seq !== loadSeq.current) return;
     setDetail(opened);
-    setLoaded(true);
+    setLoadedFor(year);
   }, [year]);
   useEffect(() => {
     load().catch(showError);
   }, [load, showError]);
 
-  const open = detail ? versionState(detail) === "open" : true;
-  const declared = (id: string) => !!detail && draftFromSnapshot(detail.boundary, id) !== null;
-  // One object per opened editor: a re-render (Save's busy state) must not hand
-  // the editor a new start and wipe what was typed (owner review of WP8, P2).
-  const initial = useMemo(
-    () => (editing && detail ? draftFromSnapshot(detail.boundary, editing.id) : null) ?? emptyDraft(),
-    [detail, editing],
-  );
+  const view = year === null ? { ready: false, version: null } : boundaryStepView(year, loadedFor, detail);
+  const version = view.version;
+  const open = version ? versionState(version) === "open" : true;
+  const declared = (id: string) => !!version && draftFromSnapshot(version.boundary, id) !== null;
+  // Fixed when the editor opens: neither a re-render nor the version a first
+  // save opens hands the editor a new start and wipes what was typed (owner's
+  // reviews of WP8, P2).
+  const [initial, setInitial] = useState(() => emptyDraft());
 
   async function edit(company: SubsidiaryDTO) {
     try {
       setSites(await boundaryCalls.sitesOf(company.id));
+      setInitial((version ? draftFromSnapshot(version.boundary, company.id) : null) ?? emptyDraft());
       setEditing(company);
     } catch (e) {
       showError(e);
@@ -376,13 +380,12 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
   }
 
   async function save(request: PutInventoryBoundarySubsidiaryRequest) {
-    if (!editing || year === null || !loaded) return;
-    // Never into another year's version than the one the bar shows.
-    if (detail && detail.reportingYear !== year) return void (await load().catch(showError));
+    if (!editing || year === null || !view.ready) return;
     setSaving(true);
     try {
-      // Into the version on screen; the first saved declaration opens one when the year had none.
-      setDetail(await boundaryCalls.declare(detail?.id ?? null, year, editing.id, request));
+      // Into the version on screen; the first saved declaration opens one when
+      // the year had none, kept on screen at once so a failed write is retried into it.
+      setDetail(await boundaryCalls.declare(version?.id ?? null, year, editing.id, request, setDetail));
       toast.success(t("boundaries.saved"));
       setEditing(null);
     } catch (e) {
@@ -398,9 +401,12 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
   }
 
   async function confirm() {
-    if (!detail) return;
+    if (!view.ready || !version || version.reportingYear !== year) return;
+    const seq = loadSeq.current;
     try {
-      setDetail(await boundaryCalls.confirm(detail.id));
+      const confirmed = await boundaryCalls.confirm(version.id);
+      // An answer for a year the bar has left is dropped (QA review).
+      if (seq === loadSeq.current) setDetail(confirmed);
     } catch (e) {
       showError(e);
     }
@@ -424,7 +430,7 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
               <span>{c.legalName}</span>
               <span className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">{declared(c.id) ? t("boundaries.declared") : t("boundaries.notDeclared")}</span>
-                <Button size="sm" variant="outline" disabled={!open || !loaded} onClick={() => void edit(c)}>
+                <Button size="sm" variant="outline" disabled={!open || !view.ready} onClick={() => void edit(c)}>
                   {declared(c.id) ? t("boundaries.edit") : t("boundaries.declare")}
                 </Button>
               </span>
@@ -432,12 +438,12 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
           ))}
         </ul>
       )}
-      {detail && open && (
+      {view.ready && version && open && (
         <Button variant="outline" size="sm" onClick={() => void confirm()} data-testid="onboarding-boundary-confirm">
           {t("boundaries.confirm")}
         </Button>
       )}
-      {detail && !open && <p className="text-xs text-muted-foreground">{t("boundaries.confirmed")}</p>}
+      {view.ready && version && !open && <p className="text-xs text-muted-foreground">{t("boundaries.confirmed")}</p>}
       {editing && (
         <DeclarationEditor
           open
@@ -446,7 +452,7 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
           readOnly={false}
           initial={initial}
           sites={sites}
-          gaps={detail ? gapLines(detail, editing.id) : []}
+          gaps={version ? gapLines(version, editing.id) : []}
           saving={saving}
           onSave={(request) => void save(request)}
         />
@@ -564,8 +570,8 @@ export function CentralReporterStep({ nodes, onNext, footer }: StepProps) {
   const names = useMemo(() => new Map(nodes.map((n) => [n.id, n.legalName])), [nodes]);
   useEffect(() => {
     // Only a standard user with one main company can take the grant (B2; owner review of WP8, P2).
-    everyUser().then((all) => setUsers(grantCandidates(all)), showError);
-  }, [showError]);
+    everyUser().then((all) => setUsers(grantCandidatesIn(all, nodes)), showError);
+  }, [showError, nodes]);
 
   return (
     <div className="space-y-4">

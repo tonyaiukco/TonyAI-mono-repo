@@ -1119,6 +1119,13 @@ export async function lockAndReadActor(
 
 /** A profile of `organisationId`; any other id — another tenant's included — is 404. */
 async function findMember(tx: Prisma.TransactionClient, organisationId: string, profileId: string) {
+  // The account's profile first, before any of its access rows: a record write
+  // takes the author's profile before its rows too (lockAuthorAccess), so an
+  // access change and a record write never hold one row each of the other's
+  // (owner's second review of WP8, P2). NO KEY: the key checks of rows that
+  // reference the profile (an access row, an invitation, a consent) still pass
+  // while it is held.
+  await tx.$executeRaw`SELECT 1 FROM profiles WHERE id = ${profileId}::uuid AND organisation_id = ${organisationId}::uuid FOR NO KEY UPDATE`;
   const member = await tx.profile.findFirst({
     where: { id: profileId, organisationId },
     select: { id: true, role: true, disabledAt: true },

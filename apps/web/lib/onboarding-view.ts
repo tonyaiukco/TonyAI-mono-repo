@@ -179,3 +179,33 @@ export function boundaryCompanies<N extends Pick<WizardNode, 'nodeType' | 'contr
 export function grantCandidates<U extends Pick<UserSummaryDTO, 'role' | 'access'>>(users: readonly U[]): U[] {
   return users.filter((u) => u.role === 'standard_user' && mainCompanyOf(u.access) !== null);
 }
+
+/**
+ * Step 5's version as shown (owner's second review of WP8, P1): nothing until
+ * the selected year's read has landed, and never another year's version — so
+ * Declare, Edit and Confirm act on the year the bar names, or on nothing.
+ * `loadedFor`: the year whose read landed last (null while one is in flight or
+ * after it failed).
+ */
+export function boundaryStepView<V extends { reportingYear: number }>(
+  year: number,
+  loadedFor: number | null,
+  detail: V | null,
+): { ready: boolean; version: V | null } {
+  const ready = loadedFor === year && (detail === null || detail.reportingYear === year);
+  return { ready, version: ready ? detail : null };
+}
+
+/**
+ * Step 7's candidates (§7.1; owner's reviews of WP8, P2): a standard user who
+ * holds exactly one main company (B2) and for whom a grant company exists — a
+ * company that holds records other than that main company. Anyone else would
+ * be offered a grant the API refuses.
+ */
+export function grantCandidatesIn<U extends Pick<UserSummaryDTO, 'role' | 'access'>>(
+  users: readonly U[],
+  nodes: readonly Pick<WizardNode, 'id' | 'nodeType' | 'control'>[],
+): U[] {
+  const recordHolders = nodes.filter((n) => holdsRecords(n)).map((n) => n.id);
+  return grantCandidates(users).filter((u) => recordHolders.some((id) => id !== mainCompanyOf(u.access)));
+}

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import { toast } from "sonner";
-import { noteOnboardingFinished } from "@/components/auth/onboarding-gate";
+import { noteOnboardingFinished, useGateAccount } from "@/components/auth/onboarding-gate";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,12 +52,13 @@ export default function OnboardingPage() {
   useEffect(() => {
     reload().catch(showError);
   }, [reload, showError]);
-  // The account in the store, as every other page fills it: the profile's
-  // language is applied from it (`LocaleSync`) on the wizard's first screen
-  // (owner review of WP8, P2). The gate keeps its own read.
+  // The account in the store, from the gate's own read: the profile's
+  // language is applied from it (`LocaleSync`) on the wizard's first screen,
+  // with no second `/me` to fail (owner's reviews of WP8, P2).
+  const gateAccount = useGateAccount();
   useEffect(() => {
-    if (!user) api.me().then(setUser, () => undefined);
-  }, [user, setUser]);
+    if (!user && gateAccount) setUser(gateAccount);
+  }, [user, gateAccount, setUser]);
 
   function advance() {
     setPassed((p) => new Set(p).add(step));

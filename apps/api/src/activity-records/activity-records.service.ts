@@ -1061,10 +1061,10 @@ export class ActivityRecordsService {
         // then counts the new draft like any other record).
         await lockPeriodsShared(tx, [period]);
         await this.assertPeriodNotLocked(period, tx);
-        // A standard user's access as it is committed now (C10), locked until
-        // this record commits: the company and the category judged again, and
-        // the party worked out from the same rows TA025 will read.
-        const access = await lockAuthorAccess(tx, user, subsidiaryId, dto.category);
+        // The author's standing as it is committed now (C10), locked until this
+        // record commits: role, company and category judged again, and the
+        // party worked out from the same rows TA025 will read.
+        const access = await lockAuthorAccess(tx, user, subsidiaryId, dto.category, 'create');
         const reportingEntity = access ? reportingEntityOf(access, subsidiaryId) : subsidiaryId;
         await assertNotExactDuplicate(tx, {
           subsidiaryId, locationId, category: dto.category, reportingYear: dto.reportingYear,
@@ -1328,11 +1328,11 @@ export class ActivityRecordsService {
           // An edit that moves a draft to another category or period meets
           // the period half of single entry (D5): the record's own party — by
           // its stored reporting entity and its author, who is the editor.
-          // The author's access as it is committed now (C10; owner review of
-          // WP8, P1): a company or category withdrawn after the request was
-          // authorised is not written to — the same judgement a create makes.
+          // The author's standing as it is committed now (C10; owner's reviews
+          // of WP8, P1): a role, company or category changed after the request
+          // was authorised is not written to — the same judgement a create makes.
           // Only the author edits (assertCanEdit).
-          await lockAuthorAccess(tx, user, current.subsidiaryId, category);
+          await lockAuthorAccess(tx, user, current.subsidiaryId, category, 'edit');
           if (moves || changesCategory) {
             await assertNotExactDuplicate(tx, {
               subsidiaryId: current.subsidiaryId, locationId, category, reportingYear, reportingPeriod, periodValue, activityType,

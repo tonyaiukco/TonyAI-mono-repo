@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   GATE_AUTO_RETRIES,
+  boundaryStepView,
+  grantCandidatesIn,
   grantCandidates,
   retriesOnAuthEvent,
   ONBOARDING_STEPS,
@@ -149,5 +151,33 @@ describe("step 7's candidates (owner review of WP8, P2)", () => {
       { id: 'admin', role: 'super_admin' as const, access: [row('a', 'assigned')] },
     ];
     expect(grantCandidates(users).map((u) => u.id)).toEqual(['ok', 'reporter']);
+  });
+});
+
+describe("step 5 acts on the selected year's version only (owner's second review of WP8, P1)", () => {
+  const v2026 = { id: 'v26', reportingYear: 2026 };
+  it("shows the year's version once its read has landed", () => {
+    expect(boundaryStepView(2026, 2026, v2026)).toEqual({ ready: true, version: v2026 });
+    expect(boundaryStepView(2025, 2025, null)).toEqual({ ready: true, version: null });
+  });
+  it('shows nothing — no Declare, no Confirm — while the new year is read, after a failed read, or for another year', () => {
+    expect(boundaryStepView(2025, null, v2026)).toEqual({ ready: false, version: null });
+    expect(boundaryStepView(2025, 2026, v2026)).toEqual({ ready: false, version: null });
+    expect(boundaryStepView(2025, 2025, v2026)).toEqual({ ready: false, version: null });
+    // No version yet and the year's read still out: nothing may open one (QA review).
+    expect(boundaryStepView(2025, null, null)).toEqual({ ready: false, version: null });
+  });
+});
+
+describe("step 7 offers only a user a grant can be given to (owner's second review of WP8, P2)", () => {
+  const row = (subsidiaryId: string) => ({ subsidiaryId, categories: ['Fuel' as const], kind: 'assigned' as const });
+  const company = (id: string, extra: Partial<{ nodeType: 'company' | 'sector_group'; control: 'controlled' | 'associate' }> = {}) =>
+    ({ id, nodeType: 'company' as const, control: 'controlled' as const, ...extra });
+  const user = { role: 'standard_user' as const, access: [row('A')] };
+  it("no one when the user's main company is the organisation's only company that holds records", () => {
+    expect(grantCandidatesIn([user], [company('A'), company('G', { nodeType: 'sector_group' }), company('X', { control: 'associate' })])).toEqual([]);
+  });
+  it('the user once another company holds records', () => {
+    expect(grantCandidatesIn([user], [company('A'), company('B')])).toEqual([user]);
   });
 });

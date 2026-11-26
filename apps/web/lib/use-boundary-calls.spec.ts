@@ -26,4 +26,12 @@ describe('the wizard writes into the version on screen (owner review of WP8, P1)
     await boundaryCalls.declare(null, 2025, 'S', {} as never);
     expect(write).toHaveBeenCalledWith('v2', 'S', {});
   });
+  it("the version a first save opens is told before the write, so a failed write is retried into it (owner's second review, P2)", async () => {
+    const opened = { id: 'v3' };
+    vi.spyOn(boundaryCalls, 'openNew').mockResolvedValue(opened as never);
+    vi.spyOn(boundaryCalls, 'writeDeclaration').mockRejectedValue(new Error('write failed'));
+    const told = vi.fn();
+    await expect(boundaryCalls.declare(null, 2025, 'S', {} as never, told)).rejects.toThrow('write failed');
+    expect(told).toHaveBeenCalledWith(opened);
+  });
 });

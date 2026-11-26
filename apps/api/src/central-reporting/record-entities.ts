@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import type { Prisma } from '@tonyai/db';
 import {
   can,
@@ -11,7 +12,7 @@ import {
 import type { RequestUser } from '../auth/auth.types';
 import { ResourceNotFoundError } from '../common/api-error';
 import { CategoryNotGrantedError } from '../activity-records/record-scope';
-import { ActivityTypeSlotConflictError, DuplicateActivityRecordError } from '../activity-records/errors';
+import { ActivityTypeSlotConflictError, CreateRoleRefusedError, DuplicateActivityRecordError } from '../activity-records/errors';
 import { CentralReporterNeedsMainEntityError, SingleEntryPeriodConflictError } from './central-reporting-errors';
 
 type Db = Prisma.TransactionClient;
@@ -110,36 +111,57 @@ export async function assertSingleEntryPeriod(
 }
 
 /**
- * A standard-user author's access rows, read `FOR SHARE` inside the write's
- * transaction (C10): a grant's withdrawal or a move of the main company either
- * committed before this read — and the write follows it — or waits for the
- * write. The company and the category are judged again from these rows: a
- * company no longer held answers as unknown, a category no longer ticked as
- * `category_not_granted`. Answers the rows; nothing for another role.
+ * The author's standing as it is committed now, read inside the write's
+ * transaction (C10), and locked until the write commits: a withdrawal, a role
+ * change or a move of the main company either committed before this read —
+ * and the write follows it — or waits for the write.
  *
- * The companies the rows name, and the record's own, are locked `FOR KEY
- * SHARE` first, in id order (owner review of WP8, P2): a company's delete
- * locks the company `FOR UPDATE` and then removes its access rows, so a write
- * that locked the rows first and then met the company — the key check, TA025 —
- * would wait on the delete while the delete waited on it.
+ * - The author's profile, `FOR SHARE`: an account whose role, organisation or
+ *   enabled state is no longer the request's writes nothing (owner's second
+ *   review of WP8, P1 — a super_admin made a standard user mid-upload). A
+ *   create answers `record_create_forbidden`, an edit the edit's 403.
+ * - A `super_admin`'s and a `standard_user`'s access rows, `FOR SHARE`: the
+ *   company no longer held answers as unknown; a standard user's category no
+ *   longer ticked, `category_not_granted`. A masterkey's scope is its
+ *   organisation, which the profile read already judged.
+ *
+ * Order — the profile, then companies `FOR KEY SHARE`, then the rows: every
+ * access write to an existing account locks its profile before its rows
+ * (`AccessAdminService`'s `findMember`), a company delete locks the company
+ * before its rows and never a profile, so neither can hold a lock this write
+ * waits for while waiting for one it holds; and the companies are read after
+ * an access change that held the profile has committed, so a company its rows
+ * newly name is locked too (owner's reviews of WP8, P2; security review).
  *
  * A move of the main company deletes one row and inserts another. A locking
  * read that waited on the deleted row skips it, and its snapshot predates the
- * new one (owner review of WP8, P2): when the rows read look short — the
- * record's company missing, or a central reporter without exactly one main
- * company — the companies and then the rows are taken once more, by statements
- * that see what committed while the first waited.
+ * new one: when a standard user's rows look short — the record's company
+ * missing, or a central reporter without exactly one main company — the
+ * companies and then the rows are taken once more, by statements that see what
+ * committed while the first waited.
+ *
+ * Answers a standard user's rows; null for any other role.
  */
 export async function lockAuthorAccess(
   tx: Db,
   user: RequestUser,
   subsidiaryId: string,
   category: string,
+  action: 'create' | 'edit',
 ): Promise<UserAccessRowDTO[] | null> {
-  if (!can(user.role, 'scope.categories') || !user.organisationId) return null;
+  if (!user.organisationId) throw authorRefusal(action);
+  const [author] = await tx.$queryRaw<{ same: boolean }[]>`
+    SELECT (p.role::text = ${user.role} AND p.organisation_id = ${user.organisationId}::uuid AND p.disabled_at IS NULL) AS same
+      FROM profiles p
+     WHERE p.id = ${user.id}::uuid
+       FOR SHARE`;
+  if (!author?.same) throw authorRefusal(action);
+  // After the profile: an access change that held it has committed, so the
+  // companies its rows now name are among those locked (security review).
   await lockAuthorCompanies(tx, user.id, subsidiaryId);
+  if (can(user.role, 'scope.organisation')) return null;
   let access = await readLockedAccess(tx, user.id, user.organisationId);
-  if (looksShort(access, subsidiaryId)) {
+  if (can(user.role, 'scope.categories') && looksShort(access, subsidiaryId)) {
     // The same order again: a company the second read can name (the new main
     // company) is locked before its row, as on the first pass (security review).
     await lockAuthorCompanies(tx, user.id, subsidiaryId);
@@ -147,8 +169,16 @@ export async function lockAuthorAccess(
   }
   const row = access.find((r) => r.subsidiaryId === subsidiaryId);
   if (!row) throw new ResourceNotFoundError('subsidiary_not_found');
+  if (!can(user.role, 'scope.categories')) return null;
   if (!(row.categories as readonly string[]).includes(category)) throw new CategoryNotGrantedError(category);
   return access;
+}
+
+/** The refusal for an author whose standing changed after the request was authorised. */
+function authorRefusal(action: 'create' | 'edit'): Error {
+  return action === 'create'
+    ? new CreateRoleRefusedError()
+    : new ForbiddenException('Your role may not modify activity records');
 }
 
 /** The record's company and every company the author's access rows name, `FOR KEY SHARE`, in id order. */

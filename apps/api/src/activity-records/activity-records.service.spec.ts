@@ -158,6 +158,8 @@ function createPrismaMock() {
       if (sql.includes('LEFT JOIN profiles p ON p.id = r.created_by')) return [];
       // The exact-duplicate look: none by default.
       if (sql.includes('r.activity_type IS NOT DISTINCT FROM')) return [];
+      // The author's profile as committed: unchanged by default.
+      if (sql.includes('FROM profiles p')) return [{ same: true }];
       return [{ id: 'locked' }];
     }),
     $executeRaw: vi.fn().mockResolvedValue(1),
@@ -7111,11 +7113,12 @@ function centralReporter(): RequestUser {
 }
 
 /** Routes the raw reads: the access re-read FOR SHARE, and the period rule's look. */
-function routeRaw(prisma: PrismaMock, opts: { access?: { subsidiaryId: string; kind: string; categories: string[] }[]; otherParty?: boolean; duplicate?: boolean | 'slot_kind'; duplicateReads?: { exact: boolean }[][]; accessReads?: { subsidiaryId: string; kind: string; categories: string[] }[][] }) {
+function routeRaw(prisma: PrismaMock, opts: { access?: { subsidiaryId: string; kind: string; categories: string[] }[]; otherParty?: boolean; duplicate?: boolean | 'slot_kind'; duplicateReads?: { exact: boolean }[][]; authorChanged?: boolean; accessReads?: { subsidiaryId: string; kind: string; categories: string[] }[][] }) {
   let read = 0;
   const route = async (strings: TemplateStringsArray): Promise<unknown[]> => {
     const sql = strings.join('?');
     if (sql.includes('FOR KEY SHARE')) return [];
+    if (sql.includes('FROM profiles p')) return [{ same: opts.authorChanged !== true }];
     if (sql.includes('r.activity_type IS NOT DISTINCT FROM')) return opts.duplicate ? [{ exact: opts.duplicate !== 'slot_kind' }] : opts.duplicateReads ? opts.duplicateReads.shift() ?? [] : [];
     if (sql.includes('FROM user_subsidiary_access') && opts.accessReads) return opts.accessReads[Math.min(read++, opts.accessReads.length - 1)]!;
     if (sql.includes('FROM user_subsidiary_access')) return opts.access ?? [];
@@ -7160,11 +7163,15 @@ describe('central reporting — the reporting entity on the create path (task 4.
     expect(dto).toMatchObject({ subsidiaryId: 'sub-1', reportedBySubsidiaryId: 'sub-2', reportedBySubsidiaryName: 'TonyAI Energy' });
   });
 
-  it.each([['a super_admin', superAdmin()], ['a masterkey', masterkey()]] as const)('create takes no access lock for %s', async (_role, user) => {
-    const { prisma, service } = build();
-    prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new' }));
-    await service.create(user, CREATE_DTO);
-    expect(rawSql(prisma).some((q) => q.includes('FROM user_subsidiary_access'))).toBe(false);
+  it("a masterkey's create reads its profile, not access rows; a super_admin's reads its company row too", async () => {
+    for (const [user, rows] of [[masterkey(), false], [superAdmin(), true]] as const) {
+      const { prisma, service } = build();
+      routeRaw(prisma, { access: [{ subsidiaryId: 'sub-1', kind: 'assigned', categories: [] }] });
+      prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new' }));
+      await service.create(user, CREATE_DTO);
+      expect(rawSql(prisma).some((q) => q.includes('FROM profiles p') && q.includes('FOR SHARE'))).toBe(true);
+      expect(rawSql(prisma).some((q) => q.includes('kind, categories'))).toBe(rows);
+    }
   });
 
   it('a grant withdrawn before the write: refused as an unknown company, nothing written', async () => {
@@ -7270,7 +7277,7 @@ describe('central reporting — one party enters a category for a company in a p
   it("a super_admin's and a masterkey's record is no party's: the rule is not asked", async () => {
     for (const user of [superAdmin(), masterkey()]) {
       const { prisma, service } = build();
-      routeRaw(prisma, { otherParty: true });
+      routeRaw(prisma, { otherParty: true, access: [{ subsidiaryId: 'sub-1', kind: 'assigned', categories: [] }] });
       prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new' }));
       await service.create(user, CREATE_DTO);
       expect(rawSql(prisma).some((q) => q.includes('LEFT JOIN profiles'))).toBe(false);
@@ -7420,5 +7427,52 @@ describe("the owner's review of WP8 (2026-11-26)", () => {
     const { prisma, service } = build();
     routeRaw(prisma, { access: REPORTER_ACCESS, duplicate: 'slot_kind', otherParty: true });
     await expect(service.create(centralReporter(), CREATE_DTO)).rejects.toBeInstanceOf(ActivityTypeSlotConflictError);
+  });
+
+  it("P1 (second review): an author whose role changed after the request was authorised writes nothing", async () => {
+    for (const user of [superAdmin(), centralReporter(), masterkey()]) {
+      const { prisma, service } = build();
+      routeRaw(prisma, { access: REPORTER_ACCESS, authorChanged: true });
+      await expect(service.create(user, CREATE_DTO)).rejects.toBeInstanceOf(CreateRoleRefusedError);
+      expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    }
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    routeRaw(prisma, { access: REPORTER_ACCESS, authorChanged: true });
+    const refusal = await service.update(centralReporter(), 'rec-d', { activityValue: 5 }).catch((e) => e);
+    expect(refusal).toBeInstanceOf(ForbiddenException);
+    // The edit's own 403, not a create's code (QA review).
+    expect(refusal).not.toBeInstanceOf(CreateRoleRefusedError);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('the profile read judges role, organisation and enabled state together', async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: REPORTER_ACCESS });
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new', reportedBySubsidiaryId: 'sub-2' }));
+    await service.create(centralReporter(), CREATE_DTO);
+    const read = rawSql(prisma).find((q) => q.includes('FROM profiles p'))!;
+    expect(read).toMatch(/p\.role::text = \?/);
+    expect(read).toMatch(/p\.organisation_id = \?::uuid/);
+    expect(read).toMatch(/p\.disabled_at IS NULL/);
+    expect(read).toMatch(/FOR SHARE/);
+  });
+
+  it("P1 (second review): a super_admin's company withdrawn before the write is refused as unknown", async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: [{ subsidiaryId: 'sub-2', kind: 'assigned', categories: [] }] });
+    await expect(service.create(superAdmin(), CREATE_DTO)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+  });
+
+  it('the profile is locked first, then the companies, then the rows', async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: REPORTER_ACCESS });
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new', reportedBySubsidiaryId: 'sub-2' }));
+    await service.create(centralReporter(), CREATE_DTO);
+    const order = rawSql(prisma)
+      .map((q) => (q.includes('FOR KEY SHARE') ? 'companies' : q.includes('FROM profiles p') ? 'profile' : q.includes('kind, categories') ? 'rows' : null))
+      .filter((x) => x !== null);
+    expect(order).toEqual(['profile', 'companies', 'rows']);
   });
 });
