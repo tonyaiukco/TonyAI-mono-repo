@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { ArrayMaxSize, ArrayNotEmpty, IsArray, Matches } from 'class-validator';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsOptional, Matches, ValidateIf } from 'class-validator';
 import { EVIDENCE_MAX_LINKED_RECORDS } from '@tonyai/shared-types';
 import { ID_SHAPE_MESSAGE, UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
 
@@ -26,9 +26,16 @@ export class UploadEvidenceForRecordsDto {
       return value;
     }
   })
+  // Absent only when the file is for a fuel batch (inc28-fuel-bulk D11).
+  @ValidateIf((dto: UploadEvidenceForRecordsDto) => dto.fuelBatchId === undefined || dto.recordIds !== undefined)
   @IsArray()
   @ArrayNotEmpty()
   @ArrayMaxSize(EVIDENCE_MAX_LINKED_RECORDS)
   @Matches(UUID_SHAPE, { each: true, message: ID_SHAPE_MESSAGE })
-  recordIds!: string[];
+  recordIds?: string[];
+
+  /** `fuelBatchId` in place of `recordIds`: the file backs every live record of that batch (D11). */
+  @IsOptional()
+  @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE })
+  fuelBatchId?: string;
 }

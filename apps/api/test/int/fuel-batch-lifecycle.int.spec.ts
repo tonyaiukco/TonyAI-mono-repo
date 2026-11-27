@@ -245,3 +245,52 @@ describe('a batch’s record is not acted on singly (task 7.2)', () => {
     expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id } })).status).toBe('approved');
   });
 });
+
+describe('evidence on the batch (task 7.3)', () => {
+  const links = (fileId: string) => owner.activityRecordEvidence.count({ where: { evidenceId: fileId } });
+
+  it('attaches one file to every record; a detach from one batch leaves a file another batch holds; the last link deletes it', async () => {
+    const user = await masterkey();
+    const a = await formedBatch(user, ['03.03.2025', '04.04.2025'], 'OZK-EA');
+    const b = await formedBatch(user, ['05.03.2025'], 'OZK-EB');
+    const s = services();
+    expect((await s.batches.detail(user, a)).evidenceCount).toBe(0);
+    const file = await s.evidence.uploadForFuelBatch(user, a, pdfFile());
+    expect(await links(file.id)).toBe(2);
+    expect((await s.batches.detail(user, a)).evidenceCount).toBe(1);
+    // The same file on the second batch: link it as the batch's step does (one company's file).
+    const bRecords = await owner.activityRecord.findMany({ where: { fuelBatchId: b } });
+    await owner.activityRecordEvidence.createMany({
+      data: bRecords.map((r) => ({ activityRecordId: r.id, evidenceId: file.id, subsidiaryId: tenant.subsidiaryId, linkedBy: user.id })),
+    });
+    expect(await s.evidence.detachFromFuelBatch(user, a, file.id)).toEqual({ fileDeleted: false });
+    expect(await links(file.id)).toBe(1);
+    expect(await s.evidence.detachFromFuelBatch(user, b, file.id)).toEqual({ fileDeleted: true });
+    expect(await owner.evidence.count({ where: { id: file.id } })).toBe(0);
+    expect(await owner.auditLog.count({ where: { entity: 'fuel_batch', entityId: a, action: { in: ['attach', 'detach'] } } })).toBe(2);
+  });
+
+  it('refuses attach and detach on a submitted batch, and a submit after the only file is taken off', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025'], 'OZK-ES');
+    const s = services();
+    const file = await s.evidence.uploadForFuelBatch(user, id, pdfFile());
+    await s.batches.submit(user, id);
+    const code = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => errorCodeOf(e));
+    expect(await code(s.evidence.uploadForFuelBatch(user, id, pdfFile()))).toBe('fuel_batch_not_open');
+    expect(await code(s.evidence.detachFromFuelBatch(user, id, file.id))).toBe('fuel_batch_not_open');
+    await s.batches.recall(user, id);
+    // A detach racing a submit: either the file stays and the batch is submitted, or it goes and the submit is refused.
+    const [detach, submit] = await Promise.allSettled([s.evidence.detachFromFuelBatch(user, id, file.id), s.batches.submit(user, id)]);
+    const batch = await owner.fuelBatch.findUniqueOrThrow({ where: { id } });
+    if (submit.status === 'fulfilled') {
+      expect(detach.status).toBe('rejected');
+      expect(batch.status).toBe('submitted');
+      expect(await links(file.id)).toBe(1);
+    } else {
+      expect(detach.status).toBe('fulfilled');
+      expect(errorCodeOf(submit.reason)).toBe('evidence_required');
+      expect(batch.status).toBe('draft');
+    }
+  });
+});

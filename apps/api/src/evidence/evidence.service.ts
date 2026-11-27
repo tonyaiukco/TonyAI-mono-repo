@@ -33,6 +33,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { inRecordScope } from '../activity-records/record-scope';
 import { AuditService } from '../audit/audit.service';
 import { PeriodLockedError, RecordChangedError, RecordInBatchError } from '../activity-records/errors';
+import { fuelBatchScopeWhere } from '../fuel-batches/fuel-batch-scope';
 import {
   LIFECYCLE_TX,
   asLostRace,
@@ -154,6 +155,16 @@ function lockedRefusal(refusal: HttpException, seen: ActivityRecord | undefined,
  *  - deleting the file outright (`remove`) needs EVERY record it backs to be
  *    editable.
  */
+/** A batch's files change by its author while it is a draft or returned (D11). */
+function assertOpenBatchAuthor(user: RequestUser, batch: { status: string; createdBy: string }): void {
+  if (batch.createdBy !== user.id) {
+    throw new ForbiddenException(errorBody('record_author_forbidden', 'Only the batch’s author changes its files.'));
+  }
+  if (batch.status !== 'draft' && batch.status !== 'rejected') {
+    throw new ConflictException(errorBody('fuel_batch_not_open', 'This batch is no longer a draft or returned, so it cannot be changed.'));
+  }
+}
+
 @Injectable()
 export class EvidenceService {
   private readonly logger = new Logger(EvidenceService.name);
@@ -268,9 +279,11 @@ export class EvidenceService {
     user: RequestUser,
     record: ActivityRecord,
     locked: boolean,
+    /** The batch whose own step this is: its records are not refused as a batch's. */
+    batchStep: string | null = null,
   ): HttpException | null {
     // A fuel batch's record takes and loses files through its batch (inc28-fuel-bulk D11).
-    if (record.fuelBatchId) return new RecordInBatchError();
+    if (record.fuelBatchId && record.fuelBatchId !== batchStep) return new RecordInBatchError();
     if (record.createdBy !== user.id) {
       return new ForbiddenException(
         'You may only modify evidence on records you created',
@@ -415,6 +428,68 @@ export class EvidenceService {
   }
 
   /**
+   * `POST /evidence` with `fuelBatchId` (inc28-fuel-bulk D11, C12): one file
+   * for every live record of a fuel batch, by its author, while the batch is
+   * a draft or returned — under the batch's row lock, audited on the batch.
+   */
+  async uploadForFuelBatch(user: RequestUser, fuelBatchId: string, file: Express.Multer.File): Promise<EvidenceDTO> {
+    this.assertRole(user);
+    const batch = await this.prisma.fuelBatch.findFirst({ where: { AND: [{ id: fuelBatchId }, fuelBatchScopeWhere(user)] } });
+    if (!batch) throw new ResourceNotFoundError('fuel_batch_not_found');
+    assertOpenBatchAuthor(user, batch);
+    const records = await this.prisma.activityRecord.findMany({
+      where: { fuelBatchId: batch.id, status: { not: 'voided' } },
+      orderBy: { id: 'asc' },
+    });
+    if (records.length === 0) throw new ResourceNotFoundError('fuel_batch_not_found');
+    const checked = checkEvidenceFile(file);
+    return this.store(user, records, file, checked, batch.id);
+  }
+
+  /**
+   * `DELETE /fuel-batches/:id/evidence/:evidenceId` (D11): the file's links to
+   * this batch's records go; a file that still backs another record stays,
+   * and one left with no link is deleted, as a record's detach does.
+   */
+  async detachFromFuelBatch(user: RequestUser, fuelBatchId: string, evidenceId: string): Promise<{ fileDeleted: boolean }> {
+    this.assertRole(user);
+    const batch = await this.prisma.fuelBatch.findFirst({ where: { AND: [{ id: fuelBatchId }, fuelBatchScopeWhere(user)] } });
+    if (!batch) throw new ResourceNotFoundError('fuel_batch_not_found');
+    assertOpenBatchAuthor(user, batch);
+    const records = await this.prisma.activityRecord.findMany({ where: { fuelBatchId: batch.id, status: { not: 'voided' } } });
+    const ids = records.map((r) => r.id).sort();
+    const gone = await this.prisma.$transaction(async (tx) => {
+      await this.lockOpenBatch(tx, user, batch.id, ids);
+      await lockPeriodsShared(tx, records.map(periodOf));
+      await lockActivityRecordRows(tx, ids);
+      await lockEvidenceRows(tx, [evidenceId]);
+      const before = await tx.evidence.findUnique({ where: { id: evidenceId }, include: WITH_LINKED_RECORDS });
+      const { count } = await tx.activityRecordEvidence.deleteMany({ where: { evidenceId, activityRecordId: { in: ids } } });
+      if (!before || count === 0) throw new ResourceNotFoundError('evidence_not_found');
+      const deleted = await this.deleteUnlinkedRows([evidenceId], tx);
+      await this.audit.record(
+        user,
+        { action: deleted.length ? 'delete' : 'detach', entity: 'evidence', entityId: evidenceId, diff: { before: { ...this.auditSnapshot(before), fuelBatchId: batch.id } } },
+        tx,
+      );
+      await this.audit.record(user, { action: 'detach', entity: 'fuel_batch', entityId: batch.id, diff: { evidenceId, records: count } }, tx);
+      return deleted;
+    }, LIFECYCLE_TX);
+    await this.removeBlobs(gone.map((f) => f.storagePath));
+    return { fileDeleted: gone.length > 0 };
+  }
+
+  /** The batch row locked; still open, still the caller's, still holding exactly the records read. */
+  private async lockOpenBatch(tx: Prisma.TransactionClient, user: RequestUser, fuelBatchId: string, recordIds: readonly string[]): Promise<void> {
+    const [row] = await tx.$queryRaw<Array<{ status: string; created_by: string }>>`
+      SELECT status, created_by::text FROM fuel_batches WHERE id = ${fuelBatchId}::uuid FOR UPDATE`;
+    if (!row) throw new ResourceNotFoundError('fuel_batch_not_found');
+    assertOpenBatchAuthor(user, { status: row.status, createdBy: row.created_by });
+    const now = await tx.activityRecord.findMany({ where: { fuelBatchId, status: { not: 'voided' } }, select: { id: true }, orderBy: { id: 'asc' } });
+    if (now.map((r) => r.id).join() !== [...recordIds].sort().join()) throw new RecordChangedError();
+  }
+
+  /**
    * Upload the blob, then write the file row, its links and its audit row in
    * one transaction. The caller has already checked every record; the
    * transaction checks them again under the lifecycle protocol — their
@@ -435,6 +510,7 @@ export class EvidenceService {
     records: ActivityRecord[],
     file: Express.Multer.File,
     checked: CheckedEvidenceFile,
+    fuelBatchId: string | null = null,
   ): Promise<EvidenceDTO> {
     const subsidiaryId = records[0].subsidiaryId;
     // Opaque object key: <subsidiaryId>/<uuid>-<sanitised name>.
@@ -473,6 +549,8 @@ export class EvidenceService {
         // point rolls the adoption back and leaves the intent to abandon:
         // late bytes are never left unnamed (`qa-auditor`, measured).
         await this.intents.adoptUpload(tx, intentId);
+        // A batch's file: the batch row first, then periods and records (D9's lock order).
+        if (fuelBatchId !== null) await this.lockOpenBatch(tx, user, fuelBatchId, ids);
         await lockPeriodsShared(tx, records.map(periodOf));
         const present = await lockActivityRecordRows(tx, ids);
         if (present.size !== ids.length) throw new ResourceNotFoundError('record_not_found');
@@ -482,7 +560,7 @@ export class EvidenceService {
           // The period locks above are the ones the records were in when read;
           // a record moved since is guarded by a lock this upload never took.
           if (!sameRead(record, seen.get(record.id), subsidiaryId)) throw new RecordChangedError();
-          const refusal = this.refusalFor(user, record, locked.has(record.id));
+          const refusal = this.refusalFor(user, record, locked.has(record.id), fuelBatchId);
           if (refusal) throw lockedRefusal(refusal, seen.get(record.id), record);
         }
         const row = await tx.evidence.create({
@@ -518,6 +596,13 @@ export class EvidenceService {
           },
           tx,
         );
+        if (fuelBatchId !== null) {
+          await this.audit.record(
+            user,
+            { action: 'attach', entity: 'fuel_batch', entityId: fuelBatchId, diff: { evidenceId: stored.id, records: ids.length } },
+            tx,
+          );
+        }
         return stored;
       }, LIFECYCLE_TX);
     } catch (error) {

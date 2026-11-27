@@ -1,5 +1,6 @@
 import { RuntimeUploadWorkInterceptor } from '../common/runtime-request';
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -14,6 +15,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { EvidenceService } from './evidence.service';
+import { errorBody } from '../common/api-error';
 import { EVIDENCE_MULTIPART_LIMITS, SHARED_EVIDENCE_MULTIPART_LIMITS } from '../common/multipart-limits';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 import { CursorPageQueryDto } from '../common/cursor-page-query.dto';
@@ -75,7 +77,13 @@ export class EvidenceController {
     @UploadedFile() file: Express.Multer.File,
     @Body() body: UploadEvidenceForRecordsDto,
   ) {
-    return this.service.uploadForRecords(user, body.recordIds, file);
+    if (body.fuelBatchId !== undefined) {
+      if (body.recordIds !== undefined) {
+        throw new BadRequestException(errorBody('validation_failed', 'Name the records or the fuel batch, not both.'));
+      }
+      return this.service.uploadForFuelBatch(user, body.fuelBatchId.toLowerCase(), file);
+    }
+    return this.service.uploadForRecords(user, body.recordIds!, file);
   }
 
   /** Take a file off one record; deleting the file when that was its last record. */

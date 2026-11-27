@@ -1,4 +1,5 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
+import { EvidenceService } from '../evidence/evidence.service';
 import type { BulkSubmitFuelBatchesResultDTO, FuelBatchDetailDTO, FuelBatchDTO, FuelBatchMetadataDTO, FuelBatchRowDTO } from '@tonyai/shared-types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
@@ -11,7 +12,20 @@ import { FuelBatchesService } from './fuel-batches.service';
 /** Fuel batches: the review unit (inc28-fuel-bulk D9, D10). */
 @Controller('fuel-batches')
 export class FuelBatchesController {
-  constructor(private readonly batches: FuelBatchesService) {}
+  constructor(
+    private readonly batches: FuelBatchesService,
+    private readonly evidence: EvidenceService,
+  ) {}
+
+  /** A file taken off the batch: every record of it at once (D11). */
+  @Delete(':id/evidence/:evidenceId')
+  detachEvidence(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUuidParamPipe) id: string,
+    @Param('evidenceId', ParseUuidParamPipe) evidenceId: string,
+  ): Promise<{ fileDeleted: boolean }> {
+    return this.evidence.detachFromFuelBatch(user, id, evidenceId);
+  }
 
   @Get()
   list(@CurrentUser() user: RequestUser, @Query() filters: FuelBatchFiltersDto): Promise<FuelBatchDTO[]> {
