@@ -77,6 +77,9 @@ describe('bounded admission', () => {
   it.each([
     ['GET', '/api/v1/reports/pdf', 'EXPORT'], ['HEAD', '/api/v1/REPORTS/pdf/', 'EXPORT'],
     ['POST', '/api/v1/BULK-UPLOAD/activity-records', 'IMPORT'],
+    // inc28-fuel-bulk D15: a fuel file's preview and apply take the import quota and permit.
+    ['POST', '/api/v1/fuel-files/preview', 'IMPORT'], ['POST', '/api/v1/FUEL-FILES/', 'IMPORT'],
+    ['GET', '/api/v1/fuel-files', 'READ'], ['POST', '/api/v1/fuel-files/id/take-over', 'WRITE'],
     ['POST', '/api/v1/import-batches/id/submit', 'SUBMIT'],
     ['POST', '/api/v1/activity-records/bulk-submit', 'SUBMIT'],
     ['POST', '/api/v1/activity-records/id/submit', 'WRITE'],

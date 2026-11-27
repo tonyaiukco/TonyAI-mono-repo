@@ -49,6 +49,7 @@
   "approach operational_control": "operational control",
   "approach financial_control": "financial control",
   "excludedAssociates": "Left outside Scope 1 and 2 as associates (equity, not consolidated): {names}.",
+  "cardFuelAttribution": "Fuel bought with the group's fuel cards (Shell, Petrol Ofisi) is attributed to the company that holds the card account; this shifts emissions between the group's companies and never changes the group total.",
   "consolidationLine": "Consolidation approach: {approach}.",
   "unitConversion": "Unit conversion applied before this factor: {basis}",
   "evidenceHeading": "Evidence summary",

@@ -487,7 +487,16 @@ decides it. Schema 3 (UAT round 4, BUG-12) adds Fire Suppression in the same way
 schema 1 and 2 datasets recompute under their own five and six categories, and a
 new capture of a version confirmed before Fire Suppression existed is partial,
 with `applicability_undetermined` on Fire Suppression, until a new version
-decides it. TA016 binds a dataset to its version's header and declared
+decides it. Schema 4 (`inc28-fuel-bulk`, D17) is the first version that adds a
+field rather than a category: the top-level boolean `cardFuelAttribution`,
+always present from 4 on and absent before (`cardFuelAttributionOf` reads an
+earlier dataset as false). Its categories are schema 3's, its boundary
+comparison is 3's, and the canonicalization tag is unchanged, so a schema 1 to
+3 dataset fingerprints exactly as before (the schema 3 pins are the earlier
+current pins). The gate cannot recompute the flag — a dataset keeps no record's
+batch — so it holds its shape only: a dataset of version 3 or earlier carrying
+the key, or one of 4 whose value is not a boolean, is refused. The database
+CHECK `report_datasets_schema_check` admits 1 to 4. TA016 binds a dataset to its version's header and declared
 subsidiaries only; these checks hold a row written past the API to its own
 facts and its version — a self-consistent forgery (statuses, locks or standings
 restated and everything recomputed) by a database-credential holder is beyond

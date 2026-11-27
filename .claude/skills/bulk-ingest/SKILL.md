@@ -11,7 +11,9 @@ exemplar** is `apps/api/src/bulk-upload/` (WP8): activity records from CSV/XLSX.
 ## When to use
 A feature where the user hands over many records at once — historical activity
 data, a supplier list, a factor set. If the file IS the deliverable (an evidence
-attachment), use `supabase-storage` instead.
+attachment), use `supabase-storage` instead. A file of many thousands of rows
+that must wait on a decision, or be reviewed as groups, follows the variant
+below ("Variant: staged rows, and a batch as the lifecycle unit").
 
 ## Rules (must hold)
 
@@ -206,6 +208,105 @@ for (const parsed of rows) {
   }
 }
 ```
+
+## Variant: staged rows, and a batch as the lifecycle unit
+
+Use this shape instead of "one row → one record" when a file holds far more
+rows than the records a screen can carry (a year of fuel card fills is ~45,000
+rows; as records they would break every list's limit), when a row cannot become
+a record until something outside the file is decided (whose company an account
+is, which fuel a name means), or when review must act on a group, not a record.
+The exemplar is `inc28-fuel-bulk`: `apps/api/src/fuel-files/` (read, stage,
+uploads), `apps/api/src/fuel-accounts/` (the mapping rows wait on) and
+`apps/api/src/fuel-batches/` (formation and the lifecycle). The rules above
+still hold: every record is still written by the record service's own create
+core. What changes is that **the file's rows are not records**.
+
+1. **Rows are their own table, with states and a holder.** Store only the
+   columns you need (no card numbers, plates or other identifiers), the import
+   they came from (an `import_batches` row with its `source`; the file itself
+   need not be kept), a `holder_id` (the uploader until a masterkey takes the
+   rows over; only the holder forms batches, so the author and TA025's
+   reporting company follow the holder), and a state decided by ONE pure
+   function in shared-types (`fuelRowState`), in a fixed order: withdrawn, in a
+   batch, waiting for an account, excluded, waiting for a fuel name, held (with
+   its reason), ready. Every event re-states the rows it touches by that
+   function, in the transaction that caused it (`restateAccountRows` after a
+   mapping write). Nothing is deleted. Add the table's RLS with `rls-for-table`.
+2. **Read, preview with a digest, then apply.** Read with the product's reader
+   (`readWorksheet` in `bulk-upload/xlsx-reader.ts`: a sheet by name,
+   asynchronous inflation, slices) through per-source adapters
+   (`fuel-files/adapters/`: pure column maps, strict header refusal by name)
+   under a parse deadline (`withParserDeadlineMs`) and an unpacked-size budget.
+   Plan in a pure function over the reading, the stored reference rows and the
+   stored live keys (`fuel-files/staging.ts`, `planStaging`). The preview runs
+   the plan, stores nothing but its audit row, and answers the file's SHA-256.
+   The apply sends that digest back (a different file is `fuel_file_changed`),
+   then re-plans **inside one transaction** under the locks of what the plan
+   reads, and stores the import, the reference rows first seen and the rows
+   (chunked `INSERT … SELECT FROM jsonb_to_recordset`), with its audit row.
+   Whole or nothing, so a retry is the same request; give it its own longer
+   transaction timeout. This replaces the `dryRun` flag of the per-record loop.
+3. **Dedupe with a keyed digest in a partial unique index.** `dedupe_digest =
+   HMAC-SHA256(organisation key, sha256(source | key))`, unique per
+   organisation, source and digest `WHERE state <> 'withdrawn'`. Never store
+   a plain hash of a key that holds personal data (a card number with its
+   time, litres and station is brute-forceable): the adapters answer an
+   unkeyed `keyHash`, and `keyReading` swaps it for the keyed digest once,
+   right after the read, so no later code can store the wrong one (the types
+   differ). The key lives in `fuel_dedupe_keys`, no client grant. Insert with `ON CONFLICT … DO NOTHING RETURNING`, and
+   count what did not come back as duplicates (a concurrent upload stored it).
+   Report a stored key that waits in no batch under another holder apart
+   (`fuel_duplicate_unbatched`), without naming the holder. A withdrawn key is
+   free again; its new row names the one it replaces (`replaces_id`).
+4. **A batch is the lifecycle unit; its records are sums per key.** Batches
+   are formed by the holder in bounded steps (`FuelBatchFormationService`,
+   stopping at a `WorkDeadline` of `BULK_DEADLINE_MS`), and each step answers
+   `processableRows` so the page calls again only while it is above zero.
+   **One group is one transaction:** an advisory lock on the group's natural
+   key, the reference row `FOR SHARE`, the group's ready rows `FOR UPDATE`, the
+   holder's open batch `FOR UPDATE` (or a new one with the next `sequence`),
+   `declareFuelBatchStep`, `lockPeriodsShared` over every period the group
+   writes (sorted, before any record row lock — a writer never waits on a
+   period lock while holding a row lock), then each per-key sum through `previewCreate` +
+   `createInTransaction` (+ `createRefusal`), the same gates a typed record
+   meets, or `updateBatchQuantityLocked` for a key the batch already holds;
+   link the rows; one audit row. On any refusal let the transaction roll back,
+   then hold the group's ready rows with `holdReasonOf(error)` (by exception
+   class) in a second, small statement. Held rows are tried again only on the
+   holder's request (`retryHeld`), after a takeover or after a mapping write.
+5. **Lifecycle steps act on the batch through the record cores.**
+   `FuelBatchesService.step`: batch row `FOR UPDATE` → compare its status and
+   submission with the caller's read → the step's gate → declare the batch →
+   `lockPeriodsShared` over every record's period (sorted) → compare the live
+   record set → each record by id through `lockSeenRecord` and the lifted core
+   (`submitLocked`, `recallLocked`, `startReviewLocked`, `approveLocked`,
+   `rejectLocked`) → the batch's status and one audit row. Take the periods of
+   every record you will create, re-price or remove before any record row lock
+   (the lifecycle protocol, `lifecycle-lock.ts`). Single-record paths refuse a
+   batch's record (`assertNotInFuelBatch` → `RecordInBatchError`), and trigger
+   TA029 refuses any write of one from a transaction that did not declare its
+   batch, so an older image cannot act on it.
+6. **Withdraw; never delete.** Withdrawing an open batch removes its records
+   through the delete core (`removeLocked`) and keeps the batch and its rows
+   `withdrawn` with who, when and why; unbatched rows are withdrawn the same
+   way. Because the dedupe index covers live rows only, uploading the file
+   again stores exactly the withdrawn rows again, as replacing rows, and they
+   form a batch again.
+7. **Files go on the group.** One file links to every live record of the batch
+   under the batch row lock (`EvidenceService.uploadForFuelBatch`,
+   `detachFromFuelBatch`); the evidence rule is still judged by the record
+   cores at submit and approval.
+
+Specs: DB-free for the reader and the writers (`read-fuel-file.spec.ts`,
+`fuel-files.service.spec.ts`, `fuel-accounts.service.spec.ts`,
+`fuel-batch-formation.service.spec.ts`, `fuel-batches.service.spec.ts`: joins,
+further batches, refusals held with their reason, scope refusals, the step's
+own refusals); the transactions, locks, races and the trigger against a real
+database (`apps/api/test/int/fuel-*.int.spec.ts`), on synthetic fixtures
+generated under `apps/api/test/fixtures/` (never a real provider file). State
+the limits as provisional until a measurement sets them
+(`fuel-files/limits.ts`).
 
 ## Traps this skill exists to record
 

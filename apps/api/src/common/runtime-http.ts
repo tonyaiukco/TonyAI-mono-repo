@@ -5,8 +5,9 @@ import { isIP } from 'node:net';
 import { toErrorBody } from './api-error';
 import {
   CapacityError, CSP_REPORT_BODY_MAX_BYTES, CSP_REPORT_MEDIA_TYPES, CSP_REPORT_PER_IP_PER_MINUTE, INVENTORY_DECLARATION_BODY_MAX_BYTES, isCspReportPost,
-  isInventoryDeclarationPut, jsonBodyLimit, routeGroup, RuntimeLimits,
+  isFuelUpload, isInventoryDeclarationPut, jsonBodyLimit, routeGroup, RuntimeLimits,
 } from './runtime-limits';
+import { FUEL_UPLOAD_MAX_SIZE_BYTES } from '@tonyai/shared-types';
 import { type LimitedRequest, RuntimeRequestInterceptor } from './runtime-request';
 
 /** A request's media type, as admission reads it: no parameters, lowercased. */
@@ -85,7 +86,9 @@ export const configureRuntimeHttp = (app: NestExpressApplication, limits: Runtim
           return refuse(res, 415, 'Compressed request bodies are not supported.');
         }
         const bytesLimit = multipart
-          ? (group === 'IMPORT' ? 2 : 10) * 1024 * 1024 + 65_536
+          ? (isFuelUpload(req.method, req.path)
+            ? FUEL_UPLOAD_MAX_SIZE_BYTES
+            : (group === 'IMPORT' ? 2 : 10) * 1024 * 1024) + 65_536
           : jsonBodyLimit(req.method, req.path, c.BODY_MAX_BYTES);
         const length = req.headers['content-length'];
         if (length && (!/^\d+$/.test(length) || Number(length) > bytesLimit)) {

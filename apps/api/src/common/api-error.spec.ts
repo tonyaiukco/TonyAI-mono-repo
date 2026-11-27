@@ -283,6 +283,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   fuel_account_not_found: () => new ResourceNotFoundError('fuel_account_not_found'),
   fuel_file_not_found: () => new ResourceNotFoundError('fuel_file_not_found'),
   fuel_batch_not_open: () => new ConflictException(errorBody('fuel_batch_not_open', 'x')),
+  fuel_batch_reporting_changed: () => new ConflictException(errorBody('fuel_batch_reporting_changed', 'x')),
   fuel_account_in_use: () => new ConflictException(errorBody('fuel_account_in_use', 'x', { rows: 3 })),
   fuel_account_exists: () => new ConflictException(errorBody('fuel_account_exists', 'x')),
   fuel_account_target_forbidden: () => new ForbiddenException(errorBody('fuel_account_target_forbidden', 'x')),

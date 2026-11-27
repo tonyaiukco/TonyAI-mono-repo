@@ -94,7 +94,9 @@
   "centralReporter": {
     "description": "İsterseniz bir standart kullanıcıya merkezi raportör yetkisi verin: birden fazla şirket için tek bir kategori listesi.",
     "noUser": "Henüz yetkiyi alabilecek bir kullanıcı yok: merkezi raportör bir standart kullanıcıdır ve standart kullanıcıları şirketlerine bir Süper Yönetici atar.",
-    "give": "Merkezi raportör yetkisi"
+    "give": "Merkezi raportör yetkisi",
+    "accountsTitle": "Yakıt kartı hesapları",
+    "accountsDescription": "Bir yakıt kartı veya teslimat hesabını şirketine şimdi ya da daha sonra Yakıt dosyaları sayfasında eşleyin. Eşlenen hesabın satırları o şirketin paketlerini oluşturur."
   },
   "finish": {
     "description": "Şirket ağacını ve aracın geri kalanını açmak için kurulumu bitirin.",

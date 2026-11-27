@@ -100,7 +100,7 @@ describe('ReportDatasetsService.capture', () => {
     vi.mocked(readCaptureContext).mockReset().mockResolvedValue({
       capturedAt: '2026-10-15T12:00:01.234Z', organisationName: 'Org', currentAccess: ['sub-1', 'sub-2', 'sub-3', 'sub-4', 'sub-5'],
     });
-    vi.mocked(readCaptureFacts).mockReset().mockResolvedValue({ records: [record('r-1')], evidence: [], periodLocks: [], releases: new Map() });
+    vi.mocked(readCaptureFacts).mockReset().mockResolvedValue({ records: [record('r-1')], evidence: [], periodLocks: [], releases: new Map(), cardFuelAttribution: false });
     db = mockDb();
     service = new ReportDatasetsService(db.prisma as unknown as PrismaService, new AuditService(db.prisma as unknown as PrismaService));
   });
@@ -267,7 +267,7 @@ describe('ReportDatasetsService.capture', () => {
       const data = (db.tx.reportDataset.create.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0].data;
       const stored = JSON.parse(data.content as string) as ReportDataset;
       expect(stored).toMatchObject({
-        schemaVersion: 3, capturedAt: '2026-10-15T12:00:01.234Z', organisationId: ORG, organisationName: 'Org',
+        schemaVersion: 4, cardFuelAttribution: false, capturedAt: '2026-10-15T12:00:01.234Z', organisationId: ORG, organisationName: 'Org',
         context: { year: 2026, scope: 1 }, selection: 'extract', resolvedSubsidiaryIds: ['sub-1', 'sub-2'],
       });
       expect(Object.keys(stored.context)).toEqual(['year', 'scope']);
@@ -284,6 +284,15 @@ describe('ReportDatasetsService.capture', () => {
       expect(summary).toMatchObject({ datasetId: stored.datasetId, capturedBy: admin.id, boundary: { id: BOUNDARY_ID, version: 2, decision: 'unconfirmed' } });
     });
 
+    it('retains the card-fuel attribution the capture read, inside the fingerprint (inc28-fuel-bulk D17)', async () => {
+      vi.mocked(readCaptureFacts).mockResolvedValueOnce({ records: [record('r-1')], evidence: [], periodLocks: [], releases: new Map(), cardFuelAttribution: true });
+      await service.capture(admin, { boundaryId: BOUNDARY_ID, scope: 1 });
+      const stored = JSON.parse((db.tx.reportDataset.create.mock.calls[0] as unknown as [{ data: { content: string } }])[0].data.content) as ReportDataset;
+      expect(stored).toMatchObject({ schemaVersion: 4, cardFuelAttribution: true });
+      expect(reportDatasetFingerprint(stored)).toEqual(stored.fingerprint);
+      expect(reportDatasetFingerprint({ ...stored, cardFuelAttribution: false })).not.toEqual(stored.fingerprint);
+    });
+
     it('calls a selection with no filter an inventory, with the context its year alone', async () => {
       await service.capture(admin, { boundaryId: BOUNDARY_ID });
       const stored = JSON.parse((db.tx.reportDataset.create.mock.calls[0] as unknown as [{ data: { content: string } }])[0].data.content) as ReportDataset;
@@ -292,7 +301,7 @@ describe('ReportDatasetsService.capture', () => {
     });
 
     it("refuses to retain a dataset referencing a subsidiary outside the capturer's access", async () => {
-      vi.mocked(readCaptureFacts).mockResolvedValueOnce({ records: [record('r-1', 'sub-9')], evidence: [], periodLocks: [], releases: new Map() });
+      vi.mocked(readCaptureFacts).mockResolvedValueOnce({ records: [record('r-1', 'sub-9')], evidence: [], periodLocks: [], releases: new Map(), cardFuelAttribution: false });
       const e = await failure(service.capture(admin, { boundaryId: BOUNDARY_ID }));
       expect((e as Error).message).toMatch(/outside its capturer's access/);
       expect(db.tx.reportDataset.create).not.toHaveBeenCalled();

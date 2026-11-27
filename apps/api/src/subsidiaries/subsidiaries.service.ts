@@ -692,6 +692,7 @@ export class SubsidiariesService {
       fuelRows,
       fuelBatches,
       fuelAccounts,
+      reportedBatches,
     ] =
       await Promise.all([
         db.activityRecord.count({
@@ -731,10 +732,16 @@ export class SubsidiariesService {
         countReporting ? db.fuelRow.count({ where: { subsidiaryId: id } }) : Promise.resolve(0),
         countReporting ? db.fuelBatch.count({ where: { subsidiaryId: id } }) : Promise.resolve(0),
         countReporting ? db.fuelAccount.count({ where: { subsidiaryId: id } }) : Promise.resolve(0),
+        // Fuel batches this company reported for another (a withdrawn one too, whose records are gone):
+        // their header keeps the company (`fuel_batches.reported_by_subsidiary_id`; fifth review of WP9 PR B).
+        countReporting
+          ? db.fuelBatch.count({ where: { reportedBySubsidiaryId: id, subsidiaryId: { not: id } } })
+          : Promise.resolve(0),
       ]);
     return {
       terminalRecords,
-      reportedRecords,
+      // Records, and fuel batches, it reported for another company: either keeps it.
+      reportedRecords: reportedRecords + reportedBatches,
       centralReporters,
       // A batch always holds rows; its own count only keeps the delete from
       // reaching a foreign key should one ever stand alone.

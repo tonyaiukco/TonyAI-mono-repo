@@ -78,7 +78,8 @@ import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
 import { useActorWords, useEntityWords, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatComputedAmount, formatNumber, formatReadAmount } from "@/lib/i18n/number";
-import { reviewCalorificBasis, reviewReferences, reviewReportingEntity, reviewSelfGeneration, waitingLabel } from "@/lib/review-view";
+import { reviewCalorificBasis, reviewRecordFilters, reviewReferences, reviewReportingEntity, reviewSelfGeneration, waitingLabel } from "@/lib/review-view";
+import { ReviewBatches, reviewBatchCount } from "@/components/fuel-files/review-batches";
 import { categoryWithActivity } from "@/lib/vocabulary";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
@@ -115,6 +116,7 @@ export default function ReviewPage() {
   const tEvidence = useTranslations("evidence");
   const tCommon = useTranslations("common");
   const t = useTranslations("review");
+  const tFuel = useTranslations("fuelFiles");
   const showError = useErrorToast();
   const showStableError = useStableErrorToast();
   const entityWords = useEntityWords();
@@ -294,13 +296,29 @@ export default function ReviewPage() {
    */
   const [showAll, setShowAll] = useState(false);
 
+  /**
+   * Records and fuel batches are two lists, each with its own count
+   * (inc28-fuel-bulk D10): a batch's records are decided with the batch, so
+   * the Records list leaves them out (`inBatch=false`).
+   */
+  const [queueTab, setQueueTab] = useState<"records" | "batches">("records");
+  const [batchTotal, setBatchTotal] = useState<number | null>(null);
+  const [batchVersion, setBatchVersion] = useState(0);
+  useEffect(() => {
+    if (!user || !mayUseReviewQueue(user)) return;
+    let live = true;
+    reviewBatchCount(subsidiaryId === ANY ? null : subsidiaryId, showAll)
+      .then((n) => live && setBatchTotal(n))
+      .catch(() => live && setBatchTotal(null));
+    return () => {
+      live = false;
+    };
+  }, [user, subsidiaryId, showAll, batchVersion]);
+
   /** The queue's filters: the pending statuses, the subsidiary picked, and whose decision. */
   const queueFilters = useCallback(
-    (): ActivityRecordPageFilters => ({
-      status: [...PENDING_REVIEW_STATUSES],
-      ...(subsidiaryId === ANY ? {} : { subsidiaryId }),
-      ...(showAll ? {} : { awaitingMyDecision: true }),
-    }),
+    (): ActivityRecordPageFilters =>
+      reviewRecordFilters({ statuses: PENDING_REVIEW_STATUSES, subsidiaryId: subsidiaryId === ANY ? null : subsidiaryId, showAll }),
     [subsidiaryId, showAll],
   );
 
@@ -631,6 +649,34 @@ export default function ReviewPage() {
                 </span>
               </div>
 
+              <div className="inline-flex rounded-md border p-1" role="tablist">
+                {(["records", "batches"] as const).map((tab) => (
+                  <Button
+                    key={tab}
+                    role="tab"
+                    aria-selected={queueTab === tab}
+                    size="sm"
+                    variant={queueTab === tab ? "default" : "ghost"}
+                    onClick={() => setQueueTab(tab)}
+                    data-testid={`review-tab-${tab}`}
+                  >
+                    {tab === "records"
+                      ? tFuel("review.recordsTab", { count: total === null ? "—" : formatNumber(total, locale) })
+                      : tFuel("review.batchesTab", { count: batchTotal === null ? "—" : formatNumber(batchTotal, locale) })}
+                  </Button>
+                ))}
+              </div>
+
+              {queueTab === "batches" ? (
+                <ReviewBatches
+                  user={user}
+                  subsidiaryId={subsidiaryId === ANY ? null : subsidiaryId}
+                  showAll={showAll}
+                  refreshKey={batchVersion}
+                  onChanged={() => setBatchVersion((v) => v + 1)}
+                />
+              ) : (
+              <>
               <Card>
                 <CardContent className="p-0">
                   <Table>
@@ -828,6 +874,8 @@ export default function ReviewPage() {
                   testId="review-queue-load-more"
                 />
               </div>
+              </>
+              )}
             </>
           )}
         </div>

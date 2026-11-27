@@ -14,6 +14,9 @@ export class WorkDeadline {
 const parserScope = new AsyncLocalStorage<WorkDeadline>();
 export const withParserDeadline = <T>(work: () => T): T =>
   parserScope.run(new WorkDeadline(readRuntimeConfig().IMPORT_PARSE_TIMEOUT_MS), work);
+/** `withParserDeadline` under a budget of its own: a fuel file's (inc28-fuel-bulk D15). */
+export const withParserDeadlineMs = <T>(durationMs: number, work: () => T): T =>
+  parserScope.run(new WorkDeadline(durationMs), work);
 export const checkParserDeadline = (): void => {
   if (parserScope.getStore()?.expired) throw new BadRequestException('File parsing exceeded its time budget.');
 };

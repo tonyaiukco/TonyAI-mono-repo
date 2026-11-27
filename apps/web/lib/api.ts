@@ -1,4 +1,31 @@
 import type {
+  BulkSubmitFuelBatchesRequest,
+  BulkSubmitFuelBatchesResultDTO,
+  ConfirmFuelAccountRequest,
+  CreateFuelAccountRequest,
+  FormFuelBatchesRequest,
+  FormFuelBatchesResultDTO,
+  FuelAccountDTO,
+  FuelBatchDTO,
+  FuelBatchDetailDTO,
+  FuelBatchFilters,
+  FuelBatchMetadataDTO,
+  FuelBatchRowDTO,
+  FuelFilePreviewDTO,
+  FuelSource,
+  FuelTankerDeclaration,
+  FuelTrayDTO,
+  FuelUploadDTO,
+  FuelUsage,
+  SubmitFuelBatchRequest,
+  TakeOverFuelRowsRequest,
+  UpdateFuelAccountRequest,
+  UpdateFuelBatchDeclarationsRequest,
+  WithdrawFuelBatchRequest,
+  WithdrawFuelRowsRequest,
+  FuelWithdrawableDTO,
+} from "@/lib/types";
+import type {
   ReleaseParametersDTO,
   FactorCoverageDTO,
   SealedFactorReleaseDTO,
@@ -153,7 +180,8 @@ export class ApiError extends Error {
  * and only the documented empty status set means no filter. */
 const PAGE_KEYS = ["limit", "cursor"] as const satisfies readonly (keyof CursorPageParams)[];
 // `awaitingMyDecision`: the review queue's default view (inc26-roles-approval-chain), sent as `true`.
-const ACTIVITY_FILTER_KEYS = ["subsidiaryId", "year", "period", "category", "status", "locationId", "periodValue", "scope", "search", "awaitingMyDecision"] as const satisfies readonly (keyof ActivityRecordPageFilters)[];
+// `inBatch`: `false` keeps a fuel batch's records out of the review queue's Records list (inc28-fuel-bulk D10).
+const ACTIVITY_FILTER_KEYS = ["subsidiaryId", "year", "period", "category", "status", "locationId", "periodValue", "scope", "search", "awaitingMyDecision", "inBatch"] as const satisfies readonly (keyof ActivityRecordPageFilters)[];
 const ACTIVITY_PAGE_KEYS = [...PAGE_KEYS, ...ACTIVITY_FILTER_KEYS, "sort"] as const satisfies readonly (keyof ActivityRecordPageParams)[];
 const PERIOD_LOCK_PAGE_KEYS = [...PAGE_KEYS, "subsidiaryId", "year", "period", "periodValue"] as const satisfies readonly (keyof PeriodLockPageParams)[];
 const TARGET_PAGE_KEYS = [...PAGE_KEYS, "subsidiaryId"] as const satisfies readonly (keyof TargetPageParams)[];
@@ -402,6 +430,29 @@ async function downloadIssuance(issuanceId: string, format: IssuedFileFormat): P
 
 /** The issued report's three files: the retained PDF and its two projections. */
 export type IssuedFileFormat = "pdf" | "xlsx" | "csv";
+
+/** A fuel file posted with its fields (multipart; the browser sets the boundary). */
+async function fuelMultipart<T>(path: string, file: File, fields: Record<string, string | undefined>): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  for (const [key, value] of Object.entries(fields)) if (value !== undefined) form.append(key, value);
+  const res = await fetch(`${BASE_URL}${path}`, { method: "POST", headers: await authHeaders(), body: form });
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as T;
+}
+
+/** `GET /fuel-batches` filters as a query string. */
+function fuelBatchQuery(filters: FuelBatchFilters): string {
+  const search = new URLSearchParams();
+  if (filters.status) search.set("status", filters.status);
+  if (filters.subsidiaryId) search.set("subsidiaryId", filters.subsidiaryId);
+  if (filters.awaitingMyDecision) search.set("awaitingMyDecision", "true");
+  if (filters.mine) search.set("mine", "true");
+  if (filters.inReview) search.set("inReview", "true");
+  if (filters.after) search.set("after", filters.after);
+  const qs = search.toString();
+  return qs ? `?${qs}` : "";
+}
 
 export const api = {
   // LP4-03 PR C: the inventory boundary — a year's versions and one version's
@@ -913,6 +964,96 @@ export const api = {
   /** Send for review every draft of the batch the caller may send. */
   submitImportBatch: (id: string) =>
     apiFetch<BulkSubmitReportDTO>(`/import-batches/${id}/submit`, { method: "POST" }),
+
+  // --- Fuel files, accounts and batches (inc28-fuel-bulk) ---
+  // A fuel file is read first (preview: nothing stored), then applied with
+  // the previewed digest; its rows form batches in steps the page repeats
+  // while `processableRows` > 0. A batch is the lifecycle unit of its records.
+
+  /** `POST /fuel-files/preview`: reads the file, stores nothing (D3). */
+  previewFuelFile: (file: File, fields: { source: FuelSource; usage?: FuelUsage }) =>
+    fuelMultipart<FuelFilePreviewDTO>("/fuel-files/preview", file, fields),
+  /**
+   * `POST /fuel-files`: stores the rows of the file the preview read. The
+   * digest names that file (`fuel_file_changed` otherwise); a tanker file
+   * carries a declaration per delivery.
+   */
+  applyFuelFile: (
+    file: File,
+    fields: { source: FuelSource; usage?: FuelUsage; fileSha256: string; declarations?: FuelTankerDeclaration[] },
+  ) =>
+    fuelMultipart<FuelUploadDTO>("/fuel-files", file, {
+      source: fields.source,
+      usage: fields.usage,
+      fileSha256: fields.fileSha256,
+      declarations: fields.declarations ? JSON.stringify(fields.declarations) : undefined,
+    }),
+  /** A page of fuel uploads, newest first; `after`: `fuelUploadCursor` of the last one loaded. */
+  listFuelUploads: (after?: string) => apiFetch<FuelUploadDTO[]>(after ? `/fuel-files?after=${encodeURIComponent(after)}` : "/fuel-files"),
+  getFuelUpload: (id: string) => apiFetch<FuelUploadDTO>(`/fuel-files/${encodeURIComponent(id)}`),
+  fuelTray: () => apiFetch<FuelTrayDTO>("/fuel-files/tray"),
+  /** One step of batch formation; call again while `processableRows` > 0. */
+  formFuelBatches: (id: string, body: FormFuelBatchesRequest = {}) =>
+    apiFetch<FormFuelBatchesResultDTO>(`/fuel-files/${encodeURIComponent(id)}/form-batches`, { method: "POST", body: JSON.stringify(body) }),
+  /** What the caller may withdraw of an upload's unbatched rows, by account and by waiting fuel name. */
+  fuelWithdrawable: (id: string) => apiFetch<FuelWithdrawableDTO>(`/fuel-files/${encodeURIComponent(id)}/withdrawable`),
+  withdrawFuelRows: (id: string, body: WithdrawFuelRowsRequest) =>
+    apiFetch<FuelUploadDTO>(`/fuel-files/${encodeURIComponent(id)}/withdraw-rows`, { method: "POST", body: JSON.stringify(body) }),
+  /** A masterkey becomes the holder of an upload's rows that are in no batch. */
+  takeOverFuelRows: (id: string, body: TakeOverFuelRowsRequest = {}) =>
+    apiFetch<FuelUploadDTO>(`/fuel-files/${encodeURIComponent(id)}/take-over`, { method: "POST", body: JSON.stringify(body) }),
+
+  listFuelAccounts: () => apiFetch<FuelAccountDTO[]>("/fuel-accounts"),
+  createFuelAccount: (body: CreateFuelAccountRequest) =>
+    apiFetch<FuelAccountDTO>("/fuel-accounts", { method: "POST", body: JSON.stringify(body) }),
+  confirmFuelAccount: (id: string, body: ConfirmFuelAccountRequest) =>
+    apiFetch<FuelAccountDTO>(`/fuel-accounts/${encodeURIComponent(id)}/confirm`, { method: "POST", body: JSON.stringify(body) }),
+  updateFuelAccount: (id: string, body: UpdateFuelAccountRequest) =>
+    apiFetch<FuelAccountDTO>(`/fuel-accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
+
+  listFuelBatches: (filters: FuelBatchFilters = {}) =>
+    apiFetch<FuelBatchDTO[]>(`/fuel-batches${fuelBatchQuery(filters)}`),
+  fuelBatchMetadata: (filters: FuelBatchFilters = {}) =>
+    apiFetch<FuelBatchMetadataDTO>(`/fuel-batches/metadata${fuelBatchQuery(filters)}`),
+  getFuelBatch: (id: string) => apiFetch<FuelBatchDetailDTO>(`/fuel-batches/${encodeURIComponent(id)}`),
+  fuelBatchRows: (id: string, page: { offset?: number; limit?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (page.offset !== undefined) search.set("offset", String(page.offset));
+    if (page.limit !== undefined) search.set("limit", String(page.limit));
+    const qs = search.toString();
+    return apiFetch<{ rows: FuelBatchRowDTO[]; total: number }>(`/fuel-batches/${encodeURIComponent(id)}/rows${qs ? `?${qs}` : ""}`);
+  },
+  submitFuelBatch: (id: string, body: SubmitFuelBatchRequest = {}) =>
+    apiFetch<FuelBatchDetailDTO>(`/fuel-batches/${encodeURIComponent(id)}/submit`, { method: "POST", body: JSON.stringify(body) }),
+  bulkSubmitFuelBatches: (batchIds: string[]) =>
+    apiFetch<BulkSubmitFuelBatchesResultDTO>("/fuel-batches/bulk-submit", { method: "POST", body: JSON.stringify({ batchIds } satisfies BulkSubmitFuelBatchesRequest) }),
+  recallFuelBatch: (id: string) =>
+    apiFetch<FuelBatchDetailDTO>(`/fuel-batches/${encodeURIComponent(id)}/recall`, { method: "POST" }),
+  /** The batch's review, approval and return name its submission, as a record's do. */
+  reviewFuelBatch: (id: string, body: StartReviewInput = {}) =>
+    apiFetch<FuelBatchDetailDTO>(`/fuel-batches/${encodeURIComponent(id)}/review`, { method: "POST", body: JSON.stringify(body) }),
+  approveFuelBatch: (id: string, body: ApproveInput) =>
+    apiFetch<FuelBatchDetailDTO>(`/fuel-batches/${encodeURIComponent(id)}/approve`, { method: "POST", body: JSON.stringify(body) }),
+  rejectFuelBatch: (id: string, body: RejectInput) =>
+    apiFetch<FuelBatchDetailDTO>(`/fuel-batches/${encodeURIComponent(id)}/reject`, { method: "POST", body: JSON.stringify(body) }),
+  changeFuelBatchDeclarations: (id: string, body: UpdateFuelBatchDeclarationsRequest) =>
+    apiFetch<FuelBatchDetailDTO>(`/fuel-batches/${encodeURIComponent(id)}/declarations`, { method: "PATCH", body: JSON.stringify(body) }),
+  withdrawFuelBatch: (id: string, body: WithdrawFuelBatchRequest) =>
+    apiFetch<FuelBatchDetailDTO>(`/fuel-batches/${encodeURIComponent(id)}/withdraw`, { method: "POST", body: JSON.stringify(body) }),
+  /** One file for every live record of a draft or returned batch (author only). */
+  uploadFuelBatchEvidence: async (batchId: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("fuelBatchId", batchId);
+    const res = await fetch(`${BASE_URL}/evidence`, { method: "POST", headers: await authHeaders(), body: form });
+    if (!res.ok) throw await apiError(res);
+    return (await res.json()) as EvidenceDTO;
+  },
+  detachFuelBatchEvidence: (batchId: string, evidenceId: string) =>
+    apiFetch<{ fileDeleted: boolean }>(
+      `/fuel-batches/${encodeURIComponent(batchId)}/evidence/${encodeURIComponent(evidenceId)}`,
+      { method: "DELETE" },
+    ),
 
   /** Download the import template (XLSX), pre-filled with reachable entities. */
   downloadBulkUploadTemplate: async (): Promise<void> => {

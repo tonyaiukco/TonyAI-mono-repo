@@ -52,10 +52,21 @@ const REPORT_PREVIEW_PATHS = new Set([
 export const isReportPreview = (method: string, path: string): boolean =>
   ['GET', 'HEAD'].includes(method) && REPORT_PREVIEW_PATHS.has(path.split('?')[0].toLowerCase().replace(/\/+$/, ''));
 
+/**
+ * The fuel file routes (inc28-fuel-bulk D15): a preview and an apply each read
+ * a provider workbook of up to `FUEL_UPLOAD_MAX_SIZE_BYTES`, so they share the
+ * import group's per-user quota and its concurrency permit, under a body cap
+ * of their own.
+ */
+export const FUEL_UPLOAD_ROUTES: ReadonlySet<string> = new Set(['/api/v1/fuel-files/preview', '/api/v1/fuel-files']);
+export const isFuelUpload = (method: string, path: string): boolean =>
+  method === 'POST' && FUEL_UPLOAD_ROUTES.has(path.split('?')[0].toLowerCase().replace(/\/+$/, ''));
+
 export type RouteGroup = 'READ' | 'WRITE' | 'IMPORT' | 'EXPORT' | 'SUBMIT';
 export const routeGroup = (method: string, path: string): RouteGroup => {
   const route = path.split('?')[0].toLowerCase().replace(/\/+$/, '');
   if (method === 'POST' && route === '/api/v1/bulk-upload/activity-records') return 'IMPORT';
+  if (method === 'POST' && FUEL_UPLOAD_ROUTES.has(route)) return 'IMPORT';
   if (method === 'POST' && (route === '/api/v1/activity-records/bulk-submit'
     || /^\/api\/v1\/import-batches\/[^/]+\/submit$/.test(route))) return 'SUBMIT';
   if (['GET', 'HEAD'].includes(method) && EXPORT_PATHS.has(route)) return 'EXPORT';

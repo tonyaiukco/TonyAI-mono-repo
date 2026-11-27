@@ -55,6 +55,8 @@ function mocks(records: Record<string, unknown>[], language = 'en') {
         return [...counts].map(([status, n]) => ({ status, _count: { _all: n } }));
       }),
       findMany: vi.fn(async ({ where }: { where: Where }) => records.filter((r) => matches(r, where))),
+      // inc28-fuel-bulk D17: no record here is a card file's batch record.
+      count: vi.fn(async () => 0),
     },
     activityRecordEvidence: { findMany: vi.fn(async () => []) },
     factorRelease: { findMany: vi.fn(async () => []) },

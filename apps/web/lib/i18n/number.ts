@@ -171,7 +171,7 @@ export function reformatDecimalInput(text: string, from: Locale, to: Locale): st
 const formatters = new Map<string, Intl.NumberFormat>();
 
 /** `value` for display in `locale` (grouped, the locale's separators). */
-export function formatNumber(value: number, locale: Locale, options: Intl.NumberFormatOptions = {}): string {
+export function formatNumber(value: number | bigint, locale: Locale, options: Intl.NumberFormatOptions = {}): string {
   const key = `${locale}|${JSON.stringify(options)}`;
   let formatter = formatters.get(key);
   if (!formatter) {

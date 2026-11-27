@@ -75,7 +75,9 @@
     "equipmentType": "Equipment type",
     "capacityKg": "Installed capacity (kg)",
     "refillKg": "Refilled (kg)",
-    "leakRateChoice": "Leak rate"
+    "leakRateChoice": "Leak rate",
+    "invoiceNo": "Invoice number",
+    "supplier": "Supplier"
   },
   "activityTypes": {
     "grid_electricity": "Grid electricity",

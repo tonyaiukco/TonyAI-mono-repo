@@ -9,7 +9,10 @@ import {
   recordSupplier,
   selfGenerationBalance,
   type ActivityRecordDTO,
+  type ActivityRecordPageFilters,
+  type ActivityRecordStatus,
   type CvBasis,
+  type FuelBatchFilters,
   type ElectricityRecordParameters,
   type SelfGenerationBalance,
   type SelfGenerationSource,
@@ -150,4 +153,34 @@ export function waitingLabel(
 ): string {
   const days = daysSince(iso, now);
   return days === null ? '—' : t('waitingDays', { days: formatNumber(days, locale) });
+}
+
+/**
+ * The review queue's Records list and its count (inc28-fuel-bulk D10): the
+ * pending statuses, the company picked, whose decision — and never a fuel
+ * batch's record, which is decided with its batch in the Batches list.
+ */
+export function reviewRecordFilters(options: {
+  statuses: readonly ActivityRecordStatus[];
+  subsidiaryId: string | null;
+  showAll: boolean;
+}): ActivityRecordPageFilters {
+  return {
+    status: [...options.statuses],
+    ...(options.subsidiaryId === null ? {} : { subsidiaryId: options.subsidiaryId }),
+    ...(options.showAll ? {} : { awaitingMyDecision: true }),
+    inBatch: false,
+  };
+}
+
+/**
+ * The review queue's Batches list and its count, as one request per status:
+ * by default the batches awaiting the viewer's decision; "show all" every
+ * submitted and every under-review batch the viewer reads.
+ */
+export function reviewBatchFilters(options: { subsidiaryId: string | null; showAll: boolean }): FuelBatchFilters[] {
+  const company = options.subsidiaryId === null ? {} : { subsidiaryId: options.subsidiaryId };
+  if (!options.showAll) return [{ ...company, awaitingMyDecision: true }];
+  // One list in submission order, so its pages follow the oldest submission first (sixth review of WP9 PR B, P2).
+  return [{ ...company, inReview: true }];
 }

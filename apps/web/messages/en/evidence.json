@@ -39,7 +39,8 @@
     "role": "Your role cannot attach evidence.",
     "notAuthor": "Entered by someone else.",
     "already": "Already {status}.",
-    "locked": "{period} {year} is locked."
+    "locked": "{period} {year} is locked.",
+    "inBatch": "A fuel batch's record — attach files to its batch on Fuel files."
   },
   "attachNone": "Attach one file",
   "attachOne": "Attach one file to {count} record",

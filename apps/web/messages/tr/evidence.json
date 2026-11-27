@@ -39,7 +39,8 @@
     "role": "Rolünüz kanıt ekleyemez.",
     "notAuthor": "Başka biri tarafından girildi.",
     "already": "Zaten {status}.",
-    "locked": "{period} {year} kilitli."
+    "locked": "{period} {year} kilitli.",
+    "inBatch": "Bir yakıt paketinin kaydı — dosyaları Yakıt dosyaları'nda paketine ekleyin."
   },
   "attachNone": "Tek dosya ekle",
   "attachOne": "Tek dosyayı {count} kayda ekle",

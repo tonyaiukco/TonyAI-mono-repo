@@ -179,7 +179,7 @@ describe('buildTemplateWorkbook — the reference sheet', () => {
     // gas. Its valid values depend on the row's category, like the units, so
     // they are listed per category here rather than offered as one flat list.
     const text = await referenceText();
-    expect(text).toContain('Every column there is required except locationId, activityType, varianceReason and the calculation inputs');
+    expect(text).toContain('Every column there is required except locationId, activityType, varianceReason, invoiceNo, supplier and the calculation inputs');
     expect(text).toContain(
       'Fuel, Mobile Combustion, Refrigerants and Fire Suppression rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
     );

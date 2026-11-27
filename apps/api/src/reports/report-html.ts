@@ -314,7 +314,7 @@ export function buildReportHtml(data: ReportData): string {
     data.excludedAssociates.length > 0
       ? ` ${v.html('excludedAssociates', { names: data.excludedAssociates.join(', ') })}`
       : ''
-  }</p>
+  }${data.cardFuelAttribution ? ` ${v.html('cardFuelAttribution')}` : ''}</p>
   <table><thead><tr>${th('Category')}${th('Geography')}${th('Factor', true)}${th('Methodology')}${th('Source')}${th('Release')}${th('Standing')}</tr></thead>
   <tbody>${factorRows}</tbody></table>`
       : ''

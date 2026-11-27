@@ -51,6 +51,8 @@ export interface RecordFilters {
   /** Only the pending records the caller decides; the condition is built
    *  from database facts (`awaitingDecisionWhere`), not here. */
   awaitingMyDecision?: true;
+  /** inc28-fuel-bulk D10: with or without fuel batches' records. */
+  inBatch?: boolean;
 }
 
 export function normaliseRecordFilters(query: ActivityRecordPageFilters): RecordFilters {
@@ -69,6 +71,7 @@ export function normaliseRecordFilters(query: ActivityRecordPageFilters): Record
     scope: query.scope,
     search: query.search ? query.search : undefined,
     awaitingMyDecision: query.awaitingMyDecision === true ? true : undefined,
+    inBatch: typeof query.inBatch === 'boolean' ? query.inBatch : undefined,
   };
 }
 
@@ -119,5 +122,6 @@ export function recordFilterWhere(user: RequestUser, f: RecordFilters): Prisma.A
     ...(f.locationId !== undefined ? { locationId: f.locationId } : {}),
     ...(f.scope !== undefined ? { scope: f.scope } : {}),
     ...(f.search !== undefined ? { OR: searchWhere(f.search) } : {}),
+    ...(f.inBatch !== undefined ? { fuelBatchId: f.inBatch ? { not: null } : null } : {}),
   };
 }

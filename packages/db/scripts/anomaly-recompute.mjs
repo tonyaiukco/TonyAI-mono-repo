@@ -68,13 +68,14 @@ import {
   buildPools,
   exitCodeFor,
   findStale,
+  batchVerdictsOf,
   describeVerdict,
   indexRecord,
   isLoopback,
   lockKey,
   parseArgs,
   parseHost,
-  REWRITABLE,
+  rewriteVerdict,
   shouldScore,
 } from './anomaly-recompute.lib.mjs';
 import { PrismaClient } from '../generated/client/index.js';
@@ -149,6 +150,8 @@ async function main() {
       // it already explains itself (`classify`, `unexplained_flag`).
       varianceReason: true,
       updatedAt: true,
+      // A fuel batch's record is judged per invoice and fuel (inc28-fuel-bulk D12).
+      fuelBatchId: true,
       subsidiary: { select: { legalName: true, organisationId: true } },
     },
   });
@@ -167,7 +170,16 @@ async function main() {
 
   // A verdict scored before the short-history check and committed since is
   // kept as it is, and is not drift (see `keepsLegacyVerdict`).
-  const { stale, keptLegacy, keptPreCeiling } = findStale(scoreable, pools, lockedPeriods);
+  // A batch's invoice period: its earliest transaction date, or a tanker delivery's declared month.
+  const invoices = (
+    await prisma.$queryRaw`
+      SELECT b.id::text, b.fuel_account_id::text AS "accountId", b.usage, b.invoice_ref AS "invoiceRef", b.status,
+             min(COALESCE(to_char(r.transaction_at, 'YYYYMMDD')::int, r.year * 10000 + r.month * 100 + 1))::int AS period
+      FROM fuel_batches b JOIN fuel_rows r ON r.fuel_batch_id = b.id AND r.state = 'assigned'
+      GROUP BY b.id`
+  );
+  const batchVerdicts = batchVerdictsOf(invoices, records);
+  const { stale, keptLegacy, keptPreCeiling } = findStale(scoreable, pools, lockedPeriods, batchVerdicts);
 
   console.log(
     `Checked ${scoreable.length} record(s)` +
@@ -243,58 +255,8 @@ async function main() {
   const skipped = [];
   for (const { item, stored, fresh } of rewritable) {
     const r = item.row;
-    await prisma.$transaction(async (tx) => {
-      // The classification above came from a snapshot; this is the guarantee.
-      // `updatedAt` is the optimistic-lock token precisely because every API
-      // write path bumps it, so a record approved, locked or edited since the
-      // read fails the predicate and is skipped rather than clobbered.
-      const stillLocked = await tx.periodLock.findFirst({
-        where: {
-          subsidiaryId: r.subsidiaryId,
-          reportingYear: r.reportingYear,
-          reportingPeriod: r.reportingPeriod,
-          periodValue: r.periodValue,
-        },
-        select: { id: true },
-      });
-      if (stillLocked) {
-        skipped.push({ id: r.id, why: 'its period was closed mid-run' });
-        return;
-      }
-      const written = await tx.activityRecord.updateMany({
-        where: { id: r.id, status: { in: [...REWRITABLE] }, updatedAt: r.updatedAt },
-        data: {
-          anomalyFlag: fresh.anomalous,
-          anomalyBaselinePriorCount: fresh.priorCount,
-          anomalyBaselineTCo2e: fresh.baseline,
-        },
-      });
-      if (written.count === 0) {
-        skipped.push({ id: r.id, why: 'it changed between the read and the write' });
-        return;
-      }
-      // Its own verb, and a null actor: no person performed this. `update`
-      // would put a system re-score in the same bucket as an author changing a
-      // figure, and "who changed this number" has to stay answerable.
-      await tx.auditLog.create({
-        data: {
-          userId: null,
-          role: null,
-          organisationId: r.subsidiary.organisationId,
-          action: 'rescore',
-          entity: 'activity_record',
-          entityId: r.id,
-          diff: {
-            // `status` and `updatedAt` are recorded so the trail alone proves
-            // this tool honoured its own exclusions — otherwise "it never
-            // touched a closed record" is unverifiable after the fact.
-            before: { ...stored, status: r.status, updatedAt: r.updatedAt.toISOString() },
-            after: fresh,
-            source: 'anomaly:recompute',
-          },
-        },
-      });
-    });
+    const why = await rewriteVerdict(prisma, r, stored, fresh);
+    if (why) skipped.push({ id: r.id, why });
   }
 
   const rewritten = rewritable.length - skipped.length;

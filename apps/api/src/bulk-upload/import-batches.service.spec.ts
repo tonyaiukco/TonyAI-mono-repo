@@ -26,6 +26,7 @@ function batch(over: Record<string, unknown> = {}) {
     sizeBytes: 100,
     sha256: 'f'.repeat(64),
     storagePath: `${ORG}/${BATCH}/source.csv`,
+    source: 'template',
     status: 'completed',
     totalRows: 3,
     acceptedCount: 2,
@@ -138,7 +139,7 @@ describe('ImportBatchesService — who may see a batch (the RLS rule, applied by
 
     expect(list.map((b) => b.id)).toEqual(['b1']);
     expect(prisma.importBatch.findMany.mock.calls[0][0]).toMatchObject({
-      where: { organisationId: ORG, uploadedBy: 'user-entry' },
+      where: { organisationId: ORG, source: 'template', uploadedBy: 'user-entry' },
       orderBy: { createdAt: 'desc' },
     });
     expect(list[0]).not.toHaveProperty('storagePath');
@@ -226,7 +227,7 @@ describe('ImportBatchesService — what a read returns', () => {
     prisma.importBatch.findMany.mockResolvedValue(rows);
     const audited = await service.list(user({ id: 'u-c', role: 'auditor' }));
     expect(audited.map((b) => b.id)).toEqual(['mine', 'colleague', 'mine-wider']);
-    expect(prisma.importBatch.findMany.mock.calls[0][0].where).toEqual({ organisationId: ORG });
+    expect(prisma.importBatch.findMany.mock.calls[0][0].where).toEqual({ organisationId: ORG, source: 'template' });
 
     // The query already narrows to its uploads; the rows below are what a
     // super_admin's query could still return, and the scope check drops the
@@ -236,6 +237,7 @@ describe('ImportBatchesService — what a read returns', () => {
     expect(scoped.map((b) => b.id)).toEqual(['mine']);
     expect(prisma.importBatch.findMany.mock.calls[1][0].where).toEqual({
       organisationId: ORG,
+      source: 'template',
       uploadedBy: 'user-entry',
     });
   });
@@ -312,6 +314,17 @@ describe('ImportBatchesService — the source file', () => {
     await expect(service.sourceUrl(user(), BATCH)).rejects.toMatchObject({
       response: { code: 'import_batch_not_found', message: 'Import not found' },
     });
+    expect(storage.createSignedUrl).not.toHaveBeenCalled();
+  });
+
+  it('answers a fuel upload as not found, to a masterkey too: it is read through /fuel-files (inc28-fuel-bulk D14)', async () => {
+    const { prisma, storage, service } = build();
+    prisma.importBatch.findUnique.mockResolvedValue(
+      batch({ source: 'petrol_ofisi', subsidiaryIds: [], storagePath: null, fileFormat: 'xlsx' }),
+    );
+    for (const caller of [user({ role: 'masterkey' }), user({ id: 'u-c', role: 'auditor' })]) {
+      await expect(service.sourceUrl(caller, BATCH)).rejects.toMatchObject({ response: { code: 'import_batch_not_found' } });
+    }
     expect(storage.createSignedUrl).not.toHaveBeenCalled();
   });
 });

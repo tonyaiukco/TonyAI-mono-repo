@@ -1,3 +1,5 @@
+import { useAuthStore } from "@/lib/store";
+import { AccountsList } from "@/components/fuel-files/accounts-tab";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
@@ -621,6 +623,7 @@ interface BoundaryEditing {
 
 export function CentralReporterStep({ nodes, onNext, footer }: StepProps) {
   const t = useTranslations("onboarding");
+  const role = useAuthStore((s) => s.user?.role);
   const showError = useErrorToast();
   const [users, setUsers] = useState<UserSummaryDTO[] | null>(null);
   const [target, setTarget] = useState<UserSummaryDTO | null>(null);
@@ -657,6 +660,12 @@ export function CentralReporterStep({ nodes, onNext, footer }: StepProps) {
           setTarget(null);
         }}
       />
+      {/* inc28-fuel-bulk: fuel-card accounts mapped by hand, under the mapping's own rules; optional like the step. */}
+      <section className="space-y-2 border-t pt-4" data-testid="onboarding-fuel-accounts">
+        <h3 className="text-sm font-medium">{t("centralReporter.accountsTitle")}</h3>
+        <p className="text-sm text-muted-foreground">{t("centralReporter.accountsDescription")}</p>
+        <AccountsList role={role} compact />
+      </section>
       {footer({ label: t("skip"), onClick: onNext })}
     </div>
   );

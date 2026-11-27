@@ -59,6 +59,8 @@ export class ImportBatchesService {
     const rows = await this.prisma.importBatch.findMany({
       where: {
         organisationId: user.organisationId,
+        // A fuel upload is read through `/fuel-files` only (inc28-fuel-bulk D14).
+        source: 'template',
         ...(organisationReader ? {} : { uploadedBy: user.id }),
       },
       orderBy: { createdAt: 'desc' },
@@ -170,6 +172,8 @@ export class ImportBatchesService {
 
   private canSee(user: RequestUser, batch: ImportBatch): boolean {
     if (!user.organisationId || batch.organisationId !== user.organisationId) return false;
+    // The template import's endpoints serve template imports only (inc28-fuel-bulk D14).
+    if (batch.source !== 'template') return false;
     if (can(user.role, 'import_batch.read_all')) return true;
     const accessible = new Set(user.accessibleSubsidiaryIds);
     return (

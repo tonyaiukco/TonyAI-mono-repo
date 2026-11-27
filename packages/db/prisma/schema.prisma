@@ -179,6 +179,7 @@ model Organisation {
   fuelAccounts        FuelAccount[]
   fuelBatches         FuelBatch[]
   fuelRows            FuelRow[]
+  fuelDedupeKey       FuelDedupeKey?
   inventoryBoundaries InventoryBoundary[]
   reportDatasets      ReportDataset[]
   reportIssuances     ReportIssuance[]
@@ -321,7 +322,9 @@ model Subsidiary {
   /// main company (`activity_records.reported_by_subsidiary_id`).
   reportedRecords     ActivityRecord[]              @relation("ActivityRecordReportedBy")
   fuelAccounts        FuelAccount[]
-  fuelBatches         FuelBatch[]
+  fuelBatches         FuelBatch[]                   @relation("FuelBatchSubsidiary")
+  /// Fuel batches whose records this company entered as a central reporter's main company.
+  fuelBatchesReportedBy FuelBatch[]                 @relation("FuelBatchReportedBy")
   fuelRows            FuelRow[]
   periodLocks         PeriodLock[]
   targets             Target[]
@@ -1308,7 +1311,13 @@ model FuelBatch {
   organisationId  String           @map("organisation_id") @db.Uuid
   organisation    Organisation     @relation(fields: [organisationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   subsidiaryId    String           @map("subsidiary_id") @db.Uuid
-  subsidiary      Subsidiary       @relation(fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  subsidiary      Subsidiary       @relation("FuelBatchSubsidiary", fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  // The reporting company its records were written for (TA025), kept on the
+  // batch so a withdrawn batch, whose records are gone, or one whose every
+  // record was voided still names it (fourth review of WP9 PR B). Null while
+  // the batch is its own company's; set with its first records, never cleared.
+  reportedBySubsidiaryId String?   @map("reported_by_subsidiary_id") @db.Uuid
+  reportedBySubsidiary Subsidiary? @relation("FuelBatchReportedBy", fields: [reportedBySubsidiaryId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
   fuelAccountId   String           @map("fuel_account_id") @db.Uuid
   fuelAccount     FuelAccount      @relation("FuelBatchAccount", fields: [fuelAccountId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
   source          String
@@ -1347,9 +1356,26 @@ model FuelBatch {
   @@map("fuel_batches")
 }
 
+// The organisation's key for the fuel dedupe digest (inc28-fuel-bulk D5,
+// revised by the owner 2026-11-27): 32 random bytes, created by the API on the
+// organisation's first fuel upload. Keyed, a digest of a Shell row cannot be
+// brute-forced back to its card number by a reader of `fuel_rows`. Read and
+// written by the API alone: RLS on with no policy and no client grant (the
+// migration). Never updated or deleted — a new key would stop every stored
+// digest from matching — it goes with its organisation.
+model FuelDedupeKey {
+  organisationId String       @id @map("organisation_id") @db.Uuid
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  secret         Bytes
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("fuel_dedupe_keys")
+}
+
 // One provider file row, as its column map reads it (D4); no card number,
-// station code or plate. `dedupeDigest` = sha256(source | key) (D5), unique
-// over live rows by a partial index in the migration. `state` is decided by
+// station code or plate. `dedupeDigest` = HMAC-SHA256(the organisation's
+// FuelDedupeKey, sha256(source | key)) (D5, revised 2026-11-27), unique over
+// live rows by a partial index in the migration. `state` is decided by
 // `fuelRowState` (D8); the migration's CHECKs hold the columns each state
 // needs. `holderId` is who will author its batch (C8): the uploader, or a
 // masterkey after a takeover. `subsidiaryId` is its account's confirmed

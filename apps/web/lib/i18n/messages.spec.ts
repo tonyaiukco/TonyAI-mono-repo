@@ -33,6 +33,14 @@ import {
   INTENSITY_METRIC_META,
   UNNAMED_SITE_ENTITY_LABEL,
   WHOLE_COMPANY_ENTITY_LABEL,
+  FUEL_ACCOUNT_STATES,
+  FUEL_BATCH_STATUSES,
+  FUEL_MARINE_USAGE,
+  FUEL_PREVIEW_OUTCOMES,
+  FUEL_ROW_STATES,
+  FUEL_SOURCES,
+  FUEL_USAGES,
+  MANUAL_FUELS,
 } from "@/lib/types";
 import { TARGET_BASES, TARGET_STATUSES } from "@/lib/vocabulary";
 
@@ -110,6 +118,8 @@ describe("the catalogues", () => {
     const SAME_IN_EVERY_LANGUAGE = new Set<string>([
       // A list row of names and an address, with no words of its own.
       'onboarding.superAdmins.row',
+      // Brand names, a fuel spelled alike, and a unit format (inc28-fuel-bulk).
+      ...['sources.shell', 'sources.petrol_ofisi', 'fuels.lpg', 'litres', 'batches.line'].map((key) => `fuelFiles.${key}`),
       ...['lpg', 'cng', 'lng', 'R-22', 'HFC-227ea', 'R-32', 'R-134a', 'R-404A', 'R-407C', 'R-407F',
         'R-410A', 'R-448A', 'R-449A', 'R-1234yf'].map((key) => `dataEntry.activityTypes.${key}`),
       // A unit, a file kind, a format with no words (LP4-03 PR B).
@@ -313,6 +323,26 @@ describe("the bulk import's issue labels (LP4-04)", () => {
     expect(Object.keys(labels).sort()).toEqual([...ISSUE_CODES].sort());
     expect(Object.values(labels).every((v) => v.trim() !== "")).toBe(true);
     expect(new Set(Object.values(labels)).size).toBe(ISSUE_CODES.length);
+  });
+});
+
+describe("the fuel files vocabularies (inc28-fuel-bulk)", () => {
+  it.each(SUPPORTED_LOCALES)("%s: one word per fuel source, usage, fuel, row state, batch status, preview outcome and account state", (locale) => {
+    const fuel = MESSAGES[locale].fuelFiles;
+    expect(Object.keys(fuel.sources).sort()).toEqual([...FUEL_SOURCES].sort());
+    expect(Object.keys(fuel.usages).sort()).toEqual([...FUEL_USAGES, FUEL_MARINE_USAGE].sort());
+    expect(Object.keys(fuel.fuels).sort()).toEqual([...MANUAL_FUELS].sort());
+    expect(Object.keys(fuel.rowStates).sort()).toEqual([...FUEL_ROW_STATES].sort());
+    expect(Object.keys(fuel.batchStatus).sort()).toEqual([...FUEL_BATCH_STATUSES].sort());
+    expect(Object.keys(fuel.previewOutcomes).sort()).toEqual([...FUEL_PREVIEW_OUTCOMES].sort());
+    expect(Object.keys(fuel.accountStates).sort()).toEqual([...FUEL_ACCOUNT_STATES].sort());
+  });
+
+  it("names every fuel row code in both languages, as a bulk upload issue", () => {
+    for (const locale of SUPPORTED_LOCALES) {
+      const issues = MESSAGES[locale].errors.bulkUploadIssues as Record<string, string>;
+      for (const code of FUEL_ROW_ISSUE_CODES) expect(issues[code], `${locale} ${code}`).toBeTruthy();
+    }
   });
 });
 

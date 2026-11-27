@@ -404,6 +404,10 @@ describe('submitBlockReason', () => {
     expect(submitBlockReason(draft(), ME)).toBeNull();
   });
 
+  it('offers no checkbox for a fuel batch\'s record, which is submitted with its batch (inc28-fuel-bulk)', () => {
+    expect(submitBlockReason({ ...draft(), fuelBatchId: 'b-1' }, ME)).toMatch(/fuel batch/i);
+  });
+
   it('refuses a REJECTED record, and says why rather than echoing the status', () => {
     // The trap: `isSubmittable` admits `rejected` and the list's own hover
     // affordance treats it as editable, so reaching for the wrong predicate

@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { BarChart3, Building2, ChevronLeft, ChevronRight, ClipboardEdit, FileText, LayoutDashboard, Leaf, ScrollText, Stamp, Users, Waypoints } from 'lucide-react';
+import { BarChart3, Building2, ChevronLeft, ChevronRight, ClipboardEdit, FileText, Fuel, LayoutDashboard, Leaf, ScrollText, Stamp, Users, Waypoints } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { LanguageSwitcher } from '@/components/i18n/language-switcher';
@@ -13,6 +13,8 @@ import { usePathname } from 'next/navigation';
 const navItems = [
   { id: 'overview', label: 'dashboard', icon: LayoutDashboard, href: '/' },
   { id: 'data-entry', label: 'dataEntry', icon: ClipboardEdit, href: '/data-entry' },
+  // inc28-fuel-bulk: fuel card and tanker files, beside the manual entry they replace.
+  { id: 'fuel-files', label: 'fuelFiles', icon: Fuel, href: '/fuel-files' },
   { id: 'subsidiaries', label: 'subsidiaries', icon: Building2, href: '/subsidiaries' },
   { id: 'emissions', label: 'emissions', icon: BarChart3, href: '/emissions' },
   // Sits next to Emissions because that is where the records it decides live.

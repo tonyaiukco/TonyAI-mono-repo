@@ -16,6 +16,7 @@ import type {
 } from '@tonyai/shared-types';
 import {
   CATEGORY_SCOPE_MAP,
+  FUEL_CARD_SOURCES,
   DEFAULT_LOCALE,
   isLocale,
   FACTOR_STATUS_RANK,
@@ -324,6 +325,7 @@ export class ReportsService {
       scope3: NO_SCOPE3,
       // Nothing of the boundary is read for a selection the caller cannot see.
       coverage: { state: 'not_readable' },
+      cardFuelAttribution: false,
     };
     if (ids.length === 0) return { meta: empty, counts: null, readAt };
 
@@ -435,13 +437,25 @@ export class ReportsService {
       },
       { records: this.limits.REPORT_RECORD_LIMIT, evidenceLinks: this.limits.REPORT_EVIDENCE_LINK_LIMIT },
     );
-    return { scope3, coverage };
+    // inc28-fuel-bulk D17: a counted record of a card file's batch among the
+    // Scope 1/2 records this selection reads — the caller's own scope,
+    // categories included — states the account-based attribution.
+    const inventoryScopes = inventoryScopeFilter(selection.scope);
+    const cardFuelAttribution = inventoryScopes === null ? false : (await db.activityRecord.count({
+      where: {
+        ...this.recordWhere(user, ids, selection),
+        scope: inventoryScopes,
+        status: { in: COMMITTED_STATUSES },
+        fuelBatch: { source: { in: [...FUEL_CARD_SOURCES] } },
+      },
+    })) > 0;
+    return { scope3, coverage, cardFuelAttribution };
   }
 
   private metaOf(
     head: Awaited<ReturnType<ReportsService['readHead']>>,
     summary: ReportInventorySummary,
-    tail: { scope3: ReportScope3Disclosure; coverage: ReportLiveCoverage },
+    tail: { scope3: ReportScope3Disclosure; coverage: ReportLiveCoverage; cardFuelAttribution: boolean },
   ): ReportMeta {
     return { ...head.meta, ...head.counts, summary, ...tail };
   }
@@ -782,6 +796,7 @@ export class ReportsService {
       coverage: meta.coverage,
       includeMethodologyNotes: q.includeMethodologyNotes ?? true,
       includeEvidenceSummary: q.includeEvidenceSummary ?? false,
+      cardFuelAttribution: meta.cardFuelAttribution,
       summary,
       records: ledger,
       withdrawn,

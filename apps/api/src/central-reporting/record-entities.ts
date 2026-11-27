@@ -3,6 +3,7 @@ import type { Prisma } from '@tonyai/db';
 import {
   can,
   isCategory,
+  mayAuthorRecords,
   reportingEntityFor,
   type Category,
   type RecordParty,
@@ -149,7 +150,11 @@ export async function lockAuthorAccess(
   category: string,
   action: 'create' | 'edit',
 ): Promise<UserAccessRowDTO[] | null> {
-  if (!user.organisationId) throw authorRefusal(action);
+  // Every caller is an authoring write: a role that may not author records
+  // (an auditor, or an author since made one) is refused here as well as at
+  // the request, so no path that reaches a record core through another entry
+  // — a fuel batch's step or formation — writes as a read-only role (WP9 PR B review, P1).
+  if (!user.organisationId || !mayAuthorRecords(user)) throw authorRefusal(action);
   const [author] = await tx.$queryRaw<{ same: boolean }[]>`
     SELECT (p.role::text = ${user.role} AND p.organisation_id = ${user.organisationId}::uuid AND p.disabled_at IS NULL) AS same
       FROM profiles p
@@ -227,6 +232,13 @@ function looksShort(access: readonly UserAccessRowDTO[], subsidiaryId: string): 
 export interface RecordSlot extends PeriodSlot {
   locationId: string | null;
   activityType: string | null;
+  /**
+   * The fuel batch the record is (to be) in; absent or null for a manual
+   * record (inc28-fuel-bulk D2). The exact repeat is looked for within the
+   * same batch only — each batch holds one record per slot and type — while
+   * the slot-kind look stays slot-wide, batches included.
+   */
+  fuelBatchId?: string | null;
 }
 
 /**
@@ -242,8 +254,10 @@ export async function assertNotExactDuplicate(db: Db, slot: RecordSlot, excludeI
   // The slot-kind rule too (TA002): a typed record where an untyped one stands,
   // or the reverse, answers the record service's own conflict — the bulk
   // upload's `duplicate_existing` for the same row (QA review).
+  const fuelBatchId = slot.fuelBatchId ?? null;
   const rows = await db.$queryRaw<{ exact: boolean }[]>`
-    SELECT (r.activity_type IS NOT DISTINCT FROM ${slot.activityType}::text) AS exact
+    SELECT (r.activity_type IS NOT DISTINCT FROM ${slot.activityType}::text
+            AND r.fuel_batch_id IS NOT DISTINCT FROM ${fuelBatchId}::uuid) AS exact
       FROM activity_records r
      WHERE r.subsidiary_id = ${slot.subsidiaryId}::uuid
        AND r.location_id IS NOT DISTINCT FROM ${slot.locationId}::uuid
@@ -251,7 +265,8 @@ export async function assertNotExactDuplicate(db: Db, slot: RecordSlot, excludeI
        AND r.reporting_period = ${slot.reportingPeriod}
        AND r.period_value = ${slot.periodValue}
        AND r.category = ${slot.category}
-       AND (r.activity_type IS NOT DISTINCT FROM ${slot.activityType}::text
+       AND ((r.activity_type IS NOT DISTINCT FROM ${slot.activityType}::text
+             AND r.fuel_batch_id IS NOT DISTINCT FROM ${fuelBatchId}::uuid)
             OR (r.activity_type IS NULL) <> (${slot.activityType}::text IS NULL))
        AND r.status::text <> 'voided'
        AND (${excludeId}::uuid IS NULL OR r.id <> ${excludeId}::uuid)

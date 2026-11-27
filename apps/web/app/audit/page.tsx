@@ -98,6 +98,16 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   enable: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30",
   // Red: access withdrawn from a person, or from a whole organisation.
   disable: "bg-red-500/15 text-red-700 border-red-500/30",
+  // inc28-fuel-bulk. Violet, with `generate`: a fuel file read and shown,
+  // nothing stored.
+  preview: "bg-violet-500/15 text-violet-700 border-violet-500/30",
+  // Slate, with `update`: a file put on a batch's records, no figure changed.
+  attach: "bg-slate-500/15 text-slate-700 border-slate-500/30",
+  // Amber, with `recall`: rows that are in no batch change holder, their
+  // figures do not.
+  take_over: "bg-amber-500/15 text-amber-700 border-amber-500/30",
+  // Red, with `void`: a file's rows or a batch taken out of the inventory.
+  retract: "bg-red-500/15 text-red-700 border-red-500/30",
   offboard: "bg-red-500/15 text-red-700 border-red-500/30",
   // Amber: a reset was requested for the account (no person is the actor) — worth a look.
   password_reset: "bg-amber-500/15 text-amber-700 border-amber-500/30",

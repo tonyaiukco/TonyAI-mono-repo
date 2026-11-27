@@ -21,7 +21,8 @@
     "already": "Already {status}.",
     "notAuthor": "Entered by someone else.",
     "locked": "{period} {year} is locked.",
-    "evidence": "Needs an evidence file."
+    "evidence": "Needs an evidence file.",
+    "inBatch": "A fuel batch's record — submit it with its batch on Fuel files."
   },
   "capRefused": "{max} records is the most one submission can carry.",
   "selectedFirst": "Selected the first {taken}. {more} more can go in a second submission.",

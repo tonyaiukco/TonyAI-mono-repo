@@ -28,6 +28,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import type { ReportQueryDto } from './dto/report-query.dto';
 import type { ActivityRecordStatus, ReportingContext } from '@tonyai/shared-types';
+import { COUNTED_STATUSES } from '@tonyai/shared-types';
 
 import { AuditService } from '../audit/audit.service';
 
@@ -156,6 +157,8 @@ function createTxMock() {
     activityRecord: {
       groupBy: vi.fn().mockResolvedValue([]),
       findMany: vi.fn().mockResolvedValue([]),
+      // inc28-fuel-bulk D17: the card-fuel attribution's count; none unless a case says so.
+      count: vi.fn().mockResolvedValue(0),
     },
     organisation: {
       findUnique: vi.fn().mockResolvedValue({ legalName: 'TonyAI Holding Ltd.', tradingName: 'TonyAI Holding' }),
@@ -2779,5 +2782,49 @@ describe('ReportsService — the methodology text states the stored approach (in
     expect((await service.assemble(superAdmin, q)).excludedAssociates).toEqual([]);
     const read = prisma.subsidiary.findMany.mock.calls.find((c) => (c[0] as { where?: { control?: string } })?.where?.control === 'associate');
     expect(read).toBeUndefined();
+  });
+});
+
+describe('ReportsService — the card-fuel attribution (inc28-fuel-bulk D17)', () => {
+  let prisma: PrismaMock;
+  let service: ReportsService;
+  const EN = "Fuel bought with the group's fuel cards (Shell, Petrol Ofisi) is attributed to the company that holds the card account";
+  const TR = 'Grubun taşıt kartlarıyla (Shell, Petrol Ofisi) alınan yakıt, kart hesabını tutan şirkete atanır';
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    service = new ReportsService(prisma as unknown as PrismaService, auditMock(), new PdfRenderer());
+  });
+  const countWhere = () => (prisma.activityRecord.count.mock.calls.at(-1)?.[0] as { where: Record<string, unknown> } | undefined)?.where;
+
+  it('states it in the methodology note, in the report language, when the selection counts a card batch record', async () => {
+    prisma.activityRecord.count.mockResolvedValue(2);
+    expect((await service.meta(admin, 2026)).cardFuelAttribution).toBe(true);
+    expect(buildReportHtml(await service.assemble(admin, q))).toContain(EN);
+    expect(buildReportHtml(await service.assemble(admin, { ...q, language: 'tr' } as ReportQueryDto))).toContain(TR);
+  });
+
+  it('prints nothing without the methodology note, and nothing when no counted card batch record is selected', async () => {
+    prisma.activityRecord.count.mockResolvedValue(2);
+    expect(buildReportHtml(await service.assemble(admin, { ...q, includeMethodologyNotes: false } as ReportQueryDto))).not.toContain(EN);
+    prisma.activityRecord.count.mockResolvedValue(0);
+    expect((await service.meta(admin, 2026)).cardFuelAttribution).toBe(false);
+    expect(buildReportHtml(await service.assemble(admin, q))).not.toContain(EN);
+  });
+
+  it('counts only what the selection reads: its companies, Scope 1/2 or its scope, its category, counted, of a card file', async () => {
+    await service.meta(admin, 2026, 'sub-2', { scope: 1, category: 'Mobile Combustion' });
+    expect(countWhere()).toMatchObject({
+      subsidiaryId: { in: ['sub-2'] },
+      reportingYear: 2026,
+      category: 'Mobile Combustion',
+      scope: 1,
+      status: { in: [...COUNTED_STATUSES] },
+      fuelBatch: { source: { in: ['shell', 'petrol_ofisi'] } },
+    });
+    // A Scope 3 selection reads no Scope 1/2 record: nothing is counted and nothing stated.
+    prisma.activityRecord.count.mockClear();
+    expect((await service.meta(admin, 2026, undefined, { scope: 3 })).cardFuelAttribution).toBe(false);
+    expect(prisma.activityRecord.count).not.toHaveBeenCalled();
   });
 });

@@ -1168,6 +1168,8 @@ describe('bulk upload — the column contract', () => {
       'capacityKg',
       'refillKg',
       'leakRateChoice',
+      'invoiceNo',
+      'supplier',
     ]);
   });
 
@@ -1184,6 +1186,8 @@ describe('bulk upload — the column contract', () => {
     expect(optional).toEqual([
       'locationId', 'activityType', 'varianceReason',
       ...BULK_GAS_INPUT_COLUMNS, ...BULK_EQUIPMENT_COLUMNS,
+      // The invoice number and the supplier (inc28-fuel-bulk D18): optional on every row.
+      'invoiceNo', 'supplier',
     ]);
   });
 
@@ -1237,6 +1241,8 @@ describe('bulk submit — the code list', () => {
       'evidence_required',
       'calculation_stale',
       'variance_reason_required',
+      // inc28-fuel-bulk D9: a fuel batch's record, submitted with its batch.
+      'record_in_batch',
       'unexpected',
       'not_processed_deadline',
     ]);

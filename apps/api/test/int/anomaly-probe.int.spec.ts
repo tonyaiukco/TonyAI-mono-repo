@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ActivityRecordStatus, type Prisma } from '@tonyai/db';
 import type { PrismaService } from '../../src/prisma/prisma.service';
@@ -408,4 +410,19 @@ describe('anomaly:probe — the first-period typo ceiling', () => {
     expect(await selected(PRE_CEILING_WHERE)).toEqual([]);
     expect(await selected(DRIFT_WHERE)).toEqual([january]);
   });
+});
+
+describe('anomaly:probe — the published command runs (fifth review of the branch, P1)', () => {
+  it('starts, reads the database and reports every section, the fuel batch check included', () => {
+    // The command itself, as an operator runs it: an import its runner cannot resolve fails here, not in production.
+    const run = spawnSync('pnpm', ['--filter', '@tonyai/db', 'run', 'anomaly:probe'], {
+      cwd: resolve(__dirname, '../../../..'),
+      env: process.env,
+      encoding: 'utf8',
+      timeout: 120_000,
+    });
+    // 0: no drift; 1: drift somewhere in this shared database. Never 2 (a failure to run).
+    expect([0, 1], `${run.stdout}\n${run.stderr}`).toContain(run.status);
+    expect(run.stdout).toContain('5. Fuel batch records');
+  }, 150_000);
 });

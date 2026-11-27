@@ -1811,6 +1811,42 @@ async function main() {
       forgedConsents.map((f) => `${f.role}=${f.status}`).join(', '),
     );
 
+    // --- fuel_dedupe_keys (inc28-fuel-bulk D5, revised): the same shape ----
+    // An organisation's HMAC key for the fuel dedupe digest. A client that
+    // read it could brute-force a Shell row's digest back to its card number;
+    // one that wrote it could plant a key of its choosing for a new
+    // organisation, or erase one and break every later duplicate check.
+    const keyQuery = 'select=organisation_id';
+    const keyReads = {
+      anon: await count('fuel_dedupe_keys', { query: keyQuery }),
+      entry: await count('fuel_dedupe_keys', { token, query: keyQuery }),
+      admin: await count('fuel_dedupe_keys', { token: adminToken, query: keyQuery }),
+      service: await count('fuel_dedupe_keys', { key: SERVICE, token: SERVICE, query: keyQuery }),
+    };
+    check(
+      'fuel_dedupe_keys: no client role reads it, not even the service role (refused by privilege)',
+      Object.values(keyReads).every(denied),
+      Object.entries(keyReads).map(([role, r]) => `${role}=${r.error?.slice(0, 3) ?? r.total}`).join(', '),
+    );
+    const forgedKeys = [];
+    for (const [role, headers] of [
+      ['admin', { apikey: ANON, Authorization: `Bearer ${adminToken}` }],
+      ['service', { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` }],
+    ]) {
+      const res = await fetch(`${URL_}/rest/v1/fuel_dedupe_keys`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ organisation_id: '99999999-0000-0000-0000-00000000d5d5', secret: `\\x${'00'.repeat(32)}` }),
+      });
+      const body = res.ok ? '' : await res.text();
+      forgedKeys.push({ role, refused: !res.ok && /42501|permission denied/i.test(body), status: res.status });
+    }
+    check(
+      'fuel_dedupe_keys: a client cannot write one, with a user token or the service key',
+      forgedKeys.every((f) => f.refused),
+      forgedKeys.map((f) => `${f.role}=${f.status}`).join(', '),
+    );
+
     // The lifecycle columns on `profiles` (LP4-01). Supabase's default
     // privileges give `authenticated` table-level UPDATE on `profiles`, so
     // RLS — no UPDATE policy — is all that stops a user rewriting its own row:

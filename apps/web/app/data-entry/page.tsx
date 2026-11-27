@@ -3,10 +3,25 @@
 import type { ActivityTypeKey, ContextFieldKey, UnitBlockedKey, UnitLabelKey } from "@/lib/i18n/message-keys";
 import { conversionNote, grossToNetRatioOf } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
-import { categoryGate, categoryGateMessage, entryCompanies, entryReportingEntity, fallbackCategory } from "@/lib/entry-categories-view";
+import { categoryGate, categoryGateMessage, entryCompanies, entryReportingEntity, fallbackCategory, offeredCategories } from "@/lib/entry-categories-view";
+import {
+  EMPTY_FUEL_PAIR,
+  chooseFuel,
+  filedAsStationary,
+  fuelsOffered,
+  missingChoice,
+  pairOf,
+  pairTarget,
+  showsCardFuelNote,
+  showsFuelPair,
+  usagesOffered,
+  type FuelPair,
+} from "@/lib/fuel-entry-view";
+import type { FuelEntryUsage, ManualFuel } from "@/lib/types";
+import NextLink from "next/link";
 
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
@@ -41,6 +56,7 @@ import {
   Leaf,
   MoveRight,
   Pencil,
+  Plus,
   Save,
   Send,
 } from "lucide-react";
@@ -177,6 +193,7 @@ import { appendById, readPages } from "@/lib/cursor-pages";
 import { uploadHeldFiles } from "@/lib/held-evidence";
 import {
   blankRecordsFilter,
+  fuelBatchLink,
   isNarrowed,
   pickRecordsFilter,
   recordsQuery,
@@ -274,8 +291,10 @@ function DataEntryPageInner() {
   const tRoles = useTranslations("users");
   const signOut = useSignOut();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { user, setUser } = useAuthStore();
   const t = useTranslations("dataEntry");
+  const tFuel = useTranslations("fuelFiles");
   const locale = useLocale();
   const tCategories = useTranslations("categories");
   const tPeriods = useTranslations("periods");
@@ -309,6 +328,14 @@ function DataEntryPageInner() {
   // Refrigerants — LP3-03); "" = none chosen. Never defaulted: a silently
   // pre-selected diesel would price petrol as diesel.
   const [activityType, setActivityType] = useState("");
+  // inc28-fuel-bulk D6: a TR Mobile Combustion entry asks the fuel and the
+  // usage apart; the pair decides the record (a stationary pair is a `Fuel`
+  // record). `pairOrigin`: the open entry came from the pair, so a `Fuel`
+  // category keeps the pair's controls. `pairLegacy`: an opened record whose
+  // type no pair produces, shown as before.
+  const [fuelPair, setFuelPair] = useState<FuelPair>(EMPTY_FUEL_PAIR);
+  const [pairOrigin, setPairOrigin] = useState(false);
+  const [pairLegacy, setPairLegacy] = useState(false);
 
   // Primary calc inputs
   // Typed in the user's locale; a language switch keeps the number it meant
@@ -555,10 +582,19 @@ function DataEntryPageInner() {
       editingTuple?.category === category &&
       (editingTuple.activityType ?? "") === activityType) ||
     (copying && copyKeepsOwnUnit(copyTuple, category, activityType, effectiveGeography));
+  const trRules = effectiveGeography !== null && usesTrCalculationRules(effectiveGeography);
+  const pairUi = showsFuelPair({ category, trRules, pairOrigin, pairLegacy });
+  const pairCategories = offeredCategories(user, subsidiaryId);
+  const chosenTarget = pairUi ? pairTarget(fuelPair) : null;
   // A TR mobile record's units follow its type: litres for a vehicle mode,
   // kg or tonnes for marine gas oil (UAT2 BUG-R2-11).
   const unitOptions = useMemo(() => {
-    const offered = unitsForRecord(category, effectiveGeography, activityType);
+    // A fuel and usage pair is priced in its own units only; none is converted (D6).
+    const offered = chosenTarget
+      ? chosenTarget.units
+          .map((unit) => unitsForCategory(chosenTarget.category).find((u) => u.value === unit))
+          .filter((u): u is NonNullable<typeof u> => u !== undefined)
+      : unitsForRecord(category, effectiveGeography, activityType);
     if (!onOwnType) return offered;
     const kept = [ownUnit, activityUnit]
       .filter((unit): unit is string => unit !== null && !offered.some((u) => u.value === unit))
@@ -566,7 +602,7 @@ function DataEntryPageInner() {
       .map((unit) => unitsForCategory(category).find((u) => u.value === unit))
       .filter((u): u is NonNullable<typeof u> => u !== undefined);
     return [...offered, ...kept];
-  }, [category, effectiveGeography, activityType, onOwnType, activityUnit, ownUnit]);
+  }, [category, effectiveGeography, activityType, onOwnType, activityUnit, ownUnit, chosenTarget]);
   const marineGasOil = category === "Mobile Combustion" && activityType === MARINE_GAS_OIL_ACTIVITY_TYPE;
   const inputMode = recordInputMode(category, effectiveGeography, activityUnit);
   const refrigerantMode = inputMode === "refrigerant";
@@ -1363,6 +1399,13 @@ function DataEntryPageInner() {
    * refuse to save is worse than saying why.
    */
   function loadRecord(rec: ActivityRecordPageItemDTO, mode: "open" | "edit" = "open") {
+    // A fuel batch's record is never opened into the form: it is changed with
+    // its batch, so the form offers it nothing but the way there (inc28-fuel-bulk D16).
+    const batchLink = fuelBatchLink(rec);
+    if (batchLink) {
+      toast.info(tFuel("entry.openBatch"), { action: { label: tFuel("entry.batchMark"), onClick: () => router.push(batchLink) } });
+      return;
+    }
     if (rec.status !== "draft" && rec.status !== "rejected") {
       toast.info(t("notEditable", { status: tStatus(`inline.${rec.status}`) }));
       return;
@@ -1412,6 +1455,7 @@ function DataEntryPageInner() {
     setPeriodValue(rec.periodValue);
     setCategory(rec.category as Category);
     setActivityType(rec.activityType ?? "");
+    openPair(rec.category, rec.activityType ?? null);
     activity.setValue(rec.activityValue);
     setActivityUnit(rec.activityUnit);
     setUnitCategory(rec.category);
@@ -1498,8 +1542,24 @@ function DataEntryPageInner() {
     setConfirmRemoveAll(false);
   }
 
+  /** An opened or copied record's pair: a TR Mobile Combustion record shows its fuel and usage; one no pair produces shows as before. */
+  function openPair(recordCategory: string, recordType: string | null) {
+    const pair = recordCategory === "Mobile Combustion" ? pairOf(recordCategory, recordType) : null;
+    setFuelPair(pair ?? EMPTY_FUEL_PAIR);
+    setPairOrigin(pair !== null);
+    setPairLegacy(recordCategory === "Mobile Combustion" && pair === null);
+  }
+
   function resetForm(reason: FormResetReason = "other") {
     beginFormSession();
+    // A pair's next record starts with nothing chosen, on the Mobile Combustion entry it came from.
+    if (pairOrigin || pairLegacy) {
+      setFuelPair(EMPTY_FUEL_PAIR);
+      setPairOrigin(false);
+      setPairLegacy(false);
+      setActivityType("");
+      if (pairOrigin && category === "Fuel") setCategory("Mobile Combustion");
+    }
     setContextOpen(false);
     clearEditChoices();
     setCopying(false);
@@ -2002,6 +2062,7 @@ function DataEntryPageInner() {
       setPeriodValue(values.periodValue);
       setCategory(values.category as Category);
       setActivityType(values.activityType);
+      openPair(values.category, values.activityType || null);
       activity.setValue(values.activityValue);
       setActivityUnit(values.activityUnit);
       setUnitCategory(values.category);
@@ -2035,6 +2096,9 @@ function DataEntryPageInner() {
   /** The picker's choice: the form's category and everything read by category. */
   function chooseCategory(next: Category) {
     setLinkedCategory(null);
+    setFuelPair(EMPTY_FUEL_PAIR);
+    setPairOrigin(false);
+    setPairLegacy(false);
     // Another category reads the figure as something else (ng-kwh-engine review).
     if (next !== category && activity.text.trim() !== "") {
       activity.setValue(null);
@@ -2059,6 +2123,45 @@ function DataEntryPageInner() {
     if (editMode || !allowed.some((u) => u.value === activityUnit)) {
       setActivityUnit(allowed[0]?.value ?? "kWh");
     }
+  }
+
+  /**
+   * The fuel and usage chosen (D6): the pair's record decides the category
+   * (Mobile Combustion, or `Fuel` for a stationary usage), the activity type
+   * and the units. In Edit mode a change of usage is a change of category,
+   * under its rules. Nothing is decided while a choice is missing.
+   */
+  function choosePair(next: FuelPair) {
+    setFuelPair(next);
+    setPairOrigin(true);
+    const target = pairTarget(next);
+    if (!target) {
+      setActivityType("");
+      return;
+    }
+    if (target.category !== category) {
+      setCategory(target.category);
+      setUnitCategory(target.category);
+      resetInputs(null, null, target.category);
+    }
+    setActivityType(target.activityType);
+    // A pair priced in other units (litres ↔ kg or tonnes): the unit is picked
+    // again and a typed quantity cleared, never re-read as the new unit's
+    // (UAT2 BUG-R2-11, as the unit-narrowing effect does).
+    if (!target.units.includes(activityUnit)) {
+      setActivityUnit(target.units[0]!);
+      if (activity.text.trim() !== "") {
+        activity.setValue(null);
+        toast.info(t("inputs.unitReset", { unit: unitSymbol(target.units[0]!) }));
+      }
+    }
+  }
+
+  /** "Add another fuel": the same company, site, year and period; fuel, usage and quantity cleared. */
+  function addAnotherFuel() {
+    const site = locationId;
+    resetForm();
+    setLocationId(site);
   }
 
   // Which categories the picker offers (inc26-roles-approval-chain, Decision
@@ -2262,7 +2365,60 @@ function DataEntryPageInner() {
                   </Field>
 
                   {categoryGateText === null && (<>
-                  {isTypedCategory && (
+                  {pairUi && (
+                    <>
+                      <Field label={tFuel("entry.fuel")}>
+                        {/* "" (never undefined): a cleared pair shows its placeholder again — Radix keeps its last value for undefined. */}
+                        <Select value={fuelPair.fuel} onValueChange={(v) => choosePair(chooseFuel(v as ManualFuel))}>
+                          <SelectTrigger aria-label={tFuel("entry.fuel")} data-testid="fuel-pair-fuel">
+                            <SelectValue placeholder={t("chooseOne")} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {fuelsOffered(pairCategories).map((fuel) => (
+                              <SelectItem key={fuel} value={fuel}>{tFuel(`fuels.${fuel}`)}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </Field>
+                      <Field label={tFuel("entry.usage")}>
+                        {fuelPair.usage === "marine" ? (
+                          // Marine gas oil's one usage, fixed (C15).
+                          <p className="py-2 text-sm" data-testid="fuel-pair-marine">{tFuel("usages.marine")}</p>
+                        ) : (
+                          <Select
+                            value={fuelPair.usage}
+                            disabled={!fuelPair.fuel}
+                            onValueChange={(v) => choosePair({ ...fuelPair, usage: v as FuelEntryUsage })}
+                          >
+                            <SelectTrigger aria-label={tFuel("entry.usage")} data-testid="fuel-pair-usage">
+                              <SelectValue placeholder={t("chooseOne")} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {usagesOffered(fuelPair.fuel, pairCategories).map((usage) => (
+                                <SelectItem key={usage} value={usage}>{tFuel(`usages.${usage}`)}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                        {missingChoice(fuelPair) && (
+                          <p className="text-xs text-amber-700" role="status" data-testid="fuel-pair-missing">
+                            {tFuel(missingChoice(fuelPair) === "fuel" ? "entry.chooseFuel" : "entry.chooseUsage")}
+                          </p>
+                        )}
+                        {filedAsStationary(fuelPair) && (
+                          <p className="text-xs text-muted-foreground" data-testid="fuel-pair-stationary">{tFuel("entry.stationaryLine")}</p>
+                        )}
+                        {marineGasOil && <p className="text-xs text-muted-foreground">{t("inputs.marineGasOilScope")}</p>}
+                      </Field>
+                    </>
+                  )}
+                  {trRules && showsCardFuelNote(category) && (
+                    <p className="text-xs text-muted-foreground md:col-span-2" data-testid="card-fuel-note">
+                      {tFuel("entry.cardFuelNote")}{" "}
+                      <NextLink href="/fuel-files" className="text-primary hover:underline">{tFuel("entry.fuelFilesLink")}</NextLink>
+                    </p>
+                  )}
+                  {isTypedCategory && !pairUi && (
                     // Labelled "Fuel or gas", never with the word "category":
                     // the e2e suite finds the Category field by that text. A
                     // TR mobile record names a vehicle mode instead (D6).
@@ -2862,6 +3018,12 @@ function DataEntryPageInner() {
                 )}
                 {/* A role that authors nothing (an auditor) is offered no
                     save: the API would refuse it (owner's review). */}
+                {pairUi && editingId !== null && !isBusy && (
+                  <Button variant="ghost" className="gap-2" onClick={addAnotherFuel} data-testid="add-another-fuel">
+                    <Plus className="h-4 w-4" />
+                    {tFuel("entry.addAnother")}
+                  </Button>
+                )}
                 {mayAuthorRecords(user) && <Button
                   variant="outline"
                   className="gap-2"

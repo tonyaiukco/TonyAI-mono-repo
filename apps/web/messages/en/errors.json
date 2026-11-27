@@ -9,6 +9,7 @@
     "period_locked": "Period closed",
     "evidence_required": "Needs an evidence file",
     "variance_reason_required": "Needs a variance reason",
+    "record_in_batch": "Belongs to a fuel batch — submit the batch",
     "calculation_stale": "Figure out of date",
     "unexpected": "Could not be submitted",
     "category_not_granted": "Category no longer assigned to you"
@@ -199,6 +200,7 @@
     "fuel_account_not_found": "Fuel account not found",
     "fuel_file_not_found": "Fuel upload not found",
     "fuel_batch_not_open": "This batch is no longer a draft or returned, so it cannot be changed.",
+    "fuel_batch_reporting_changed": "This batch was written while your main company was another one. Withdraw it and form its rows again; they will be written for your current main company.",
     "fuel_account_in_use": "{rows} rows of this account are in batches or excluded, so its company cannot be changed. Nothing was changed.",
     "fuel_account_exists": "An account with this source and code already exists.",
     "fuel_account_target_forbidden": "You cannot map this account to that company.",

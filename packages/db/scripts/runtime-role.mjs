@@ -220,6 +220,9 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   fuel_accounts: ['SELECT', 'INSERT'],
   fuel_batches: ['SELECT', 'INSERT'],
   fuel_rows: ['SELECT', 'INSERT'],
+  // D5, revised (owner, 2026-11-27): an organisation's dedupe key, created on
+  // its first fuel upload and read on every one — never updated or deleted.
+  fuel_dedupe_keys: ['SELECT', 'INSERT'],
   // Prisma's migration history: neither readable nor writable.
   _prisma_migrations: [],
 });
@@ -272,6 +275,8 @@ export const RUNTIME_COLUMN_UPDATES = Object.freeze({
     'withdrawn_at',
     'withdrawn_reason',
     'updated_at',
+    // Set with the batch's first records, never cleared (fourth review of WP9 PR B).
+    'reported_by_subsidiary_id',
   ],
   fuel_rows: [
     'holder_id',
@@ -1180,7 +1185,7 @@ export const INTEGRITY_CHECKS = Object.freeze([
   // LP3-04 PR C: what a retained dataset row is (V5).
   ['report_datasets', 'report_datasets_fingerprint_check', '63204d1bbd98e2266744f4d2a7eb9a0c'],
   ['report_datasets', 'report_datasets_referenced_check', 'a61fe632e52e8c2bc789ca1a3a429491'],
-  ['report_datasets', 'report_datasets_schema_check', '25af82d931c97638d48c7fed5db7ce48'],
+  ['report_datasets', 'report_datasets_schema_check', 'ac0931f6130e585abf2fdaa8c532bdcc'], // inc28-fuel-bulk: schema 4
   ['report_datasets', 'report_datasets_selection_check', '8ff91db91299eba2a1b97fa4d1533b93'],
   ['report_datasets', 'report_datasets_selection_context_check', '30735b94defd559b810da8a1f204d001'],
   // LP3-04 PR D: what an issuance is — its status and gaps' shapes, its

@@ -1,6 +1,6 @@
 import { MESSAGES } from '@/messages';
 import { describe, it, expect, vi } from 'vitest';
-import { reviewCalorificBasis, reviewReferences, reviewReportingEntity, reviewSelfGeneration, daysSince, waitingLabel as waitingLabelWith } from './review-view';
+import { reviewBatchFilters, reviewCalorificBasis, reviewRecordFilters, reviewReferences, reviewReportingEntity, reviewSelfGeneration, daysSince, waitingLabel as waitingLabelWith } from './review-view';
 import { copyFor } from '@/lib/i18n/testing';
 
 const waitingLabel = (iso: string | null, now?: number) => waitingLabelWith(iso, copyFor('review'), now);
@@ -255,5 +255,20 @@ describe('reviewReportingEntity (inc26-central-reporter-onboarding, task 5.5)', 
   it("shows no line for a record of the company's own user, nor for an older answer without the field", () => {
     expect(reviewReportingEntity({ subsidiaryId: 'a', reportedBySubsidiaryId: 'a', reportedBySubsidiaryName: 'Alpha' })).toBeNull();
     expect(reviewReportingEntity({ subsidiaryId: 'a', reportedBySubsidiaryId: undefined as never, reportedBySubsidiaryName: null })).toBeNull();
+  });
+});
+
+describe('the review queue lists (inc28-fuel-bulk D10)', () => {
+  it('keeps every fuel batch record out of the Records list and its count', () => {
+    expect(reviewRecordFilters({ statuses: ['submitted', 'under_review'], subsidiaryId: null, showAll: false }))
+      .toEqual({ status: ['submitted', 'under_review'], awaitingMyDecision: true, inBatch: false });
+    expect(reviewRecordFilters({ statuses: ['submitted'], subsidiaryId: 's1', showAll: true }))
+      .toEqual({ status: ['submitted'], subsidiaryId: 's1', inBatch: false });
+  });
+
+  it('asks for the batches awaiting the viewer by default, and each pending status with "show all"', () => {
+    expect(reviewBatchFilters({ subsidiaryId: null, showAll: false })).toEqual([{ awaitingMyDecision: true }]);
+    // "Show all": one list over both pending statuses, in submission order (sixth review of WP9 PR B).
+    expect(reviewBatchFilters({ subsidiaryId: 's1', showAll: true })).toEqual([{ subsidiaryId: 's1', inReview: true }]);
   });
 });

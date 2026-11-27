@@ -94,7 +94,9 @@
   "centralReporter": {
     "description": "Optionally, give a standard user a central reporter grant: one category list over several companies.",
     "noUser": "No user can take the grant yet: a central reporter is a standard user, and a Super Admin assigns standard users to their companies.",
-    "give": "Central reporter grant"
+    "give": "Central reporter grant",
+    "accountsTitle": "Fuel card accounts",
+    "accountsDescription": "Map a fuel card or delivery account to its company now, or later on the Fuel files page. Rows of a mapped account form that company's batches."
   },
   "finish": {
     "description": "Finish the setup to open the company tree and the rest of the tool.",

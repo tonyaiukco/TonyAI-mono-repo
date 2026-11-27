@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REPORT_DATASET_SCHEMA_VERSION, type ReportIssuanceGap } from '@tonyai/shared-types';
+import { REPORT_DATASET_SCHEMA_VERSION, cardFuelAttributionOf, type ReportIssuanceGap } from '@tonyai/shared-types';
 import { complete, SITE_1, SUB, SUB_B, without } from '../../test/boundary-fixtures';
 import { allExcludedBoundary,
   allLocks, datasetOf, fireSuppressionDataset, frozenBoundary, fullYear, gasYear, lock, MONTHS, priced, record, refingerprinted, release, rowOf,
@@ -31,6 +31,11 @@ function schema1Dataset(facts: Parameters<typeof datasetOf>[0] = {}) {
 /** A dataset as schema 2 captured it: `complete()` before Fire Suppression existed (UAT round 4, BUG-12). */
 function schema2Dataset(facts: Parameters<typeof datasetOf>[0] = {}) {
   return datasetOf({ boundary: completeWithout('Fire Suppression'), schemaVersion: 2, ...facts });
+}
+
+/** A dataset retained before the card-fuel attribution (schema 3): no such field. */
+function schema3Dataset(facts: Parameters<typeof datasetOf>[0] = {}) {
+  return datasetOf({ schemaVersion: 3, ...facts });
 }
 
 const codes = (gaps: readonly ReportIssuanceGap[]) => gaps.map((g) => g.code);
@@ -274,9 +279,9 @@ describe('readRetainedDataset — the text held to its row before it is trusted 
     expect(() => readRetainedDataset({ ...rowOf(dataset), content: '{"schemaVersion":' })).toThrow(/not JSON/);
     expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 1 })).toThrow(/schemaVersion/);
     expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 2 })).toThrow(/schemaVersion/);
-    expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 4 })).toThrow(/schemaVersion/);
-    const future = refingerprinted(dataset, (d) => { (d as { schemaVersion: number }).schemaVersion = 4; });
-    expect(() => readRetainedDataset({ ...rowOf(future), schemaVersion: 4 })).toThrow(/schemaVersion 4 is not one this gate reads/);
+    expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 5 })).toThrow(/schemaVersion/);
+    const future = refingerprinted(dataset, (d) => { (d as { schemaVersion: number }).schemaVersion = 5; });
+    expect(() => readRetainedDataset({ ...rowOf(future), schemaVersion: 5 })).toThrow(/schemaVersion 5 is not one this gate reads/);
     expect(() => readRetainedDataset({ ...rowOf(dataset), content: 'null' })).toThrow(RetainedDatasetError);
   });
 });
@@ -290,11 +295,23 @@ describe('the pinned assessments — K2 holds every retained dataset to them (ar
   // REPORT_DATASET_SCHEMA_VERSION and keep the old rules for the old version
   // ("LP3-04 PR D follow-ups"), then re-pin.
   it('a complete year', () => {
-    expect(datasetOf().fingerprint.hex).toBe('4edcb5b3dd7e687ee8b2c27ab4100dd2279bbb1bf411a89426f3e5830a24c5cc');
+    expect(datasetOf().fingerprint.hex).toBe('1d0836c0276e8170ca66e959f6d9af0d62d19424834c8097912ad89895c7407f');
   });
 
   it('one January record, nothing locked', () => {
     expect(datasetOf({ records: [record('r-01')], locks: [] }).fingerprint.hex)
+      .toBe('694f3f140ed0240e61981f53fc253807cd6d5aa18cdddc37115decb9063c9cc2');
+  });
+
+  // Schema 3's fingerprints, unchanged since UAT round 4 (BUG-12): the current
+  // pins until schema 4 (inc28-fuel-bulk D17) added the card-fuel attribution.
+  // Equal to them, they prove a schema 3 dataset fingerprints as before. Never re-pin these.
+  it('schema 3: a complete year', () => {
+    expect(schema3Dataset().fingerprint.hex).toBe('4edcb5b3dd7e687ee8b2c27ab4100dd2279bbb1bf411a89426f3e5830a24c5cc');
+  });
+
+  it('schema 3: one January record, nothing locked', () => {
+    expect(schema3Dataset({ records: [record('r-01')], locks: [] }).fingerprint.hex)
       .toBe('2a81f3fc097ad6e9e39d6bfdb018d078e1fa3c868f02e10a7bc1dd6cbb3db6dc');
   });
 
@@ -398,9 +415,9 @@ describe('a dataset retained before Fire Suppression (schema 2; UAT round 4, BUG
     expect(boundaryMatchesVersion(2, dataset().boundary, dataset().boundary)).toBe(true);
   });
 
-  it('a new capture of the same boundary is schema 3 and partial, applicability_undetermined on Fire Suppression alone', () => {
+  it('a new capture of the same boundary is of the current schema and partial, applicability_undetermined on Fire Suppression alone', () => {
     const current = datasetOf({ boundary: dataset().boundary });
-    expect(current.schemaVersion).toBe(3);
+    expect(current.schemaVersion).toBe(REPORT_DATASET_SCHEMA_VERSION);
     const result = deriveIssuance(current);
     expect(result.status).toBe('partial');
     const undetermined = gapsOf(result).filter((g) => g.coverageCode === 'applicability_undetermined');
@@ -410,7 +427,7 @@ describe('a dataset retained before Fire Suppression (schema 2; UAT round 4, BUG
 
   it('a version that decides Fire Suppression carries no gap for it', () => {
     const decided = datasetOf();
-    expect(decided.schemaVersion).toBe(3);
+    expect(decided.schemaVersion).toBe(REPORT_DATASET_SCHEMA_VERSION);
     expect(decided.boundary.applicability.filter((c) => c.category === 'Fire Suppression').map((c) => c.applicability))
       .toEqual(['excluded', 'excluded']);
     expect(deriveIssuance(decided)).toEqual({ status: 'final', gaps: [] });
@@ -470,7 +487,36 @@ describe('boundaryMatchesVersion — the retained boundary is the frozen version
   it('fails closed on a version it cannot read, or a schema it has no comparison for', () => {
     expect(boundaryMatchesVersion(1, retained, null)).toBe(false);
     expect(boundaryMatchesVersion(3, retained, retained)).toBe(true);
-    expect(boundaryMatchesVersion(4, retained, retained)).toBe(false);
+    expect(boundaryMatchesVersion(4, retained, retained)).toBe(true);
+    expect(boundaryMatchesVersion(5, retained, retained)).toBe(false);
     expect(boundaryMatchesVersion(0, retained, retained)).toBe(false);
+  });
+});
+
+// inc28-fuel-bulk D17: schema 4 adds one top-level boolean. A dataset retained
+// before it reads, issues and verifies as before, and reads as no attribution.
+describe('a dataset retained before the card-fuel attribution (schema 3)', () => {
+  it('reads and issues unchanged, its boundary matches, and it carries no attribution', () => {
+    const old = schema3Dataset();
+    expect(Object.prototype.hasOwnProperty.call(old, 'cardFuelAttribution')).toBe(false);
+    expect(readRetainedDataset(rowOf(old))).toEqual(old);
+    expect(deriveIssuance(old)).toEqual({ status: 'final', gaps: [] });
+    expect(boundaryMatchesVersion(3, old.boundary, old.boundary)).toBe(true);
+    expect(cardFuelAttributionOf(old)).toBe(false);
+  });
+
+  it('refuses a schema 3 dataset given the flag, even re-fingerprinted, and a schema 4 one without a boolean', () => {
+    const forged = refingerprinted(schema3Dataset(), (d) => { (d as { cardFuelAttribution?: boolean }).cardFuelAttribution = true; });
+    expect(() => readRetainedDataset(rowOf(forged))).toThrow(/card-fuel attribution/);
+    const missing = refingerprinted(datasetOf(), (d) => { delete (d as { cardFuelAttribution?: boolean }).cardFuelAttribution; });
+    expect(() => readRetainedDataset(rowOf(missing))).toThrow(/card-fuel attribution/);
+    const text = refingerprinted(datasetOf(), (d) => { (d as unknown as { cardFuelAttribution: string }).cardFuelAttribution = 'true'; });
+    expect(() => readRetainedDataset(rowOf(text))).toThrow(/card-fuel attribution/);
+  });
+
+  it('reads a schema 4 dataset\'s flag as retained', () => {
+    const current = datasetOf({ cardFuelAttribution: true });
+    expect(readRetainedDataset(rowOf(current)).cardFuelAttribution).toBe(true);
+    expect(cardFuelAttributionOf(current)).toBe(true);
   });
 });

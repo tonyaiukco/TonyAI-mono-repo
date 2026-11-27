@@ -75,7 +75,9 @@
     "equipmentType": "Ekipman türü",
     "capacityKg": "Kurulu kapasite (kg)",
     "refillKg": "Dolum (kg)",
-    "leakRateChoice": "Kaçak oranı"
+    "leakRateChoice": "Kaçak oranı",
+    "invoiceNo": "Fatura numarası",
+    "supplier": "Tedarikçi"
   },
   "activityTypes": {
     "grid_electricity": "Şebeke elektriği",

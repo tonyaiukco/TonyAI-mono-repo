@@ -17,3 +17,13 @@ export function previewConsolidation(meta: ReportMetaDTO | null, previewFailed: 
   if (!(CONSOLIDATION_APPROACHES as readonly unknown[]).includes(approach) || !Array.isArray(associates)) return "failed";
   return { approach: approach as ConsolidationApproach, associates: associates.filter((a): a is string => typeof a === "string") };
 }
+
+/**
+ * Whether the preview's methodology note states the card-fuel attribution
+ * (inc28-fuel-bulk D17): only with the note shown, and only when the server
+ * says the selection counts a card file's batch record — an earlier API,
+ * which sends no flag, reads as false.
+ */
+export function showsCardFuelAttribution(meta: Pick<ReportMetaDTO, "cardFuelAttribution"> | null, includeMethodology: boolean): boolean {
+  return includeMethodology && meta?.cardFuelAttribution === true;
+}

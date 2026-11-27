@@ -71,6 +71,7 @@
   "withdrawnHeading": "Geri çekilen kayıtlar; hiçbir rakama dahil değildir",
   "methodologyHeading": "Yöntem",
   "methodologyText": "Kapsam 1 ve Kapsam 2 için GHG Protokolü Kurumsal Standardı'na göre hazırlanmıştır. Her rakam, veri seti yakalandığında kaydın sakladığı hesaplamadır; rapor kesinleştirilirken hiçbir şey yeniden hesaplanmaz. Yakalandığı andaki hâliyle faktör ve dönüşüm sürümleri:",
+  "cardFuelAttribution": "Grubun taşıt kartlarıyla (Shell, Petrol Ofisi) alınan yakıt, kart hesabını tutan şirkete atanır; bu, emisyonları grup şirketleri arasında kaydırır ve grup toplamını hiçbir zaman değiştirmez.",
   "colRelease": "Sürüm",
   "colEdition": "Baskı",
   "releaseAuthoritative": "Yetkili",

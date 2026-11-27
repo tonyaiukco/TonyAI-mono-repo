@@ -24,6 +24,7 @@ export type EvidenceKey =
   | 'block.notAuthor'
   | 'block.already'
   | 'block.locked'
+  | 'block.inBatch'
   | 'attachNone'
   | 'attachOne'
   | 'attachMany'
@@ -97,6 +98,8 @@ export function attachBlockReason(
   { t, words }: EvidenceCopy,
 ): string | null {
   if (!mayAuthorRecords(user)) return t('block.role');
+  // A fuel batch's files are attached to the batch, on Fuel files (inc28-fuel-bulk D11).
+  if (row.fuelBatchId) return t('block.inBatch');
   // Author-only, masterkey included (Decisions 2026-11-12): the API refuses
   // anyone else, so a colleague's record never offers a checkbox.
   if (!authoredBy(row, user)) return t('block.notAuthor');

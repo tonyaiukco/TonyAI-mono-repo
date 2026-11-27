@@ -6,6 +6,7 @@ import { EntriesJump } from '@/components/data-entry/entries-jump';
 import { MESSAGES } from '@/messages';
 import { needsEvidenceBeforeSubmit } from '@/lib/types';
 import {
+  fuelBatchLink,
   RECORDS_HEADING_ID,
   blankRecordsFilter,
   entriesJumpWording,
@@ -187,5 +188,13 @@ describe('the way to the records table from the top of Data Entry (uat4-quick-fi
 
   it('does nothing, and says so, when the table is not on the page', () => {
     expect(jumpToRecords(() => null, false)).toBe(false);
+  });
+});
+
+describe("a fuel batch's record (inc28-fuel-bulk D16)", () => {
+  it("links a batch's record to its batch, and no other record", () => {
+    expect(fuelBatchLink({ fuelBatchId: "b-1" })).toBe("/fuel-files?batch=b-1");
+    expect(fuelBatchLink({ fuelBatchId: null })).toBeNull();
+    expect(fuelBatchLink({})).toBeNull();
   });
 });

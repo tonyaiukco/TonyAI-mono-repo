@@ -354,6 +354,56 @@ describe('BulkUploadService — applying', () => {
   });
 });
 
+describe('BulkUploadService — the invoice number and the supplier (inc28-fuel-bulk D18)', () => {
+  const REF_HEADER = `${HEADER},invoiceNo,supplier`;
+  const refFile = (lines: string[]) => csvFile([], { buffer: Buffer.from([REF_HEADER, ...lines].join('\n')) });
+  const refRow = (over: Partial<Record<string, string>>, invoiceNo: string, supplier: string) => `${row(over)},${invoiceNo},${supplier}`;
+  const DIESEL = { category: 'Fuel', activityType: 'diesel', activityValue: '1168', activityUnit: 'litres' };
+
+  it('pins the template import’s limits: 2 MiB and 1,000 rows', () => {
+    expect(BULK_UPLOAD_MAX_SIZE_BYTES).toBe(2 * 1024 * 1024);
+    expect(BULK_UPLOAD_MAX_ROWS).toBe(1000);
+  });
+
+  it('stores both in input as the form does; the rest of the record is the same as without them', async () => {
+    const { records, service } = build();
+    await service.import(standardUser(), refFile([refRow(DIESEL, ' OZK2025000011923 ', 'Petrol Ofisi'), refRow({ ...DIESEL, periodValue: 'February' }, '', '')]), NOTHING);
+    const [[, withRefs], [, without]] = records.create.mock.calls;
+    expect(withRefs.input).toEqual({ invoice_no: 'OZK2025000011923', supplier: 'Petrol Ofisi' });
+    expect(without.input).toBeUndefined();
+    const { input: _a, periodValue: _p1, ...restWith } = withRefs;
+    const { input: _b, periodValue: _p2, ...restWithout } = without;
+    expect(restWith).toEqual(restWithout);
+  });
+
+  it('stores an Electricity row’s supplier as its utility provider', async () => {
+    const { records, service } = build();
+    await service.import(standardUser(), refFile([refRow({}, 'INV-1', 'Enerjisa')]), NOTHING);
+    expect(records.create.mock.calls[0][1].input).toEqual({ invoice_no: 'INV-1', utility_provider: 'Enerjisa' });
+  });
+
+  it('imports an earlier template without the columns as before', async () => {
+    const { records, service } = build();
+    const report = await service.import(standardUser(), csvFile([row()]), NOTHING);
+    expect(report.errors).toEqual([]);
+    expect(records.create.mock.calls[0][1].input).toBeUndefined();
+  });
+
+  it('refuses a row whose invoice number has 65 characters, naming the column, and reads the other rows', async () => {
+    const { records, service } = build();
+    const report = await service.import(
+      standardUser(),
+      refFile([refRow({}, 'X'.repeat(65), ''), refRow({ periodValue: 'February' }, 'X'.repeat(64), ''), refRow({ periodValue: 'March' }, '', 'S'.repeat(201))]),
+      NOTHING,
+    );
+    expect(report.errors.map((e) => [e.row, e.column, e.code])).toEqual([[2, 'invoiceNo', 'invalid'], [4, 'supplier', 'invalid']]);
+    // Nothing the caller wrote is quoted back.
+    expect(report.errors.every((e) => !e.message.includes('XXXX') && !e.message.includes('SSSS'))).toBe(true);
+    expect(records.create).toHaveBeenCalledTimes(1);
+    expect(records.create.mock.calls[0][1].input).toEqual({ invoice_no: 'X'.repeat(64) });
+  });
+});
+
 describe('BulkUploadService — duplicate slots the preview cannot see', () => {
   it('refuses the second row claiming the same slot in one file', async () => {
     // Postgres raises this on the INSERT, so a dry run would otherwise report

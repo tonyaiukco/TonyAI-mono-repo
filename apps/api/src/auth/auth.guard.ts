@@ -116,6 +116,33 @@ export class SupabaseAuthGuard implements CanActivate {
       throw new SessionRevokedError();
     }
 
+    const { accessibleSubsidiaryIds, categoryGrants, grantKinds } = await readAccess(this.prisma, profile);
+
+    const user: RequestUser = {
+      id: profile.id,
+      email: profile.email,
+      fullName: profile.fullName,
+      role: profile.role,
+      organisationId: profile.organisationId,
+      accessibleSubsidiaryIds,
+      categoryGrants,
+      grantKinds,
+    };
+    request.user = user;
+    return true;
+  }
+}
+
+/**
+ * A profile's scope, as every request reads it (INC-2.6 §1): the companies it
+ * works in, a standard user's ticked categories, and each grant's kind. Here
+ * rather than inline so a long request can read it again at its write (the
+ * fuel preview after a long parse — fourth review of WP9 PR B).
+ */
+export async function readAccess(
+  prisma: Pick<PrismaService, 'subsidiary'>,
+  profile: { organisationId: string | null; role: RequestUser['role']; subsidiaryAccess: Array<{ subsidiaryId: string; kind: string; categories: string[] | null }> },
+): Promise<Pick<RequestUser, 'accessibleSubsidiaryIds' | 'categoryGrants' | 'grantKinds'> & { grantKinds: Record<string, GrantKind> }> {
     // The scope rule of INC-2.6 §1 (inc26-roles-approval-chain, design
     // Decision 4): a super_admin and a standard user work in their grants, a
     // masterkey and an auditor in the whole organisation. A role this build
@@ -137,7 +164,7 @@ export class SupabaseAuthGuard implements CanActivate {
       // visible to the wrong masterkey, invisible to the right one.
       const granted = profile.subsidiaryAccess.map((a) => a.subsidiaryId);
       const sameOrg = granted.length
-        ? await this.prisma.subsidiary.findMany({
+        ? await prisma.subsidiary.findMany({
             where: { id: { in: granted }, organisationId: profile.organisationId },
             select: { id: true },
           })
@@ -156,24 +183,12 @@ export class SupabaseAuthGuard implements CanActivate {
         }
       }
     } else if (can(profile.role, 'scope.organisation')) {
-      const subs = await this.prisma.subsidiary.findMany({
+      const subs = await prisma.subsidiary.findMany({
         where: { organisationId: profile.organisationId },
         select: { id: true },
       });
       accessibleSubsidiaryIds = subs.map((s) => s.id);
     }
 
-    const user: RequestUser = {
-      id: profile.id,
-      email: profile.email,
-      fullName: profile.fullName,
-      role: profile.role,
-      organisationId: profile.organisationId,
-      accessibleSubsidiaryIds,
-      categoryGrants,
-      grantKinds,
-    };
-    request.user = user;
-    return true;
-  }
+  return { accessibleSubsidiaryIds, categoryGrants, grantKinds };
 }

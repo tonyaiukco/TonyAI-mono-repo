@@ -48,6 +48,7 @@
   "scopeValue": "Kapsam {scope}",
   "noCommittedData": "Bu seçim için sayılan veri yok.",
   "methodology": "<strong>Yöntem:</strong> her hesaplama kullandığı emisyon faktörünün (değer, kaynak, sürüm) değiştirilemez bir anlık görüntüsünü saklar — faktörlerin tam eki üretilen PDF/Excel'dedir. Konsolidasyon yaklaşımı: {approach}. ISO 14064-1 / GHG Protokolü ile uyumludur.",
+  "cardFuelAttribution": "Grubun taşıt kartlarıyla (Shell, Petrol Ofisi) alınan yakıt, kart hesabını tutan şirkete atanır; bu, emisyonları grup şirketleri arasında kaydırır ve grup toplamını hiçbir zaman değiştirmez.",
   "methodologyApproach": {
     "operational_control": "operasyonel kontrol",
     "financial_control": "finansal kontrol"

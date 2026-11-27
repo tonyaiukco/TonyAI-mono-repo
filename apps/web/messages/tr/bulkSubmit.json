@@ -21,7 +21,8 @@
     "already": "Zaten {status}.",
     "notAuthor": "Başka biri tarafından girildi.",
     "locked": "{period} {year} kilitli.",
-    "evidence": "Kanıt dosyası gerekiyor."
+    "evidence": "Kanıt dosyası gerekiyor.",
+    "inBatch": "Bir yakıt paketinin kaydı — Yakıt dosyaları'nda paketiyle gönderin."
   },
   "capRefused": "Tek bir gönderim en fazla {max} kayıt taşıyabilir.",
   "selectedFirst": "İlk {taken} kayıt seçildi. Kalan {more} kayıt ikinci bir gönderimle gönderilebilir.",

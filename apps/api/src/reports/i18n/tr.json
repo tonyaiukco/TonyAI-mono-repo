@@ -49,6 +49,7 @@
   "approach operational_control": "operasyonel kontrol",
   "approach financial_control": "finansal kontrol",
   "excludedAssociates": "Öz kaynak şirketi olarak Kapsam 1 ve 2 dışında tutulanlar (konsolide edilmez): {names}.",
+  "cardFuelAttribution": "Grubun taşıt kartlarıyla (Shell, Petrol Ofisi) alınan yakıt, kart hesabını tutan şirkete atanır; bu, emisyonları grup şirketleri arasında kaydırır ve grup toplamını hiçbir zaman değiştirmez.",
   "consolidationLine": "Konsolidasyon yaklaşımı: {approach}.",
   "unitConversion": "Bu faktörden önce uygulanan birim dönüşümü: {basis}",
   "evidenceHeading": "Kanıt özeti",

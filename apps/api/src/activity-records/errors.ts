@@ -374,3 +374,14 @@ export function recordTriggerCode(e: unknown): 'TA001' | 'TA002' | null {
   }
   return null;
 }
+
+/**
+ * A single-record step on a fuel batch's record (inc28-fuel-bulk D9): edit,
+ * delete, submit, recall, review, approve, return, and its files through the
+ * record are taken on the batch. Void and the period lock are not refused.
+ */
+export class RecordInBatchError extends ConflictException {
+  constructor() {
+    super(errorBody('record_in_batch', 'This record belongs to a fuel batch. Act on the batch instead.'));
+  }
+}

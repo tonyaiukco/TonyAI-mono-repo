@@ -320,6 +320,9 @@ export class ActivityRecordCalculation {
         activityType: params.activityType,
         reportingPeriod: params.reportingPeriod,
         status: { in: BASELINE_STATUSES },
+        // A fuel batch's record is no manual record's history: a batch is
+        // judged per invoice and fuel (inc28-fuel-bulk D12, `judgeFuelBatch`).
+        fuelBatchId: null,
         ...(params.excludeId ? { id: { not: params.excludeId } } : {}),
       },
       select: { reportingYear: true, reportingPeriod: true, periodValue: true, calculation: true },

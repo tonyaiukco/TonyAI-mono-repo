@@ -76,7 +76,9 @@ import {
   DRIFT_WHERE,
   LEGACY_WHERE,
   PRE_CEILING_WHERE,
+  BASELINE_STATUSES,
 } from './anomaly-probe.lib.mjs';
+import { batchVerdictsOf, storedVerdict, verdictsAgree } from './anomaly-recompute.lib.mjs';
 
 const args = process.argv.slice(2);
 const allowRemote = args.includes('--allow-remote');
@@ -231,7 +233,36 @@ async function main() {
       '   change (WP18), and it reads exactly like a series that began there.',
   );
 
-  return drift.length > 0 ? 1 : 0;
+  // Fuel batch records (inc28-fuel-bulk D12): judged per invoice and fuel by
+  // the same `judgeFuelBatch` the API and `anomaly:recompute` use — never in a
+  // manual record's pool (fourth review of WP9 PR B, P2).
+  const batchRecords = await prisma.activityRecord.findMany({
+    where: { fuelBatchId: { not: null } },
+    select: {
+      id: true, fuelBatchId: true, category: true, activityType: true, activityValue: true, activityUnit: true,
+      parameters: true, calculation: true, status: true, anomalyFlag: true, anomalyBaselinePriorCount: true,
+      anomalyBaselineTCo2e: true, subsidiary: { select: { legalName: true } },
+    },
+  });
+  const invoices = await prisma.$queryRaw`
+    SELECT b.id::text, b.fuel_account_id::text AS "accountId", b.usage, b.invoice_ref AS "invoiceRef", b.status,
+           min(COALESCE(to_char(r.transaction_at, 'YYYYMMDD')::int, r.year * 10000 + r.month * 100 + 1))::int AS period
+    FROM fuel_batches b JOIN fuel_rows r ON r.fuel_batch_id = b.id AND r.state = 'assigned'
+    GROUP BY b.id`;
+  const fresh = batchVerdictsOf(invoices, batchRecords);
+  const committed = batchRecords.filter((r) => BASELINE_STATUSES.includes(r.status) && fresh.has(r.id));
+  const batchDrift = committed.filter((r) => !verdictsAgree(storedVerdict(r), fresh.get(r.id)));
+  console.log(`\n5. Fuel batch records — the stored verdict vs the invoice rule (D12), ${committed.length} committed`);
+  if (batchDrift.length === 0) console.log('   none drifted.');
+  for (const r of batchDrift) {
+    const v = fresh.get(r.id);
+    console.log(
+      `   ${r.subsidiary.legalName} · batch ${r.fuelBatchId} · ${r.activityType} [${r.status}] stored ` +
+        `${r.anomalyFlag}/${r.anomalyBaselinePriorCount}/${r.anomalyBaselineTCo2e} — rule ${v.anomalous}/${v.priorCount}/${v.baseline}`,
+    );
+  }
+
+  return drift.length > 0 || batchDrift.length > 0 ? 1 : 0;
 }
 
 main()

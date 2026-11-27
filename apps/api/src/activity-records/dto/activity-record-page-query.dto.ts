@@ -98,6 +98,12 @@ export class ActivityRecordFiltersQueryDto implements ActivityRecordPageFilters 
   @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
   @IsBoolean()
   awaitingMyDecision?: boolean;
+
+  /** `false`: no fuel batch's record (the review queue's Records list); `true`: only those (inc28-fuel-bulk D10). */
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
+  @IsBoolean()
+  inBatch?: boolean;
 }
 
 /** GET /activity-records: the filters, a sort, and the page. */

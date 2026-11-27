@@ -1414,6 +1414,13 @@ export interface ReportMetaDTO {
   /** What the year's inventory boundary says about the selection (K3). The
    * `status` above is review status only — it never certifies completeness. */
   coverage: import('./report-consistency').ReportLiveCoverage;
+  /**
+   * inc28-fuel-bulk D17: a counted record of a Shell or Petrol Ofisi batch is
+   * among the records this selection reads, so a report printed with its
+   * methodology note states the account-based attribution. A client reads it
+   * as `=== true` (an earlier API sends none).
+   */
+  cardFuelAttribution: boolean;
 }
 
 // Target Types
@@ -3365,6 +3372,9 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** Declarations, files, withdrawal or submit on a batch that is not a draft
    *  or returned (C14). */
   fuel_batch_not_open: 409,
+  // A batch written for one reporting company cannot be rewritten for another:
+  // its author's main company moved since (TA025 fixes a record's entity).
+  fuel_batch_reporting_changed: 409,
   /** A mapping holding live assigned or excluded rows (C14). params: `rows`. */
   fuel_account_in_use: 409,
   /** Adding a source and code already stored. */
@@ -5678,8 +5688,13 @@ export function computeAnomalyVerdict(
   if (baseline === 0) {
     return { anomalous: false, priorCount: priorValues.length, baseline };
   }
+  // The deviation at 12 decimals: a float subtraction's last-bit noise
+  // (0.9 − 0.6 = 0.30000000000000004) must not carry an exactly-50% figure
+  // over a rule that flags only what exceeds it. `anomaly:probe` compares the
+  // same way in SQL (fourth review of WP9 PR B, P2).
+  const deviation = Number((Math.abs(currentTCo2e - baseline) / baseline).toFixed(12));
   return {
-    anomalous: Math.abs(currentTCo2e - baseline) / baseline > ANOMALY_THRESHOLD,
+    anomalous: deviation > ANOMALY_THRESHOLD,
     priorCount: priorValues.length,
     baseline,
   };
@@ -6082,6 +6097,101 @@ export function withFirstPeriodCeiling(
 ): AnomalyVerdict {
   if (!isCeilingEligible(historyVerdict)) return historyVerdict;
   return { ...historyVerdict, anomalous: firstPeriodCeiling(input)?.above ?? false };
+}
+
+/**
+ * A fuel batch's record as the per-invoice check reads it (inc28-fuel-bulk D12).
+ * `fuel` is read from the record's activity type (`on_road_diesel` → `diesel`).
+ */
+export interface FuelBatchAnomalyRecord {
+  id: string;
+  activityType: string | null;
+  /** The record's figure, or null when it has none. */
+  tCo2e: number | null;
+  ceiling: CeilingInput;
+}
+
+/** A fuel batch — an invoice of one account and usage — as the check reads it. */
+export interface FuelBatchAnomalyInvoice {
+  id: string;
+  /** Its invoice period: the earliest transaction date as `yyyymmdd`; a tanker delivery's declared month as `yyyymm01`. */
+  period: number;
+  invoiceRef: string;
+  /** Submitted, under review or approved: an invoice that counts as history. */
+  counted: boolean;
+  /** Its live records. */
+  records: readonly FuelBatchAnomalyRecord[];
+}
+
+/** The fuel a batch record's activity type names (D6's table read back): its last word. */
+export function fuelOfBatchActivityType(activityType: string | null): string | null {
+  if (!activityType) return null;
+  const parts = activityType.split('_');
+  return parts.slice(parts.length >= 3 && parts[parts.length - 2] === 'gas' ? -3 : -1).join('_');
+}
+
+/**
+ * D12: a fuel batch is checked per invoice and fuel. One observation is the
+ * batch's figure for one fuel — the sum of its records of that fuel, whatever
+ * their months. Its history is the earlier counted invoices of the same
+ * account and usage that hold that fuel (`earlier` is every other invoice of
+ * that account and usage; this selects), newest first by invoice period, ties
+ * by invoice reference, then by batch id (an invoice's sibling batches);
+ * `computeAnomalyVerdict` judges them unchanged. With no
+ * earlier invoice, each record is judged by its own first-period ceiling. The
+ * verdict is stored on every record of that fuel: answered by record id.
+ *
+ * ONE function for the API's batch submit and `pnpm anomaly:recompute`, so the
+ * two cannot disagree about the same record.
+ */
+export function judgeFuelBatch(
+  batch: FuelBatchAnomalyInvoice,
+  earlier: readonly FuelBatchAnomalyInvoice[],
+): Record<string, AnomalyVerdict> {
+  const before = (other: FuelBatchAnomalyInvoice) =>
+    other.period < batch.period || (other.period === batch.period && other.invoiceRef < batch.invoiceRef);
+  const history = earlier
+    .filter((other) => other.id !== batch.id && other.counted && before(other))
+    // A total order: an invoice's sibling batches (one period, one reference) are ordered by id, so
+    // the window never depends on the order the history was read in (WP9 PR B review, P2).
+    .sort((a, b) =>
+      b.period - a.period ||
+      (a.invoiceRef < b.invoiceRef ? 1 : a.invoiceRef > b.invoiceRef ? -1 : 0) ||
+      (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+  // Summed in one order (record id), never the order the records were read
+  // in: a float sum depends on its order, and a verdict on an edge must not
+  // (third review of the branch, P2).
+  const figureOf = (records: readonly FuelBatchAnomalyRecord[]): number | null => {
+    const figures = [...records]
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .map((r) => r.tCo2e)
+      .filter((v): v is number => v !== null);
+    // The figure as summed; `computeAnomalyVerdict` compares the deviation at
+    // 12 decimals, so a sum's last-bit noise never carries an exactly-50%
+    // deviation over the threshold, and a batch and a manual record are judged
+    // by one comparison (fourth and fifth reviews of WP9 PR B).
+    return figures.length === 0 ? null : figures.reduce((sum, v) => sum + v, 0);
+  };
+  const verdicts: Record<string, AnomalyVerdict> = {};
+  const fuels = [...new Set(batch.records.map((r) => fuelOfBatchActivityType(r.activityType)))];
+  for (const fuel of fuels) {
+    const records = batch.records.filter((r) => fuelOfBatchActivityType(r.activityType) === fuel);
+    const observation = figureOf(records);
+    const priors = history
+      .map((other) => other.records.filter((r) => fuelOfBatchActivityType(r.activityType) === fuel))
+      .filter((held) => held.length > 0)
+      .map(figureOf);
+    for (const record of records) {
+      if (observation === null || record.tCo2e === null) {
+        verdicts[record.id] = anomalyNotEvaluated();
+      } else if (priors.length === 0) {
+        verdicts[record.id] = withFirstPeriodCeiling(anomalyNotEvaluated(0), record.ceiling);
+      } else {
+        verdicts[record.id] = computeAnomalyVerdict(observation, priors);
+      }
+    }
+  }
+  return verdicts;
 }
 
 /**
@@ -6931,6 +7041,16 @@ export const AUDIT_ACTIONS = [
    *  (`entity: 'evidence'`, `diff.before.recordId`). Taking off the LAST link
    *  deletes the file, and that row is a `delete`. */
   'detach',
+  // inc28-fuel-bulk (WP9). A fuel file read without storing it (D3): the one
+  // row a preview leaves, `entity: 'import_batch'`, `entityId: null`.
+  'preview',
+  /** A masterkey made holder of an upload's unbatched fuel rows (C8, D8). */
+  'take_over',
+  /** Fuel rows or a fuel batch taken out of every sum and kept (C14), with a
+   *  reason. Not "withdraw": the screens use that word for a void. */
+  'retract',
+  /** An evidence file attached to every record of a fuel batch (D11). */
+  'attach',
   // LP4-01 — the user lifecycle. `entityId` is the profile throughout (except
   // `invite_refused`, whose entityId is null — no profile was made); an
   // invitation's row names its role, language and grants, never the address
@@ -7028,6 +7148,9 @@ export const AUDIT_ENTITIES = [
   // inc28-fuel-bulk: a fuel batch's lifecycle step, files, declarations or
   // withdrawal; `entityId` is the batch.
   'fuel_batch',
+  // inc28-fuel-bulk D5, revised: an organisation's fuel dedupe key created
+  // (`create`); `entityId` is the organisation. The diff never holds the key.
+  'fuel_dedupe_key',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
@@ -7281,6 +7404,15 @@ export const BULK_UPLOAD_COLUMNS = [
   'capacityKg',
   'refillKg',
   'leakRateChoice',
+  /**
+   * The invoice number and the supplier (inc28-fuel-bulk D18), optional in
+   * the header and on the row: stored in `input` as the form stores them
+   * (`invoice_no`; `supplier`, an Electricity row's `utility_provider`),
+   * under the form's limits (`RECORD_INVOICE_NO_MAX_LENGTH`,
+   * `RECORD_SUPPLIER_MAX_LENGTH`). A file without them reads as before.
+   */
+  'invoiceNo',
+  'supplier',
 ] as const;
 
 export type BulkUploadColumn = (typeof BULK_UPLOAD_COLUMNS)[number];
@@ -7922,6 +8054,11 @@ export const BULK_SUBMIT_ISSUE_CODES = [
    * The import's `would_block_submit` warning, arrived at.
    */
   'variance_reason_required',
+  /**
+   * The record belongs to a fuel batch (inc28-fuel-bulk D9): its batch is
+   * submitted as a whole, from the batch, never record by record.
+   */
+  'record_in_batch',
   /** Anything the server did not anticipate. The record was NOT submitted. */
   'unexpected',
   /** No operation started for this id before the deadline; no existence or

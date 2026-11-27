@@ -23,6 +23,7 @@ import { TargetsModule } from './targets/targets.module';
 import { IntensityModule } from './intensity/intensity.module';
 import { ReportsModule } from './reports/reports.module';
 import { BulkUploadModule } from './bulk-upload/bulk-upload.module';
+import { FuelFilesModule } from './fuel-files/fuel-files.module';
 import { UsersModule } from './users/users.module';
 import { InventoryBoundaryModule } from './inventory-boundary/inventory-boundary.module';
 import { ReportDatasetsModule } from './report-datasets/report-datasets.module';
@@ -52,6 +53,7 @@ import { RequestContextMiddleware } from './observability/request-context.middle
     IntensityModule,
     ReportsModule,
     BulkUploadModule,
+    FuelFilesModule,
     // LP4-01: onboarding and the user lifecycle (its MailModule with it).
     UsersModule,
     // LP3-04: the inventory boundary's routes (W1, W13).

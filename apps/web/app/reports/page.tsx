@@ -55,7 +55,7 @@ import { useReportingContext } from '@/lib/use-reporting-context';
 import { reportingContextKey } from '@/lib/reporting-context-url';
 import { ReportingContextBar, ReportingContextInvalid, selectionAvailable } from '@/components/reporting-context/reporting-context-bar';
 import { CATEGORY_SCOPE_MAP, REPORT_TEMPLATES, can } from '@/lib/types';
-import { previewConsolidation } from '@/lib/report-consolidation-view';
+import { previewConsolidation, showsCardFuelAttribution } from '@/lib/report-consolidation-view';
 import { liveReportNonAuthoritative } from '@/lib/emissions-view';
 import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import type {
@@ -541,6 +541,9 @@ function ReportsPageInner() {
                     {includeMethodology && (
                       <p className="rounded-lg bg-secondary/50 p-3 text-xs text-muted-foreground">
                         {t.rich('methodology', { strong: (chunks) => <strong>{chunks}</strong>, approach: approachText })}
+                        {showsCardFuelAttribution(meta, includeMethodology) && (
+                          <span data-testid="card-fuel-attribution"> {t('cardFuelAttribution')}</span>
+                        )}
                       </p>
                     )}
                   </CardContent>

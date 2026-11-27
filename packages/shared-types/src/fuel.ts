@@ -351,8 +351,9 @@ export type FuelRowIssueCode = (typeof FUEL_ROW_ISSUE_CODES)[number];
 // ── Limits ──────────────────────────────────────────────────────────────────
 
 /**
- * The fuel upload's limits (C18): provisional until tasks group 10 measures a
- * file of the documented scale (44,902 rows), and set from those numbers. The
+ * The fuel upload's limits (C18), confirmed by task 10.4's measurement of a
+ * file of the documented scale (44,902 rows, 3.2 MB: read in 2.0 s, stored in
+ * 4.5 s, 560 batches formed in one 17.2 s step; `apps/api/src/fuel-files/limits.ts`). The
  * template import keeps its own (`BULK_UPLOAD_MAX_ROWS`, `BULK_UPLOAD_MAX_SIZE_BYTES`).
  */
 export const FUEL_UPLOAD_MAX_ROWS = 60_000;
@@ -430,7 +431,12 @@ export interface FuelRowIssueDTO {
  * batches, be excluded (an associate's), wait for an account, wait for a fuel
  * name no rule recognises, or be held as outside the caller's scope.
  */
-export const FUEL_PREVIEW_OUTCOMES = ['batches', 'excluded', 'waiting_account', 'waiting_fuel', 'outside_scope'] as const;
+/**
+ * What a previewed row will be. `depends_on_usage`: a tanker delivery not yet
+ * declared, whose company the reader's batches take for some usages and not
+ * others (its categories) — decided by the declaration (fourth review of WP9 PR B).
+ */
+export const FUEL_PREVIEW_OUTCOMES = ['batches', 'excluded', 'waiting_account', 'waiting_fuel', 'outside_scope', 'depends_on_usage'] as const;
 export type FuelPreviewOutcome = (typeof FUEL_PREVIEW_OUTCOMES)[number];
 
 /**
@@ -551,6 +557,20 @@ export interface WithdrawFuelRowsRequest {
   reason: string;
 }
 
+/**
+ * `GET /fuel-files/:id/withdrawable`: the upload's live rows in no batch that
+ * the caller may withdraw (`POST /fuel-files/:id/withdraw-rows`) — its own
+ * held rows, or a masterkey's any — by account, and by raw fuel name for the
+ * rows waiting for one. Excluded rows are among them: an associate's account
+ * later made a controlled company is withdrawn and the file uploaded again
+ * (C20; WP9 PR B review, P2).
+ */
+export interface FuelWithdrawableDTO {
+  /** `name`: null when some of the rows lie outside what the caller reads (its company not granted). */
+  accounts: Array<FuelRowCountDTO & { accountId: string; code: string; name: string | null; excluded: number }>;
+  fuelNames: Array<FuelRowCountDTO & { rawName: string }>;
+}
+
 /** `POST /fuel-files/:id/take-over` (masterkey, C8): optionally one account's rows only. */
 export interface TakeOverFuelRowsRequest {
   accountId?: string;
@@ -616,6 +636,12 @@ export interface FuelBatchDTO {
   /** Sum of its live records' figures; null when none is calculated. */
   tCo2e: number | null;
   evidenceCount: number;
+  /**
+   * The months its rows fall in, oldest first: what the review queue shows a
+   * batch covers without opening it (opening takes it into review; D10, sixth
+   * review of WP9 PR B).
+   */
+  periods: Array<{ year: number; month: number }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -662,6 +688,73 @@ export interface FuelBatchFilters {
   awaitingMyDecision?: boolean;
   /** The caller's own batches (the Fuel files page's Batches tab). */
   mine?: boolean;
+  /**
+   * Every batch awaiting a decision — submitted or under review — as one list
+   * in submission order (the review queue's "show all"; one cursor, so its
+   * pages follow the oldest submission first; sixth review of WP9 PR B).
+   */
+  inReview?: boolean;
+  /**
+   * `GET /fuel-batches` only: `fuelBatchCursor` of the last batch already
+   * loaded; the next page starts right after it in the list's order
+   * (`FUEL_BATCH_PAGE` a page; `/metadata` answers the total). It carries
+   * that batch's sort values as the page showed them, so a batch that leaves
+   * an earlier page, or is recalled, never makes a later page skip one or end
+   * early (WP9 PR B review, P2: one upload can form hundreds).
+   */
+  after?: string;
+}
+
+/** `GET /fuel-batches` answers at most this many batches a call. */
+export const FUEL_BATCH_PAGE = 200;
+
+const ISO_MS = '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z';
+const UUID_TEXT = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+/** An ISO instant as the API writes it, and only a real one: 2025-02-30 is no instant (third review, P2). */
+function instantOf(text: string): Date | null {
+  const date = new Date(text);
+  return !Number.isNaN(date.getTime()) && date.toISOString() === text ? date : null;
+}
+
+/** `GET /fuel-files` answers at most this many uploads a call, newest first; `?after=` the next page. */
+export const FUEL_UPLOAD_PAGE = 100;
+
+/** An upload's place in its list (newest first): its creation and id, as the list answered them. */
+export function fuelUploadCursor(upload: { id: string; createdAt: string }): string {
+  return `${upload.createdAt}~${upload.id}`;
+}
+
+/** A cursor's shape: an ISO instant and an id. */
+export const FUEL_UPLOAD_CURSOR_SHAPE = new RegExp(`^${ISO_MS}~${UUID_TEXT}$`, 'i');
+
+/** A cursor as `fuelUploadCursor` writes it; null for anything else (the API answers 400). */
+export function parseFuelUploadCursor(cursor: string): { createdAt: Date; id: string } | null {
+  if (!FUEL_UPLOAD_CURSOR_SHAPE.test(cursor)) return null;
+  const [createdText, id] = cursor.split('~') as [string, string];
+  const createdAt = instantOf(createdText);
+  return createdAt ? { createdAt, id: id.toLowerCase() } : null;
+}
+
+/** `POST /fuel-batches/bulk-submit` takes at most this many batches a call; the screen sends more in parts. */
+export const FUEL_BULK_SUBMIT_MAX = 200;
+
+/** A batch's place in either list order: its creation, its submission and its id, as the list answered them. */
+export function fuelBatchCursor(batch: { id: string; createdAt: string; submittedAt: string | null }): string {
+  return `${batch.createdAt}~${batch.submittedAt ?? ''}~${batch.id}`;
+}
+
+/** A cursor's shape: two ISO instants (the second may be empty) and an id. */
+export const FUEL_BATCH_CURSOR_SHAPE = new RegExp(`^${ISO_MS}~(?:${ISO_MS})?~${UUID_TEXT}$`, 'i');
+
+/** A cursor as `fuelBatchCursor` writes it; null for anything else (the API answers 400). */
+export function parseFuelBatchCursor(cursor: string): { createdAt: Date; submittedAt: Date | null; id: string } | null {
+  if (!FUEL_BATCH_CURSOR_SHAPE.test(cursor)) return null;
+  const [createdText, submittedText, id] = cursor.split('~') as [string, string, string];
+  const createdAt = instantOf(createdText);
+  const submittedAt = submittedText === '' ? null : instantOf(submittedText);
+  if (!createdAt || (submittedText !== '' && !submittedAt)) return null;
+  return { createdAt, submittedAt, id: id.toLowerCase() };
 }
 
 export interface FuelBatchMetadataDTO {
