@@ -215,6 +215,22 @@ describe('readFuelFile — cells', () => {
     ]);
   });
 
+  it('reads a numeric cell at Excel’s 15 significant digits: a formula’s noise is the figure Excel shows', async () => {
+    const reading = await readFuelFile(
+      tanker(
+        [
+          delivery(2, text('A2', 'D2'), number('C2', '3.3000000000000003')),
+          delivery(3, text('A3', 'D3'), number('C3', '31.859999999999999')),
+          delivery(4, text('A4', 'D4'), number('C4', '12.0000000000000001')),
+          delivery(5, text('A5', 'D5'), number('C5', '1234.56789012345')),
+          delivery(6, text('A6', 'D6'), number('C6', '1E-7')),
+        ].join(''),
+      ),
+      'tanker',
+    );
+    expect(reading.rows.map((r) => r.litres)).toEqual(['3.3', '31.86', '12', '1234.56789012345', '0.0000001']);
+  });
+
   it('refuses a document number over 64 characters for its own reason', async () => {
     const reading = await readFuelFile(tanker(delivery(2, text('A2', 'D'.repeat(65)), number('C2', '5'))), 'tanker');
     expect(reading.refused).toEqual([{ row: 2, code: 'fuel_reference_too_long' }]);

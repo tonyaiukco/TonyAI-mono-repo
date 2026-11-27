@@ -419,6 +419,27 @@ describe('reading uploads, the tray, a takeover (task 5.4)', () => {
     expect(await files.uploads.withdrawable(reporter, upload.id)).toEqual({ accounts: [], fuelNames: [] });
   });
 
+  it('withdraws by fuel name only the rows waiting for that name, never one still waiting for an account (QA review of the fixes, P2)', async () => {
+    await confirmedAccount('INT-FN-OK', tenant.subsidiaryId);
+    const user = await masterkey();
+    const header = sheetRow(1, ['Satış ID', 'Filo Kod Adı', 'Filo', 'Tarih', 'Tip', 'Miktar', 'Fatura Numarası']);
+    const file = xlsx({
+      sheetData: [
+        header,
+        sheetRow(2, ['FN-1', 'INT-FN-OK', 'Fleet', '03.03.2025 08:00', 'Otogaz LPG', 10, 'OZK-FN']),
+        sheetRow(3, ['FN-2', 'INT-FN-OK', 'Fleet', '04.03.2025 08:00', 'Otogaz LPG', 20, 'OZK-FN']),
+        // The same name on an account nobody mapped yet: it waits for the account, not the name.
+        sheetRow(4, ['FN-3', 'INT-FN-NEW', 'Fleet', '05.03.2025 08:00', 'Otogaz LPG', 40, 'OZK-FN']),
+      ].join(''),
+    });
+    const upload = await apply(user, file);
+    const files = services();
+    expect((await files.uploads.withdrawable(user, upload.id)).fuelNames).toEqual([{ rawName: 'Otogaz LPG', rows: 2, litres: '30' }]);
+    await files.uploads.withdrawRows(user, upload.id, { rawFuelName: 'Otogaz LPG', reason: 'not a fuel we report' });
+    const rows = await rowsOf();
+    expect(rows.map((r) => [r.fileRow, r.state])).toEqual([[2, 'withdrawn'], [3, 'withdrawn'], [4, 'waiting_account']]);
+  });
+
   it('makes a masterkey the holder of an upload’s unbatched rows, ready again, with an audit row naming the uploader', async () => {
     const reporter = await addMember(owner, tenant, UserRole.standard_user, { grants: [tenant.subsidiaryId] });
     await confirmedAccount('INT-TAKE', tenant.otherSubsidiaryId);

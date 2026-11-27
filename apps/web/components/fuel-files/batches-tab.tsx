@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
 import { Loader2, Send } from "lucide-react";
@@ -13,8 +13,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api } from "@/lib/api";
 import { useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatComputedAmount, formatNumber } from "@/lib/i18n/number";
-import { appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextOffsets, shownOf, submittableIds, type PagedBatches } from "@/lib/fuel-batch-view";
-import { FUEL_BATCH_STATUSES, type AuthUser, type FuelBatchStatus, type Locale } from "@/lib/types";
+import { batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, shownOf, submittableIds, withPage, type PagedBatches } from "@/lib/fuel-batch-view";
+import { FUEL_BATCH_PAGE, FUEL_BATCH_STATUSES, type AuthUser, type FuelBatchStatus, type Locale } from "@/lib/types";
 import { BatchSheet } from "./batch-sheet";
 import { RowCount } from "./common";
 
@@ -40,23 +40,30 @@ export function BatchesTab({ user, refreshKey, initialOpen = null }: { user: Aut
   const viewer = user ? { id: user.id, role: user.role } : null;
 
   const filter = useMemo(() => (status === ALL ? {} : { status }), [status]);
+  /** The latest load: an answer for an earlier filter or load is dropped (QA review of the WP9 PR B fixes). */
+  const seq = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     try {
       const [list, meta] = await Promise.all([api.listFuelBatches(filter), api.fuelBatchMetadata(filter)]);
+      if (mine !== seq.current) return;
       setPaged({ lists: [list], totals: [meta.total] });
     } catch (error) {
+      if (mine !== seq.current) return;
       setPaged({ lists: [[]], totals: [0] });
       showError(error);
     }
   }, [filter, showError]);
-  /** The next page (WP9 PR B review, P2: one upload can form hundreds of batches). */
+  /** The next page, after the last batch shown (WP9 PR B review, P2: one upload can form hundreds of batches). */
   async function loadMore() {
-    const offset = paged ? nextOffsets(paged)[0] : null;
-    if (!paged || offset === null || offset === undefined) return;
+    const after = paged ? nextCursors(paged)[0] : null;
+    if (!paged || !after) return;
+    const mine = seq.current;
     setMore(true);
     try {
-      const page = await api.listFuelBatches({ ...filter, offset });
-      setPaged({ lists: [appendPage(paged.lists[0]!, page)], totals: paged.totals });
+      const page = await api.listFuelBatches({ ...filter, after });
+      if (mine !== seq.current) return;
+      setPaged((now) => (now ? withPage(now, 0, page, FUEL_BATCH_PAGE) : now));
     } catch (error) {
       showError(error);
     } finally {

@@ -97,8 +97,13 @@ export function BatchSheet({
         if (!detail) return;
         // Only the batch still open, at the submission it shows, and once per submission.
         if (takeIntoReview && takesIntoReview(detail, viewer, opened.current)) {
-          opened.current.add(reviewKey(detail));
-          const reviewed = await api.reviewFuelBatch(id, { seenSubmittedAt: detail.submittedAt });
+          const key = reviewKey(detail);
+          opened.current.add(key);
+          // A failed take is not a taken one: reopening the batch tries again.
+          const reviewed = await api.reviewFuelBatch(id, { seenSubmittedAt: detail.submittedAt }).catch((error: unknown) => {
+            opened.current.delete(key);
+            throw error;
+          });
           onChanged();
           if (!isCurrent(id)) return;
           setBatch(reviewed);

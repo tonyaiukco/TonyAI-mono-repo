@@ -16,6 +16,7 @@ import {
   listFuelBatches,
   login,
   seedFuelFactorFixture,
+  listFuelUploads,
 } from './helpers';
 
 /**
@@ -99,8 +100,7 @@ test('a masterkey reads and applies a Petrol Ofisi file: the associate is exclud
   await expect(page.getByText(`Row 23: ${enErrors.bulkUploadIssues.fuel_duplicate}`)).toBeVisible();
   await expect(page.getByText(`Row 24: ${enErrors.bulkUploadIssues.fuel_cell_missing}`)).toBeVisible();
   expect(await listFuelBatches(request, token)).toHaveLength(0);
-  const none = await request.get(`${API_BASE}/fuel-files`, { headers: bearer(token) });
-  expect(await none.json()).toEqual([]);
+  expect(await listFuelUploads(request, token)).toEqual([]);
 
   // ── Apply: the rows are stored and PO-0001's two invoices form two batches.
   await page.getByRole('button', { name: enFuel.upload.apply }).click();
@@ -131,7 +131,8 @@ test('a masterkey reads and applies a Petrol Ofisi file: the associate is exclud
 
   await page.getByRole('tab', { name: enFuel.tabs.batches, exact: true }).click();
   const rows = page.locator('table tbody tr');
-  await expect(rows).toHaveCount(2);
+  // This file's two invoices (a developer's own batches may be listed beside them locally).
+  await expect(rows.filter({ hasText: new RegExp(`${SHARED_INVOICE}|${SECOND_INVOICE}`) })).toHaveCount(2);
   await expect(rows.filter({ hasText: 'Bosphorus' })).toHaveCount(0);
   await expect(rows.filter({ hasText: SHARED_INVOICE })).toContainText(enFuel.batches.noFiles);
 
@@ -220,8 +221,7 @@ test('the same file again is all duplicates: no row, batch or record is added an
 
   expect(await snapshot()).toEqual(batchesBefore);
   expect(await counted2025(request, token)).toBe(totalBefore);
-  const uploads = await request.get(`${API_BASE}/fuel-files`, { headers: bearer(token) });
-  const listed = (await uploads.json()) as Array<{ rowsRead: number; rowsDuplicate: number; rowsRefused: number; rows: Record<string, { rows: number }> }>;
+  const listed = await listFuelUploads<{ createdAt: string; rowsRead: number; rowsDuplicate: number; rowsRefused: number; rows: Record<string, { rows: number }> }>(request, token);
   expect(listed).toHaveLength(2);
   // Newest first: the repeat stored no row.
   expect(listed[0]).toMatchObject({ rowsRead: ROWS_READ, rowsRefused: 1, rowsDuplicate: ROWS_STORED + 1 });

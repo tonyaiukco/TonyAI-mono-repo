@@ -460,8 +460,9 @@ export class EvidenceService {
     const records = await this.prisma.activityRecord.findMany({ where: { fuelBatchId: batch.id, status: { not: 'voided' } } });
     const ids = records.map((r) => r.id).sort();
     const gone = await this.prisma.$transaction(async (tx) => {
-      await this.lockOpenBatch(tx, user, batch.id, ids);
+      const openBatch = await this.lockOpenBatch(tx, user, batch.id, ids);
       await lockPeriodsShared(tx, records.map(periodOf));
+      await this.lockBatchAuthorAccess(tx, user, openBatch);
       await lockActivityRecordRows(tx, ids);
       // Every record's own refusal, as the upload's: a locked period (a draft
       // batch's records may sit in one) keeps its evidence (security review of PR B).
@@ -490,18 +491,29 @@ export class EvidenceService {
   }
 
   /** The batch row locked; still open, still the caller's (its access re-read), still holding exactly the records read. */
-  private async lockOpenBatch(tx: Prisma.TransactionClient, user: RequestUser, fuelBatchId: string, recordIds: readonly string[]): Promise<void> {
+  private async lockOpenBatch(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    fuelBatchId: string,
+    recordIds: readonly string[],
+  ): Promise<{ subsidiaryId: string; category: string }> {
     const [row] = await tx.$queryRaw<Array<{ status: string; created_by: string; subsidiary_id: string; category: string }>>`
       SELECT status, created_by::text, subsidiary_id::text, category FROM fuel_batches WHERE id = ${fuelBatchId}::uuid FOR UPDATE`;
     if (!row) throw new ResourceNotFoundError('fuel_batch_not_found');
     assertOpenBatchAuthor(user, { status: row.status, createdBy: row.created_by });
-    // The author's role and access to the batch's company and category,
-    // re-read at the write — after the batch row, before the periods — so a
-    // grant withdrawn while the file was uploading attaches nothing (D14; WP9
-    // PR B review, P1).
-    await lockAuthorAccess(tx, user, row.subsidiary_id, row.category, 'edit');
     const now = await tx.activityRecord.findMany({ where: { fuelBatchId, status: { not: 'voided' } }, select: { id: true }, orderBy: { id: 'asc' } });
     if (now.map((r) => r.id).join() !== [...recordIds].sort().join()) throw new RecordChangedError();
+    return { subsidiaryId: row.subsidiary_id, category: row.category };
+  }
+
+  /**
+   * The batch author's role and access to the batch's company and category,
+   * re-read at the write — after the periods, as the record cores do — so a
+   * grant withdrawn while a file was uploading attaches or detaches nothing
+   * (D14; WP9 PR B review, P1).
+   */
+  private async lockBatchAuthorAccess(tx: Prisma.TransactionClient, user: RequestUser, batch: { subsidiaryId: string; category: string }): Promise<void> {
+    await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
   }
 
   /**
@@ -565,8 +577,9 @@ export class EvidenceService {
         // late bytes are never left unnamed (`qa-auditor`, measured).
         await this.intents.adoptUpload(tx, intentId);
         // A batch's file: the batch row first, then periods and records (D9's lock order).
-        if (fuelBatchId !== null) await this.lockOpenBatch(tx, user, fuelBatchId, ids);
+        const batchLocked = fuelBatchId !== null ? await this.lockOpenBatch(tx, user, fuelBatchId, ids) : null;
         await lockPeriodsShared(tx, records.map(periodOf));
+        if (batchLocked) await this.lockBatchAuthorAccess(tx, user, batchLocked);
         const present = await lockActivityRecordRows(tx, ids);
         if (present.size !== ids.length) throw new ResourceNotFoundError('record_not_found');
         const current = await tx.activityRecord.findMany({ where: { id: { in: ids } } });

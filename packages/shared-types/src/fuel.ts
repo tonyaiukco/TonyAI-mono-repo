@@ -561,7 +561,8 @@ export interface WithdrawFuelRowsRequest {
  * (C20; WP9 PR B review, P2).
  */
 export interface FuelWithdrawableDTO {
-  accounts: Array<FuelRowCountDTO & { accountId: string; code: string; name: string; excluded: number }>;
+  /** `name`: null when some of the rows lie outside what the caller reads (its company not granted). */
+  accounts: Array<FuelRowCountDTO & { accountId: string; code: string; name: string | null; excluded: number }>;
   fuelNames: Array<FuelRowCountDTO & { rawName: string }>;
 }
 
@@ -677,11 +678,13 @@ export interface FuelBatchFilters {
   /** The caller's own batches (the Fuel files page's Batches tab). */
   mine?: boolean;
   /**
-   * `GET /fuel-batches` only: the batches to skip, in the list's order — the
-   * next page starts at the count already loaded (`FUEL_BATCH_PAGE` a page;
-   * `/metadata` answers the total). One upload can form hundreds (WP9 PR B review, P2).
+   * `GET /fuel-batches` only: the last batch of the page already loaded; the
+   * next page starts right after it in the list's order (`FUEL_BATCH_PAGE` a
+   * page; `/metadata` answers the total). A cursor, not an offset, so a batch
+   * that leaves an earlier page never makes a later one skip a batch. One
+   * upload can form hundreds (WP9 PR B review, P2).
    */
-  offset?: number;
+  after?: string;
 }
 
 /** `GET /fuel-batches` answers at most this many batches a call. */

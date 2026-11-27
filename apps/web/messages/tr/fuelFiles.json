@@ -117,10 +117,10 @@
     "takenOver": "Yüklemenin pakette olmayan satırları artık sizde.",
     "withdraw": "Satırları geri çek",
     "withdrawTitle": "Bu yüklemenin satırlarını geri çek",
-    "withdrawDescription": "Hiçbir pakette olmayan satırlar — bir hesabınkiler ya da bir yakıt adını bekleyenler — gerekçenizle geri çekilir. Kayıtta kalırlar ve hiçbir toplama girmezler. Bir iştirakin hariç tutulan satırlarını, şirket kontrol edilen şirket olduktan sonra saymak için: satırları geri çekin, hesabın şirketini değiştirin ve dosyayı yeniden yükleyin.",
+    "withdrawDescription": "Hiçbir pakette olmayan satırlar — tek bir hesaba ait olanlar ya da bir yakıt adını bekleyenler — gerekçenizle geri çekilir. Kayıtta kalırlar ve hiçbir toplama girmezler. Bir iştirak kontrol edilen bir şirkete dönüştüğünde hariç tutulan satırlarını toplamlara katmak için: satırları geri çekin, hesabın şirketini değiştirin ve dosyayı yeniden yükleyin.",
     "withdrawChoose": "Geri çekilecek satırlar",
     "withdrawFuelName": "“{name}” yakıt adı",
-    "withdrawExcluded": "{count} hariç tutulan",
+    "withdrawExcluded": "{count} satır hariç tutulmuş",
     "withdrawReason": "Gerekçe",
     "withdrawNone": "Bu yüklemede geri çekebileceğiniz satır yok.",
     "rowsWithdrawn": "Satırlar geri çekildi"

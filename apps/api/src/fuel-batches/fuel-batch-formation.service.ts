@@ -4,6 +4,7 @@ import type { ActivityRecord } from '@tonyai/db';
 import {
   fuelRecordTarget,
   isFileFuel,
+  isFuelHoldReason,
   mayAuthorRecords,
   PERIOD_VALUES,
   type FileFuel,
@@ -132,11 +133,21 @@ export class FuelBatchFormationService {
     }
 
     const summary = await this.uploads.detail(user, upload.id);
+    // The holder's own held rows, by reason — as `processableRows` counts its
+    // own ready rows — so a holder is told how many of its rows a step held,
+    // a company outside its scope included, though the summary's row scope
+    // (RLS's) no longer shows a super_admin those rows: counts and litres
+    // only, no company or fuel (WP9 PR B review).
+    const held = await this.prisma.$queryRaw<Array<{ reason: string; rows: number; litres: string }>>`
+      SELECT hold_reason AS reason, count(*)::int AS rows, sum(litres)::text AS litres FROM fuel_rows
+      WHERE import_batch_id = ${upload.id}::uuid AND holder_id = ${user.id}::uuid AND fuel_batch_id IS NULL
+        AND state = 'held' AND hold_reason IS NOT NULL
+      GROUP BY hold_reason ORDER BY hold_reason`;
     return {
       formedBatches,
       joinedBatches,
       processableRows: summary.processableRows,
-      held: summary.held,
+      held: held.filter((h) => isFuelHoldReason(h.reason)).map((h) => ({ reason: h.reason as FuelHoldReason, rows: h.rows, litres: sumDecimals([h.litres]) })),
       waiting: [
         { reason: 'fuel_account_unmatched' as const, ...summary.rows.waiting_account },
         { reason: 'fuel_name_unmatched' as const, ...summary.rows.waiting_fuel },

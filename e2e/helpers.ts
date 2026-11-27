@@ -1856,6 +1856,18 @@ export interface FuelBatchRead {
 }
 
 /** The fuel batches `token`'s user reads, under the list's filters. */
+/**
+ * When this run's global setup started, less a minute: fuel data made before
+ * it is a developer's own, which `cleanupFuelData` leaves in place, so a spec
+ * never asserts on it (WP9 PR B review). Unset (a spec run alone): everything.
+ */
+function fuelRunStartedAt(): number {
+  const at = Date.parse(process.env.E2E_FUEL_SINCE ?? '');
+  return Number.isNaN(at) ? 0 : at - 60_000;
+}
+const madeThisRun = (row: { createdAt: string }) => Date.parse(row.createdAt) >= fuelRunStartedAt();
+
+/** The fuel batches the caller lists, made during this run. */
 export async function listFuelBatches(
   request: APIRequestContext,
   token: string,
@@ -1863,7 +1875,14 @@ export async function listFuelBatches(
 ): Promise<FuelBatchRead[]> {
   const res = await request.get(`${API_BASE}/fuel-batches?${new URLSearchParams(filters)}`, { headers: bearer(token) });
   if (!res.ok()) throw new Error(`list fuel batches: ${res.status()} ${await res.text()}`);
-  return res.json();
+  return ((await res.json()) as Array<FuelBatchRead & { createdAt: string }>).filter(madeThisRun);
+}
+
+/** The fuel uploads the caller lists (`GET /fuel-files`), made during this run, newest first. */
+export async function listFuelUploads<T extends { createdAt: string }>(request: APIRequestContext, token: string): Promise<T[]> {
+  const res = await request.get(`${API_BASE}/fuel-files`, { headers: bearer(token) });
+  if (!res.ok()) throw new Error(`list fuel uploads: ${res.status()} ${await res.text()}`);
+  return ((await res.json()) as T[]).filter(madeThisRun);
 }
 
 /** One fuel batch with its records and files. */
@@ -1900,7 +1919,7 @@ export async function cleanupFuelData(request: APIRequestContext): Promise<void>
     const imports = (
       await owner.$queryRawUnsafe<Array<{ id: string }>>(
         `SELECT id::text AS id FROM import_batches
-          WHERE organisation_id = $1::uuid AND source IN ('shell', 'petrol_ofisi', 'tanker') AND file_sha256 = ANY($2::text[])`,
+          WHERE organisation_id = $1::uuid AND source IN ('shell', 'petrol_ofisi', 'tanker') AND sha256 = ANY($2::text[])`,
         org.id,
         fixtureHashes,
       )
@@ -1917,6 +1936,18 @@ export async function cleanupFuelData(request: APIRequestContext): Promise<void>
       batches,
       imports,
     );
+    // A row of another upload that replaces one of these keeps it alive: stop before deleting anything.
+    const replacing = await owner.$queryRawUnsafe<Array<{ id: string }>>(
+      `SELECT x.id::text AS id FROM fuel_rows x JOIN fuel_rows r ON x.replaces_id = r.id
+        WHERE r.import_batch_id = ANY($1::uuid[]) AND NOT (x.import_batch_id = ANY($1::uuid[]))`,
+      imports,
+    );
+    if (replacing.length > 0) {
+      throw new Error(
+        `cleanupFuelData: row(s) ${replacing.map((m) => m.id).join(', ')} of an upload the specs did not make replace the specs' rows; ` +
+          'nothing was deleted. Remove that data by hand, then run again.',
+      );
+    }
     if (mixed.length > 0) {
       throw new Error(
         `cleanupFuelData: batch(es) ${mixed.map((m) => m.id).join(', ')} also hold rows of an upload the specs did not make; ` +

@@ -23,6 +23,7 @@ import {
   login,
   pickByFieldLabel,
   seedFuelFactorFixture,
+  listFuelUploads,
 } from './helpers';
 
 /**
@@ -304,7 +305,7 @@ test('a tanker file is read first and declared per delivery; its TOPLAM row is r
   const apply = page.getByRole('button', { name: enFuel.upload.apply });
   await expect(apply).toBeDisabled();
   const token = await getAccessToken(request, APPROVER_EMAIL);
-  expect(await (await request.get(`${API_BASE}/fuel-files`, { headers: bearer(token) })).json()).toEqual([]);
+  expect(await listFuelUploads(request, token)).toEqual([]);
 
   // ── One delivery declared: generator diesel, March 2025. The rest still hold the apply.
   const first = deliveries.filter({ hasText: '000101' });
@@ -326,9 +327,9 @@ test('a tanker file is read first and declared per delivery; its TOPLAM row is r
   await expect(page.getByText('5 rows stored.')).toBeVisible();
 
   // Stored, one row per delivery; no account maps these receiving companies yet, so they wait.
-  const listed = (await (await request.get(`${API_BASE}/fuel-files`, { headers: bearer(token) })).json()) as Array<{
-    source: string; rowsRead: number; rowsRefused: number; rowsDuplicate: number; rows: Record<string, { rows: number; litres: string }>;
-  }>;
+  const listed = await listFuelUploads<{
+    createdAt: string; source: string; rowsRead: number; rowsRefused: number; rowsDuplicate: number; rows: Record<string, { rows: number; litres: string }>;
+  }>(request, token);
   expect(listed).toHaveLength(1);
   expect(listed[0]).toMatchObject({ source: 'tanker', rowsRead: 6, rowsRefused: 1, rowsDuplicate: 0 });
   expect(listed[0].rows.waiting_account.rows).toBe(5);

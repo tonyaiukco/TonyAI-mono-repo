@@ -18,6 +18,8 @@ import {
  * playwright.config.ts before this runs.
  */
 export default async function globalSetup(): Promise<void> {
+  // The run's start: the fuel specs assert only on fuel data made after it (`listFuelBatches`, `listFuelUploads`).
+  process.env.E2E_FUEL_SINCE = new Date().toISOString();
   const ctx = await playwrightRequest.newContext();
   try {
     // Fuel uploads first (inc28-fuel-bulk): a killed fuel spec leaves rows,

@@ -127,8 +127,8 @@ export class FuelUploadsService {
 
   /**
    * `POST /fuel-files/:id/withdraw-rows` (C14, D13): the upload's live rows in
-   * no batch (excluded ones included) of one account or one raw fuel name are
-   * withdrawn — kept, out of every sum, with who, when and why. The holder
+   * no batch (excluded ones included) of one account, or those waiting for one
+   * raw fuel name, are withdrawn — kept, out of every sum, with who, when and why. The holder
    * withdraws the rows it holds; a masterkey any.
    */
   async withdrawRows(user: RequestUser, id: string, request: WithdrawFuelRowsRequest): Promise<FuelUploadDTO> {
@@ -155,7 +155,10 @@ export class FuelUploadsService {
             AND r.fuel_batch_id IS NULL AND r.state = ANY(${[...UNBATCHED_STATES]}::text[])
             AND (${anyHolder} OR r.holder_id = ${user.id}::uuid)
             AND (${accountId}::uuid IS NULL OR r.fuel_account_id = ${accountId}::uuid)
-            AND (${rawFuelName}::text IS NULL OR r.raw_fuel = ${rawFuelName}::text)
+            -- A fuel name withdraws the rows waiting for that name only, never
+            -- one still waiting for an account or excluded under an associate
+            -- (QA review of the WP9 PR B fixes, P2).
+            AND (${rawFuelName}::text IS NULL OR (r.raw_fuel = ${rawFuelName}::text AND r.state = 'waiting_fuel'))
           RETURNING r.fuel_account_id, r.withdrawn_state, r.litres
         )
         SELECT a.code, w.withdrawn_state AS state, count(*)::int AS rows, sum(w.litres)::text AS litres
@@ -187,8 +190,11 @@ export class FuelUploadsService {
     const mayWithdraw = Prisma.sql`r.import_batch_id = ${upload.id}::uuid AND r.organisation_id = ${user.organisationId}::uuid
       AND r.fuel_batch_id IS NULL AND r.state = ANY(${[...UNBATCHED_STATES]}::text[])
       AND (${anyHolder} OR r.holder_id = ${user.id}::uuid)`;
-    const accounts = await this.prisma.$queryRaw<Array<{ id: string; code: string; name: string; rows: number; litres: string; excluded: number }>>`
-      SELECT a.id::text, a.code, a.name, count(*)::int AS rows, sum(r.litres)::text AS litres,
+    // An account's name only when the reader reads every row listed under it;
+    // its code and counts are the caller's own file's (security review of the fixes, P2).
+    const accounts = await this.prisma.$queryRaw<Array<{ id: string; code: string; name: string | null; rows: number; litres: string; excluded: number }>>`
+      SELECT a.id::text, a.code, CASE WHEN bool_and(${fuelRowScopeSql(user, 'r')}) THEN a.name END AS name,
+             count(*)::int AS rows, sum(r.litres)::text AS litres,
              count(*) FILTER (WHERE r.state = 'excluded')::int AS excluded
       FROM fuel_rows r JOIN fuel_accounts a ON a.id = r.fuel_account_id
       WHERE ${mayWithdraw}

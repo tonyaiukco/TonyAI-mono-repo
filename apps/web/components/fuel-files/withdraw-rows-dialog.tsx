@@ -55,7 +55,7 @@ export function WithdrawRowsDialog({ upload, onClose, onDone }: { upload: FuelUp
     const count = `${t(c.rows === 1 ? "rowsOne" : "rowsMany", { count: formatNumber(c.rows, locale) })} · ${t("litres", { litres: formatLitres(c.litres, locale) })}`;
     if (c.kind === "fuel") return `${t("uploads.withdrawFuelName", { name: c.rawName })} · ${count}`;
     const excluded = c.excluded > 0 ? ` · ${t("uploads.withdrawExcluded", { count: formatNumber(c.excluded, locale) })}` : "";
-    return `${c.code} — ${c.name} · ${count}${excluded}`;
+    return `${c.name ? `${c.code} — ${c.name}` : c.code} · ${count}${excluded}`;
   };
 
   async function withdraw() {

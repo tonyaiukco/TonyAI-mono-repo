@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FuelBatchDTO } from "@/lib/types";
-import { appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextOffsets, reviewKey, shownOf, submittableIds, takesIntoReview } from "./fuel-batch-view";
+import { appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, reviewKey, shownOf, submittableIds, takesIntoReview, withPage } from "./fuel-batch-view";
 
 const AUTHOR = { id: "u-author", role: "standard_user" };
 const MASTERKEY = { id: "u-mk", role: "masterkey" };
@@ -94,7 +94,8 @@ describe("a batch list past one page (WP9 PR B review, P2)", () => {
 
   it("asks each filter for its next page until its total is listed", () => {
     const paged = { lists: [many(200), many(40, 500)], totals: [560, 40] };
-    expect(nextOffsets(paged)).toEqual([200, null]);
+    // The cursor is the last batch shown, so a batch leaving an earlier page never shifts the next one.
+    expect(nextCursors(paged)).toEqual(["b199", null]);
     expect(hasMoreBatches(paged)).toBe(true);
     expect(shownOf(paged)).toEqual({ shown: 240, total: 600 });
     expect(hasMoreBatches({ lists: [many(560)], totals: [560] })).toBe(false);
@@ -103,5 +104,25 @@ describe("a batch list past one page (WP9 PR B review, P2)", () => {
   it("appends a page, keeping a batch already listed once", () => {
     const list = appendPage(many(3), [batch({ id: "b2" }), batch({ id: "b3" })]);
     expect(list.map((b) => b.id)).toEqual(["b0", "b1", "b2", "b3"]);
+  });
+});
+
+describe("a short page ends the list (QA review of the WP9 PR B fixes)", () => {
+  const many = (n: number, from = 0) => Array.from({ length: n }, (_, i) => batch({ id: `b${from + i}` }));
+
+  it("keeps offering pages while full ones come back, and stops at a short one even below the stale total", () => {
+    let paged = { lists: [many(200)], totals: [401] };
+    paged = withPage(paged, 0, many(200, 200), 200);
+    expect(hasMoreBatches(paged)).toBe(true);
+    // One batch left the list meanwhile: the last page is empty, not the one expected.
+    paged = withPage(paged, 0, [], 200);
+    expect(paged.totals).toEqual([400]);
+    expect(hasMoreBatches(paged)).toBe(false);
+  });
+
+  it("adds a page to its own filter only", () => {
+    const paged = withPage({ lists: [many(2), many(1, 50)], totals: [2, 5] }, 1, many(2, 51), 200);
+    expect(paged.lists.map((l) => l.map((b) => b.id))).toEqual([["b0", "b1"], ["b50", "b51", "b52"]]);
+    expect(paged.totals).toEqual([2, 3]);
   });
 });

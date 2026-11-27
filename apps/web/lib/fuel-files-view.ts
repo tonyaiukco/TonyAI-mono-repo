@@ -34,13 +34,14 @@ export function uploadActions(
     form: upload.readerIsHolder && upload.processableRows > 0,
     retry: upload.readerIsHolder && upload.held.length > 0,
     takeOver: !upload.readerIsHolder && can(role, "fuel_rows.take_over") && unbatchedRows(upload) > 0,
-    withdraw: can(role, "record.author") && unbatchedRows(upload) + upload.rows.excluded.rows > 0,
+    // `readerIsHolder` counts the holder's own rows whatever their company, which the scoped counts may not show.
+    withdraw: can(role, "record.author") && (upload.readerIsHolder || unbatchedRows(upload) + upload.rows.excluded.rows > 0),
   };
 }
 
 /** One choice of the withdraw dialog: an account's rows, or the rows waiting for one fuel name. */
 export type WithdrawChoice =
-  | { value: string; kind: "account"; accountId: string; code: string; name: string; rows: number; litres: string; excluded: number }
+  | { value: string; kind: "account"; accountId: string; code: string; name: string | null; rows: number; litres: string; excluded: number }
   | { value: string; kind: "fuel"; rawName: string; rows: number; litres: string };
 
 export function withdrawChoices(withdrawable: FuelWithdrawableDTO): WithdrawChoice[] {

@@ -93,13 +93,24 @@ export interface PagedBatches {
   totals: number[];
 }
 
-/** Each filter's next offset, or null once its list holds its total. */
-export function nextOffsets(paged: PagedBatches): Array<number | null> {
-  return paged.lists.map((list, i) => (list.length < (paged.totals[i] ?? 0) ? list.length : null));
+/** Each filter's cursor for its next page (its last batch), or null once its list is complete. */
+export function nextCursors(paged: PagedBatches): Array<string | null> {
+  return paged.lists.map((list, i) => (list.length > 0 && list.length < (paged.totals[i] ?? 0) ? list[list.length - 1]!.id : null));
 }
 
 export function hasMoreBatches(paged: PagedBatches): boolean {
-  return nextOffsets(paged).some((offset) => offset !== null);
+  return nextCursors(paged).some((cursor) => cursor !== null);
+}
+
+/**
+ * A filter's next page added: appended, a batch already listed kept once, and
+ * a page shorter than a full one ends the list (its total is what is listed),
+ * so a batch that left the list meanwhile never leaves "Load more" stuck.
+ */
+export function withPage(paged: PagedBatches, index: number, page: readonly FuelBatchDTO[], pageSize: number): PagedBatches {
+  const lists = paged.lists.map((list, i) => (i === index ? appendPage(list, page) : list));
+  const totals = paged.totals.map((total, i) => (i === index && page.length < pageSize ? lists[i]!.length : total));
+  return { lists, totals };
 }
 
 /** A page appended to a filter's list; a batch already listed (moved between pages) is kept once. */

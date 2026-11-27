@@ -448,7 +448,7 @@ function fuelBatchQuery(filters: FuelBatchFilters): string {
   if (filters.subsidiaryId) search.set("subsidiaryId", filters.subsidiaryId);
   if (filters.awaitingMyDecision) search.set("awaitingMyDecision", "true");
   if (filters.mine) search.set("mine", "true");
-  if (filters.offset) search.set("offset", String(filters.offset));
+  if (filters.after) search.set("after", filters.after);
   const qs = search.toString();
   return qs ? `?${qs}` : "";
 }

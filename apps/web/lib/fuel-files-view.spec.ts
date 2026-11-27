@@ -17,7 +17,9 @@ describe("withdrawing an upload's rows in no batch (WP9 PR B review, P2)", () =>
   it("offers the withdrawal to a role that authors records while any row is in no batch, excluded ones included", () => {
     expect(uploadActions(upload({ excluded: { rows: 4, litres: "80" } }), "standard_user").withdraw).toBe(true);
     expect(uploadActions(upload({ waiting_fuel: { rows: 1, litres: "5" } }), "super_admin").withdraw).toBe(true);
-    expect(uploadActions(upload({ assigned: { rows: 9, litres: "90" } }), "masterkey").withdraw).toBe(false);
+    expect(uploadActions(upload({ assigned: { rows: 9, litres: "90" } }, { readerIsHolder: false }), "masterkey").withdraw).toBe(false);
+    // The holder of rows its scoped counts do not show (another company's): still offered — the server lists them.
+    expect(uploadActions(upload({}, { readerIsHolder: true }), "super_admin").withdraw).toBe(true);
     expect(uploadActions(upload({ excluded: { rows: 4, litres: "80" } }), "auditor").withdraw).toBe(false);
   });
 

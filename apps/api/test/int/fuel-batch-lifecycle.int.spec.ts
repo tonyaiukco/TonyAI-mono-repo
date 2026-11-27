@@ -467,11 +467,17 @@ describe('the batch list past one page (WP9 PR B review, P2)', () => {
     const first = await s.batches.list(user, {});
     expect((await s.batches.metadata(user, {})).total).toBe(3);
     expect(new Set(first.map((b) => b.id))).toEqual(new Set(ids));
-    // Each offset starts where the order says, so pages of any size join into the whole list.
-    for (const offset of [1, 2]) {
-      expect((await s.batches.list(user, { offset })).map((b) => b.id)).toEqual(first.slice(offset).map((b) => b.id));
+    // Each cursor continues right after its batch, so pages of any size join into the whole list.
+    for (const at of [0, 1]) {
+      expect((await s.batches.list(user, { after: first[at]!.id })).map((b) => b.id)).toEqual(first.slice(at + 1).map((b) => b.id));
     }
-    expect(await s.batches.list(user, { offset: 3 })).toEqual([]);
+    expect(await s.batches.list(user, { after: first[2]!.id })).toEqual([]);
+
+    // A batch that leaves a loaded page never makes the next page skip one (QA review of the fixes, P2):
+    // the drafts' first page is read, its first batch is withdrawn, and the page after it is still whole.
+    const drafts = await s.batches.list(user, { status: 'draft' });
+    await s.batches.withdraw(user, drafts[0]!.id, 'left the list');
+    expect((await s.batches.list(user, { status: 'draft', after: drafts[0]!.id })).map((b) => b.id)).toEqual(drafts.slice(1).map((b) => b.id));
   });
 });
 

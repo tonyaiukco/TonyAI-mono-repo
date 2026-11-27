@@ -75,7 +75,12 @@ export function readQuantity(cell: SheetCell | undefined): string | null {
   if (cell === undefined) return null;
   let digits: Digits | null = null;
   if (cell.kind === 'number') {
-    digits = plainDigits(cell.value);
+    // Excel's own precision: 15 significant digits. A formula's double noise
+    // (3 × 1.1 = 3.3000000000000003) is the 3.3 Excel shows and a typed 3.3
+    // is — so one transaction is one key, and nothing a user can type into a
+    // cell is changed (QA review of the WP9 PR B fixes).
+    const value = Number(cell.value);
+    digits = Number.isFinite(value) ? plainDigits(String(Number(value.toPrecision(15)))) : null;
   } else if (cell.kind === 'text') {
     const turkish = TURKISH.exec(cell.value.trim());
     if (turkish) {

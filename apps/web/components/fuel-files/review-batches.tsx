@@ -10,9 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api } from "@/lib/api";
 import { useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatComputedAmount, formatNumber } from "@/lib/i18n/number";
-import { appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextOffsets, shownOf, type PagedBatches } from "@/lib/fuel-batch-view";
+import { batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, shownOf, withPage, type PagedBatches } from "@/lib/fuel-batch-view";
 import { reviewBatchFilters } from "@/lib/review-view";
-import type { AuthUser, Locale } from "@/lib/types";
+import { FUEL_BATCH_PAGE, type AuthUser, type Locale } from "@/lib/types";
 import { BatchSheet } from "./batch-sheet";
 import { RowCount } from "./common";
 
@@ -63,10 +63,10 @@ export function ReviewBatches({
     const mine = seq.current;
     setMore(true);
     try {
-      const offsets = nextOffsets(paged);
-      const pages = await Promise.all(filters.map((f, i) => (offsets[i] === null ? Promise.resolve([]) : api.listFuelBatches({ ...f, offset: offsets[i]! }))));
+      const cursors = nextCursors(paged);
+      const pages = await Promise.all(filters.map((f, i) => (cursors[i] === null ? Promise.resolve(null) : api.listFuelBatches({ ...f, after: cursors[i]! }))));
       if (mine !== seq.current) return;
-      setPaged({ lists: paged.lists.map((list, i) => appendPage(list, pages[i]!)), totals: paged.totals });
+      setPaged((now) => pages.reduce((acc, page, i) => (acc && page ? withPage(acc, i, page, FUEL_BATCH_PAGE) : acc), now));
     } catch (error) {
       showError(error);
     } finally {

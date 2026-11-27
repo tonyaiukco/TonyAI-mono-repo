@@ -88,14 +88,28 @@ export class FuelBatchesService {
   }
 
   async list(user: RequestUser, filters: FuelBatchFilters): Promise<FuelBatchDTO[]> {
-    const where = await this.filterWhere(user, filters);
-    if (where === null) return [];
+    const filtered = await this.filterWhere(user, filters);
+    if (filtered === null) return [];
     const reviewOrder = filters.awaitingMyDecision || filters.status === 'submitted' || filters.status === 'under_review';
+    let where: Prisma.FuelBatchWhereInput = filtered;
+    if (filters.after) {
+      // The batches after the cursor in this list's own total order (the id
+      // breaks ties), compared in SQL at the column's full precision. A cursor
+      // that no longer has a place in the order (recalled: no submission)
+      // answers an empty page, and the screen takes the list as complete.
+      const after = filters.after;
+      const later = reviewOrder
+        ? await this.prisma.$queryRaw<Array<{ id: string }>>`
+            SELECT b.id::text FROM fuel_batches b JOIN fuel_batches c ON c.id = ${after}::uuid
+            WHERE b.organisation_id = ${user.organisationId}::uuid AND (b.submitted_at, b.id) > (c.submitted_at, c.id)`
+        : await this.prisma.$queryRaw<Array<{ id: string }>>`
+            SELECT b.id::text FROM fuel_batches b JOIN fuel_batches c ON c.id = ${after}::uuid
+            WHERE b.organisation_id = ${user.organisationId}::uuid AND (b.created_at, b.id) < (c.created_at, c.id)`;
+      where = { AND: [filtered, { id: { in: later.map((r) => r.id) } }] };
+    }
     const batches = await this.prisma.fuelBatch.findMany({
       where,
       orderBy: reviewOrder ? [{ submittedAt: 'asc' }, { id: 'asc' }] : [{ createdAt: 'desc' }, { id: 'desc' }],
-      // A page in a total order (the id breaks ties), so the next starts where this ended.
-      skip: filters.offset ?? 0,
       take: FUEL_BATCH_PAGE,
     });
     return this.dtos(user, batches);
@@ -276,12 +290,13 @@ export class FuelBatchesService {
         // no record's own status or approver gate would run (QA review of PR B).
         if (seenRecords.length === 0) throw new FuelBatchNotOpenError();
         gate(batch);
-        // The author's own steps: its role and its access to the batch's
-        // company and category re-read at the write, after the batch row and
-        // before the periods (D14; WP9 PR B review, P1).
-        if (action === 'submit' || action === 'recall') await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
         await declareFuelBatchStep(tx, id);
         await lockPeriodsShared(tx, seenRecords.map(periodOf));
+        // The author's own steps: its role and its access to the batch's
+        // company and category re-read at the write — after the periods, as
+        // the record cores do it, so no step waits on a period while holding
+        // the author's rows (D14; WP9 PR B review, P1; lock order: QA review).
+        if (action === 'submit' || action === 'recall') await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
         const now = await tx.activityRecord.findMany({ where: { fuelBatchId: id, status: { not: 'voided' } }, select: { id: true }, orderBy: { id: 'asc' } });
         // A record added or removed since the read: the caller acts on a batch it did not see.
         if (now.map((r) => r.id).join() !== seenRecords.map((r) => r.id).join()) throw new RecordChangedError();
@@ -452,7 +467,6 @@ export class FuelBatchesService {
     try {
       await this.prisma.$transaction(async (tx) => {
         const batch = await this.lockOpen(tx, user, id, false);
-        await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
         await declareFuelBatchStep(tx, id);
         // The declaration as it stood and as it now stands, whole: a tanker
         // batch is one delivery, whose rows share one fuel and period — so the
@@ -477,6 +491,9 @@ export class FuelBatchesService {
           },
         });
         removed.push(...(await this.rebuild(tx, user, { ...batch, usage: change.usage })));
+        // The author's standing at the write, after the rebuild's periods (the
+        // record cores it ran re-read it per record too): a refusal rolls all back.
+        await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
         await this.audit.record(
           user,
           { action: 'update', entity: 'fuel_batch', entityId: id, diff: { declarations: { before, after } } },
@@ -505,10 +522,10 @@ export class FuelBatchesService {
     try {
       await this.prisma.$transaction(async (tx) => {
         const batch = await this.lockOpen(tx, user, id, can(user.role, 'fuel_rows.take_over'));
-        await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
         await declareFuelBatchStep(tx, id);
         const records = await tx.activityRecord.findMany({ where: { fuelBatchId: id, status: { not: 'voided' } }, orderBy: { id: 'asc' } });
         await lockPeriodsShared(tx, records.map(periodOf));
+        await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
         for (const record of records) {
           const current = await this.records.lockSeenRecord(tx, record, user.organisationId);
           removed.push(...(await this.records.removeLocked(tx, user, current)));
