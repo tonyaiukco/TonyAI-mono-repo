@@ -63,3 +63,22 @@ export function isRevised(batch: Pick<FuelBatchDTO, "status" | "submissionCount"
 export function batchTitle(batch: Pick<FuelBatchDTO, "invoiceRef" | "sequence">): string {
   return batch.sequence > 1 ? `${batch.invoiceRef} · #${batch.sequence}` : batch.invoiceRef;
 }
+
+/** One submission of one batch: a resubmission is another (WP9 PR B review, P1). */
+export function reviewKey(batch: Pick<FuelBatchDTO, "id" | "submittedAt">): string {
+  return `${batch.id}@${batch.submittedAt ?? ""}`;
+}
+
+/**
+ * Whether opening this batch from the review queue takes it into review: a
+ * submitted batch the viewer decides, at a submission this sheet has not
+ * taken already — so a batch returned and resubmitted is taken again, and
+ * one reopened at the same submission is not.
+ */
+export function takesIntoReview(
+  batch: Pick<FuelBatchDTO, "id" | "status" | "submittedAt" | "createdBy" | "approver">,
+  viewer: Viewer | null | undefined,
+  taken: ReadonlySet<string>,
+): boolean {
+  return batch.status === "submitted" && batchActions(batch, viewer).decide && !taken.has(reviewKey(batch));
+}

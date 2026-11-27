@@ -16,6 +16,7 @@ import {
   type FileFuel,
   PERIOD_VALUES,
   fuelRecordTarget,
+  mayAuthorRecords,
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
@@ -24,7 +25,8 @@ import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
 import { PrismaService } from '../prisma/prisma.service';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import { declareFuelBatchStep, lockPeriodsShared, periodOf } from '../activity-records/lifecycle-lock';
-import { AuthorOnlyRefusedError, RecordChangedError } from '../activity-records/errors';
+import { AuthorOnlyRefusedError, RecordChangedError, SubmitRoleRefusedError } from '../activity-records/errors';
+import { lockAuthorAccess } from '../central-reporting/record-entities';
 import { approversFor, awaitingDecisionWhere } from '../activity-records/record-approver';
 import { sumDecimals } from '../fuel-files/decimal';
 import { fuelBatchVerdicts } from './fuel-batch-anomaly';
@@ -56,6 +58,9 @@ export class FuelBatchNotOpenError extends ConflictException {
     super(errorBody('fuel_batch_not_open', 'This batch is no longer a draft or returned, so it cannot be changed.'));
   }
 }
+
+/** As a record's own edit refuses a role that may not author records. */
+const ROLE_REFUSAL = 'Your role may not modify activity records';
 
 @Injectable()
 export class FuelBatchesService {
@@ -269,6 +274,10 @@ export class FuelBatchesService {
         // no record's own status or approver gate would run (QA review of PR B).
         if (seenRecords.length === 0) throw new FuelBatchNotOpenError();
         gate(batch);
+        // The author's own steps: its role and its access to the batch's
+        // company and category re-read at the write, after the batch row and
+        // before the periods (D14; WP9 PR B review, P1).
+        if (action === 'submit' || action === 'recall') await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
         await declareFuelBatchStep(tx, id);
         await lockPeriodsShared(tx, seenRecords.map(periodOf));
         const now = await tx.activityRecord.findMany({ where: { fuelBatchId: id, status: { not: 'voided' } }, select: { id: true }, orderBy: { id: 'asc' } });
@@ -297,7 +306,7 @@ export class FuelBatchesService {
     return this.detail(user, id);
   }
 
-  /** A decision names the batch's submission its reviewer saw; a review may name none (D9). */
+  /** A review or a decision names the batch's submission its reviewer saw (D9). */
   private assertSubmission(batch: FuelBatch, seenSubmittedAt: string | null | undefined, required: boolean): void {
     if (seenSubmittedAt === undefined) {
       if (required) throw new RecordChangedError();
@@ -308,6 +317,8 @@ export class FuelBatchesService {
   }
 
   async submit(user: RequestUser, id: string, varianceReason?: string): Promise<FuelBatchDetailDTO> {
+    // As a record's submit: a role that may not author records submits nothing, its own old batch included.
+    if (!mayAuthorRecords(user)) throw new SubmitRoleRefusedError();
     const recomputed = new Map<string, Awaited<ReturnType<ActivityRecordsService['recomputeFor']>>>();
     let verdicts: Awaited<ReturnType<typeof fuelBatchVerdicts>> = {};
     return this.step(
@@ -334,6 +345,7 @@ export class FuelBatchesService {
   }
 
   async recall(user: RequestUser, id: string): Promise<FuelBatchDetailDTO> {
+    if (!mayAuthorRecords(user)) throw new ForbiddenException(ROLE_REFUSAL);
     return this.step(
       user, id, 'recall',
       (batch) => {
@@ -353,7 +365,10 @@ export class FuelBatchesService {
       (batch) => {
         // The batch's own status, as each record's: only a submitted batch is taken into review.
         if (batch.status !== 'submitted') throw new RecordChangedError();
-        this.assertSubmission(batch, seenSubmittedAt, false);
+        // Required, as for a decision: taking a batch into review closes its
+        // author's recall, so it is taken only at the submission the reviewer
+        // was shown (D9; WP9 PR B review, P2).
+        this.assertSubmission(batch, seenSubmittedAt, true);
       },
       (tx, seen, current) => this.records.startReviewLocked(tx, user, seen, current, current.submittedAt?.toISOString() ?? null),
       () => ({ status: 'under_review', reviewedBy: user.id, reviewedAt: new Date() }),
@@ -425,6 +440,7 @@ export class FuelBatchesService {
     id: string,
     change: { usage: FuelUsage; fuel?: FileFuel; year?: number; month?: number },
   ): Promise<FuelBatchDetailDTO> {
+    if (!mayAuthorRecords(user)) throw new ForbiddenException(ROLE_REFUSAL);
     const seenBatch = await this.visible(user, id);
     const tanker = seenBatch.source === 'tanker';
     if (!tanker && (change.fuel !== undefined || change.year !== undefined || change.month !== undefined)) {
@@ -434,6 +450,7 @@ export class FuelBatchesService {
     try {
       await this.prisma.$transaction(async (tx) => {
         const batch = await this.lockOpen(tx, user, id, false);
+        await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
         await declareFuelBatchStep(tx, id);
         const before = { usage: batch.usage };
         await tx.fuelBatch.update({ where: { id }, data: { usage: change.usage, category: usageCategory(change.usage) } });
@@ -469,11 +486,13 @@ export class FuelBatchesService {
     if (typeof reason !== 'string' || reason.trim() === '') {
       throw new BadRequestException(errorBody('validation_failed', 'A withdrawal needs a reason.'));
     }
+    if (!mayAuthorRecords(user)) throw new ForbiddenException(ROLE_REFUSAL);
     await this.visible(user, id);
     const removed: Array<{ id: string; storagePath: string }> = [];
     try {
       await this.prisma.$transaction(async (tx) => {
-        await this.lockOpen(tx, user, id, can(user.role, 'fuel_rows.take_over'));
+        const batch = await this.lockOpen(tx, user, id, can(user.role, 'fuel_rows.take_over'));
+        await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
         await declareFuelBatchStep(tx, id);
         const records = await tx.activityRecord.findMany({ where: { fuelBatchId: id, status: { not: 'voided' } }, orderBy: { id: 'asc' } });
         await lockPeriodsShared(tx, records.map(periodOf));

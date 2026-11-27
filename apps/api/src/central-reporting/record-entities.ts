@@ -3,6 +3,7 @@ import type { Prisma } from '@tonyai/db';
 import {
   can,
   isCategory,
+  mayAuthorRecords,
   reportingEntityFor,
   type Category,
   type RecordParty,
@@ -149,7 +150,11 @@ export async function lockAuthorAccess(
   category: string,
   action: 'create' | 'edit',
 ): Promise<UserAccessRowDTO[] | null> {
-  if (!user.organisationId) throw authorRefusal(action);
+  // Every caller is an authoring write: a role that may not author records
+  // (an auditor, or an author since made one) is refused here as well as at
+  // the request, so no path that reaches a record core through another entry
+  // — a fuel batch's step or formation — writes as a read-only role (WP9 PR B review, P1).
+  if (!user.organisationId || !mayAuthorRecords(user)) throw authorRefusal(action);
   const [author] = await tx.$queryRaw<{ same: boolean }[]>`
     SELECT (p.role::text = ${user.role} AND p.organisation_id = ${user.organisationId}::uuid AND p.disabled_at IS NULL) AS same
       FROM profiles p

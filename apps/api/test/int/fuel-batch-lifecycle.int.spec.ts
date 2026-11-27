@@ -330,6 +330,28 @@ describe('evidence on the batch (task 7.3)', () => {
     expect(await owner.auditLog.count({ where: { entity: 'fuel_batch', entityId: a, action: { in: ['attach', 'detach'] } } })).toBe(2);
   });
 
+  it('gives a record that joins the open batch later the batch’s files, so the batch submits whole (WP9 PR B review, P1)', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025'], 'OZK-EJ');
+    const s = services();
+    const file = await s.evidence.uploadForFuelBatch(user, id, pdfFile());
+    // The same invoice's petrol row arrives in a later file: a new record of the open batch.
+    const code = 'LC-OZK-EJ';
+    const header = ['Satış ID', 'Filo Kod Adı', 'Filo', 'Tarih', 'Tip', 'Miktar', 'Fatura Numarası'];
+    const buffer = xlsx({ sheetData: [sheetRow(1, header), sheetRow(2, ['OZK-EJ-P1', code, 'Fleet', '04.03.2025 08:00', 'Kurşunsuz Benzin 95', 50, 'OZK-EJ'])].join('') });
+    const up = await s.files.apply(user, { buffer, size: buffer.length, originalname: 'g.xlsx' } as Express.Multer.File, {
+      source: 'petrol_ofisi', usage: 'on_road', fileSha256: createHash('sha256').update(buffer).digest('hex'),
+    });
+    expect(await s.formation.formBatches(user, up.id)).toMatchObject({ joinedBatches: 1, formedBatches: 0 });
+    const records = await owner.activityRecord.findMany({ where: { fuelBatchId: id }, orderBy: { createdAt: 'asc' } });
+    expect(records).toHaveLength(2);
+    expect(await links(file.id)).toBe(2);
+    const joinedAudit = await owner.auditLog.findFirstOrThrow({ where: { entity: 'fuel_batch', entityId: id, action: 'update' }, orderBy: { createdAt: 'desc' } });
+    expect((joinedAudit.diff as { fuelBatch: { filesLinked?: number } }).fuelBatch.filesLinked).toBe(1);
+    await s.batches.submit(user, id);
+    expect(await statuses(id)).toEqual(['submitted', 'submitted']);
+  });
+
   it('refuses attach and detach on a submitted batch, and a submit after the only file is taken off', async () => {
     const user = await masterkey();
     const id = await formedBatch(user, ['03.03.2025'], 'OZK-ES');
@@ -352,6 +374,65 @@ describe('evidence on the batch (task 7.3)', () => {
       expect(errorCodeOf(submit.reason)).toBe('evidence_required');
       expect(batch.status).toBe('draft');
     }
+  });
+});
+
+describe('the author’s standing at the write (WP9 PR B review, P1)', () => {
+  /** Rows of on-road diesel applied, not formed. */
+  async function applyRows(user: RequestUser, dates: string[], invoice: string): Promise<string> {
+    const code = `LC-${invoice}`;
+    const header = ['Satış ID', 'Filo Kod Adı', 'Filo', 'Tarih', 'Tip', 'Miktar', 'Fatura Numarası'];
+    const buffer = xlsx({
+      sheetData: [sheetRow(1, header), ...dates.map((d, i) => sheetRow(i + 2, [`${invoice}-${d}`, code, 'Fleet', `${d} 08:00`, 'Motorin', 100, invoice]))].join(''),
+    });
+    const up = await services().files.apply(user, { buffer, size: buffer.length, originalname: 'f.xlsx' } as Express.Multer.File, {
+      source: 'petrol_ofisi', usage: 'on_road', fileSha256: createHash('sha256').update(buffer).digest('hex'),
+    });
+    return up.id;
+  }
+  const refusal = (p: Promise<unknown>) => p.then(() => 'allowed', (e: unknown) => errorCodeOf(e) ?? (e as { getStatus?: () => number }).getStatus?.() ?? String(e));
+
+  it('attaches no file, submits nothing and changes no declaration once the author’s grant is withdrawn after the request (D14)', async () => {
+    const author = tenant.users.standardUser;
+    const id = await formedBatch(author, ['03.03.2025'], 'OZK-GR');
+    await withEvidence(id);
+    const recordIds = (await owner.activityRecord.findMany({ where: { fuelBatchId: id }, select: { id: true } })).map((r) => r.id);
+    const linksBefore = await owner.activityRecordEvidence.count({ where: { activityRecordId: { in: recordIds } } });
+    // The grant goes; the request, authorised before, still names it.
+    await owner.userSubsidiaryAccess.deleteMany({ where: { userId: author.id } });
+    const s = services();
+    expect(await refusal(s.evidence.uploadForFuelBatch(author, id, pdfFile()))).toBe('subsidiary_not_found');
+    expect(await owner.activityRecordEvidence.count({ where: { activityRecordId: { in: recordIds } } })).toBe(linksBefore);
+    expect(await refusal(s.batches.submit(author, id))).toBe('subsidiary_not_found');
+    expect(await refusal(s.batches.changeDeclarations(author, id, { usage: 'off_road' }))).toBe('subsidiary_not_found');
+    expect(await refusal(s.batches.withdraw(author, id, 'gone'))).toBe('subsidiary_not_found');
+    expect(await statuses(id)).toEqual(['draft']);
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id } })).usage).toBe('on_road');
+    expect(await owner.auditLog.count({ where: { entity: 'fuel_batch', entityId: id, action: { in: ['attach', 'submit', 'update', 'retract'] } } })).toBe(0);
+  });
+
+  it('moves nothing for an author since made an auditor: no submit, no formation, and no row joins its existing record', async () => {
+    const author = tenant.users.standardUser;
+    const id = await formedBatch(author, ['03.03.2025'], 'OZK-RO');
+    await withEvidence(id);
+    const before = await owner.activityRecord.findMany({ where: { fuelBatchId: id }, orderBy: { id: 'asc' } });
+    // A later row of the same invoice and month, applied while still an author.
+    const upload = await applyRows(author, ['10.03.2025'], 'OZK-RO');
+    await owner.profile.update({ where: { id: author.id }, data: { role: 'auditor' } });
+    const s = services();
+    const asAuditor: RequestUser = { ...author, role: 'auditor' };
+    expect(await refusal(s.batches.submit(asAuditor, id))).toBe('record_submit_forbidden');
+    expect(await refusal(s.formation.formBatches(asAuditor, upload))).toBe(403);
+    // The request authorised before the role change: refused under lock, in the join too.
+    expect(await refusal(s.batches.submit(author, id))).toBe(403);
+    await s.formation.formBatches(author, upload);
+    const joined = await owner.fuelRow.findFirstOrThrow({ where: { importBatchId: upload } });
+    expect(joined.fuelBatchId).toBeNull();
+    expect(joined.state).toBe('held');
+    const after = await owner.activityRecord.findMany({ where: { fuelBatchId: id }, orderBy: { id: 'asc' } });
+    expect(after.map((r) => [r.id, r.status, JSON.stringify(r.parameters), r.updatedAt.getTime()])).toEqual(
+      before.map((r) => [r.id, r.status, JSON.stringify(r.parameters), r.updatedAt.getTime()]),
+    );
   });
 });
 

@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { useErrorToast } from "@/lib/i18n/hooks";
 import { formatComputedAmount, formatNumber } from "@/lib/i18n/number";
-import { batchActions, batchTitle, isRevised, type Viewer } from "@/lib/fuel-batch-view";
+import { batchActions, batchTitle, isRevised, reviewKey, takesIntoReview, type Viewer } from "@/lib/fuel-batch-view";
 import {
   FILE_FUELS,
   FUEL_USAGES,
@@ -63,10 +63,16 @@ export function BatchSheet({
   const [variance, setVariance] = useState("");
   const [declared, setDeclared] = useState<{ usage?: FuelUsage; fuel?: FileFuel; year?: number; month?: number }>({});
   const file = useRef<HTMLInputElement>(null);
-  const opened = useRef<string | null>(null);
+  /** The submissions this sheet has taken into review, by batch and submission (a resubmission is a new one). */
+  const opened = useRef<Set<string>>(new Set());
+  /** The batch open now: an answer for any other is late and dropped (WP9 PR B review, P1). */
+  const current = useRef<string | null>(batchId);
+  current.current = batchId;
+  const isCurrent = (id: string) => current.current === id;
 
   const load = useCallback(async (id: string) => {
     const detail = await api.getFuelBatch(id);
+    if (current.current !== id) return null;
     setBatch(detail);
     setDeclared({ usage: detail.usage });
     return detail;
@@ -74,6 +80,7 @@ export function BatchSheet({
 
   const loadRows = useCallback(async (id: string, offset: number) => {
     const page = await api.fuelBatchRows(id, { offset, limit: ROW_PAGE });
+    if (current.current !== id) return;
     setRows({ ...page, offset });
   }, []);
 
@@ -83,18 +90,22 @@ export function BatchSheet({
     setReason("");
     setVariance("");
     if (!batchId) return;
+    const id = batchId;
     (async () => {
       try {
-        let detail = await load(batchId);
-        if (takeIntoReview && detail.status === "submitted" && batchActions(detail, viewer).decide && opened.current !== batchId) {
-          opened.current = batchId;
-          detail = await api.reviewFuelBatch(batchId, { seenSubmittedAt: detail.submittedAt });
-          setBatch(detail);
+        const detail = await load(id);
+        if (!detail) return;
+        // Only the batch still open, at the submission it shows, and once per submission.
+        if (takeIntoReview && takesIntoReview(detail, viewer, opened.current)) {
+          opened.current.add(reviewKey(detail));
+          const reviewed = await api.reviewFuelBatch(id, { seenSubmittedAt: detail.submittedAt });
           onChanged();
+          if (!isCurrent(id)) return;
+          setBatch(reviewed);
         }
-        await loadRows(batchId, 0);
+        await loadRows(id, 0);
       } catch (error) {
-        showError(error);
+        if (isCurrent(id)) showError(error);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -102,18 +113,21 @@ export function BatchSheet({
 
   async function run(step: () => Promise<FuelBatchDetailDTO | unknown>, done: string, close = false) {
     if (!batch) return;
+    // The batch shown when the button was pressed: its answer never lands on another.
+    const id = batch.id;
     setBusy(true);
     try {
       const out = await step();
       toast.success(done);
       onChanged();
+      if (!isCurrent(id)) return;
       if (close) onClose();
       else if (out && typeof out === "object" && "records" in (out as object)) setBatch(out as FuelBatchDetailDTO);
-      else await load(batch.id);
+      else await load(id);
     } catch (error) {
       showError(error);
       // A stale answer (recalled, resubmitted, decided elsewhere): show the batch as it is now.
-      await load(batch.id).catch(() => undefined);
+      await load(id).catch(() => undefined);
     } finally {
       setBusy(false);
     }

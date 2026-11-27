@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FuelBatchDTO } from "@/lib/types";
-import { batchActions, batchTitle, isRevised, submittableIds } from "./fuel-batch-view";
+import { batchActions, batchTitle, isRevised, reviewKey, submittableIds, takesIntoReview } from "./fuel-batch-view";
 
 const AUTHOR = { id: "u-author", role: "standard_user" };
 const MASTERKEY = { id: "u-mk", role: "masterkey" };
@@ -60,5 +60,31 @@ describe("the Batches tab's selection and marks", () => {
   it("names a further batch of an invoice by its sequence", () => {
     expect(batchTitle(batch())).toBe("OZK-1");
     expect(batchTitle(batch({ sequence: 2 }))).toBe("OZK-1 · #2");
+  });
+});
+
+describe("taking a batch into review from the queue (WP9 PR B review, P1)", () => {
+  const first = "2026-11-20T10:00:00.000Z";
+  const second = "2026-11-21T09:00:00.000Z";
+  const pending = (over: Partial<FuelBatchDTO> = {}) => batch({ status: "submitted", approver: "super_admin", submittedAt: first, ...over });
+
+  it("keys a submission by batch and submission time", () => {
+    expect(reviewKey(pending())).not.toBe(reviewKey(pending({ submittedAt: second })));
+    expect(reviewKey(pending())).not.toBe(reviewKey(pending({ id: "b2" })));
+  });
+
+  it("takes a submission once, and a resubmission of the same batch again", () => {
+    const taken = new Set<string>();
+    expect(takesIntoReview(pending(), SUPER, taken)).toBe(true);
+    taken.add(reviewKey(pending()));
+    expect(takesIntoReview(pending(), SUPER, taken)).toBe(false);
+    // Returned, resubmitted: a new submission is taken although no other batch was opened between.
+    expect(takesIntoReview(pending({ submittedAt: second }), SUPER, taken)).toBe(true);
+  });
+
+  it("never takes a batch the viewer does not decide, or one not submitted", () => {
+    expect(takesIntoReview(pending(), AUDITOR, new Set())).toBe(false);
+    expect(takesIntoReview(pending(), AUTHOR, new Set())).toBe(false);
+    expect(takesIntoReview(pending({ status: "under_review" }), SUPER, new Set())).toBe(false);
   });
 });

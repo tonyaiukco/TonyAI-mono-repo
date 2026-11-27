@@ -1,7 +1,7 @@
 import { expect, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import {
   CATEGORIES,
@@ -1874,33 +1874,73 @@ export async function getFuelBatch(request: APIRequestContext, token: string, id
 }
 
 /**
- * Remove every fuel upload of the seed organisation and what it made, leaving
- * the seed's two accounts as seeded: the batches' records (each inside a step
- * that declares its batch for the transaction — TA029 refuses even the owner
- * otherwise, as `apps/api/test/int/db.ts` does it), the rows (replacements
- * before what they replace), the batches, the accounts first seen by an
- * upload, and the fuel imports. The files the records held are read first and
- * deleted once no record links them. Owner and service role, local only.
+ * Remove what the fuel specs uploaded, and only that (WP9 PR B review, P1):
+ * the seed organisation's fuel imports whose file is one of `FUEL_FIXTURES`
+ * (matched by SHA-256 — the specs upload nothing else), their rows
+ * (replacements before what they replace), the batches those rows formed and
+ * their records (each deleted inside a step that declares its batch for the
+ * transaction — TA029 refuses even the owner otherwise, as
+ * `apps/api/test/int/db.ts` does it), the accounts first seen by those
+ * imports once no row or batch is left on them (never the seed's two), and
+ * the files the records held once no record links them. A developer's own
+ * uploads, batches and accounts are never touched; a batch that also holds a
+ * row of another upload stops the cleanup with nothing deleted rather than
+ * take that row's batch with it. Owner and service role, local only.
  */
 export async function cleanupFuelData(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
   assertLocalTarget(url);
-  const files = await evidenceFilesFor(
-    request,
-    'select=id,storage_path,activity_record_evidence!inner(activity_records!inner(id))' +
-      '&activity_record_evidence.activity_records.fuel_batch_id=not.is.null',
-  );
-  await withOwner(async (owner) => {
+  const fixtureHashes = Object.values(FUEL_FIXTURES).map((path) => createHash('sha256').update(readFileSync(path)).digest('hex'));
+  const scope = await withOwner(async (owner) => {
     const [org] = await owner.$queryRawUnsafe<Array<{ id: string }>>(
       'SELECT organisation_id::text AS id FROM subsidiaries WHERE id = $1::uuid',
       SUB.energy,
     );
     if (!org) throw new Error('cleanupFuelData: the seed organisation is missing');
-    const batches = await owner.$queryRawUnsafe<Array<{ id: string }>>(
-      'SELECT id::text AS id FROM fuel_batches WHERE organisation_id = $1::uuid',
-      org.id,
+    const imports = (
+      await owner.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT id::text AS id FROM import_batches
+          WHERE organisation_id = $1::uuid AND source IN ('shell', 'petrol_ofisi', 'tanker') AND file_sha256 = ANY($2::text[])`,
+        org.id,
+        fixtureHashes,
+      )
+    ).map((r) => r.id);
+    if (imports.length === 0) return null;
+    const batches = (
+      await owner.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT DISTINCT fuel_batch_id::text AS id FROM fuel_rows WHERE import_batch_id = ANY($1::uuid[]) AND fuel_batch_id IS NOT NULL`,
+        imports,
+      )
+    ).map((r) => r.id);
+    const mixed = await owner.$queryRawUnsafe<Array<{ id: string }>>(
+      `SELECT DISTINCT fuel_batch_id::text AS id FROM fuel_rows WHERE fuel_batch_id = ANY($1::uuid[]) AND NOT (import_batch_id = ANY($2::uuid[]))`,
+      batches,
+      imports,
     );
-    for (const { id } of batches) {
+    if (mixed.length > 0) {
+      throw new Error(
+        `cleanupFuelData: batch(es) ${mixed.map((m) => m.id).join(', ')} also hold rows of an upload the specs did not make; ` +
+          'nothing was deleted. Withdraw or remove that data by hand, then run again.',
+      );
+    }
+    const accounts = (
+      await owner.$queryRawUnsafe<Array<{ id: string }>>(
+        'SELECT DISTINCT fuel_account_id::text AS id FROM fuel_rows WHERE import_batch_id = ANY($1::uuid[])',
+        imports,
+      )
+    ).map((r) => r.id);
+    return { orgId: org.id, imports, batches, accounts };
+  });
+  if (!scope) return;
+  const files = scope.batches.length
+    ? await evidenceFilesFor(
+        request,
+        'select=id,storage_path,activity_record_evidence!inner(activity_records!inner(id))' +
+          `&activity_record_evidence.activity_records.fuel_batch_id=in.(${scope.batches.join(',')})`,
+      )
+    : [];
+  await withOwner(async (owner) => {
+    for (const id of scope.batches) {
       await owner.$transaction(async (tx) => {
         await tx.$queryRawUnsafe(
           `SELECT set_config('tonyai.fuel_batch_step', $1::text || ':' || pg_current_xact_id()::text, true)`,
@@ -1911,22 +1951,21 @@ export async function cleanupFuelData(request: APIRequestContext): Promise<void>
     }
     for (;;) {
       const removed = await owner.$executeRawUnsafe(
-        `DELETE FROM fuel_rows r WHERE r.organisation_id = $1::uuid
+        `DELETE FROM fuel_rows r WHERE r.import_batch_id = ANY($1::uuid[])
            AND NOT EXISTS (SELECT 1 FROM fuel_rows x WHERE x.replaces_id = r.id)`,
-        org.id,
+        scope.imports,
       );
       if (removed === 0) break;
     }
-    await owner.$executeRawUnsafe('DELETE FROM fuel_batches WHERE organisation_id = $1::uuid', org.id);
+    await owner.$executeRawUnsafe('DELETE FROM fuel_batches WHERE id = ANY($1::uuid[])', scope.batches);
     await owner.$executeRawUnsafe(
-      'DELETE FROM fuel_accounts WHERE organisation_id = $1::uuid AND NOT (id = ANY($2::uuid[]))',
-      org.id,
+      `DELETE FROM fuel_accounts a WHERE a.id = ANY($1::uuid[]) AND NOT (a.id = ANY($2::uuid[]))
+         AND NOT EXISTS (SELECT 1 FROM fuel_rows r WHERE r.fuel_account_id = a.id)
+         AND NOT EXISTS (SELECT 1 FROM fuel_batches b WHERE b.fuel_account_id = a.id)`,
+      scope.accounts,
       [...SEED_FUEL_ACCOUNT_IDS],
     );
-    await owner.$executeRawUnsafe(
-      `DELETE FROM import_batches WHERE organisation_id = $1::uuid AND source IN ('shell', 'petrol_ofisi', 'tanker')`,
-      org.id,
-    );
+    await owner.$executeRawUnsafe('DELETE FROM import_batches WHERE id = ANY($1::uuid[])', scope.imports);
   });
   reportCleanup(await removeUnlinkedEvidence(request, files));
 }

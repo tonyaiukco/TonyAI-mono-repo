@@ -4,6 +4,7 @@ import type { ActivityRecord } from '@tonyai/db';
 import {
   fuelRecordTarget,
   isFileFuel,
+  mayAuthorRecords,
   PERIOD_VALUES,
   type FileFuel,
   type FormFuelBatchesResultDTO,
@@ -98,6 +99,8 @@ export class FuelBatchFormationService {
   async formBatches(user: RequestUser, importId: string, options: { retryHeld?: boolean } = {}): Promise<FormFuelBatchesResultDTO> {
     const upload = await this.uploads.visibleUpload(user, importId, { asHolder: true });
     // Only the rows' holder forms their batches (C8): another user, a super_admin included, is refused.
+    // A holder since made a read-only role forms nothing (WP9 PR B review, P1); the record cores refuse it again under lock.
+    if (!mayAuthorRecords(user)) throw new ForbiddenException();
     if (!(await this.holdsAny(user, upload.id))) throw new ForbiddenException();
 
     if (options.retryHeld) {
@@ -239,6 +242,17 @@ export class FuelBatchFormationService {
           periodValue: PERIOD_VALUES.monthly[sum.month - 1]!,
         })),
       );
+      // An open batch's files back every record it holds: a record this step
+      // adds to it (a new fuel or month of the invoice) is given them too, as
+      // the declarations' rebuild does, under the batch's row lock (WP9 PR B review, P1).
+      const files = open
+        ? await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT DISTINCT l.evidence_id::text AS id FROM activity_record_evidence l
+            JOIN activity_records a ON a.id = l.activity_record_id
+            WHERE a.fuel_batch_id = ${batchId}::uuid AND a.status <> 'voided'
+            ORDER BY 1`
+        : [];
+      let filesLinked = 0;
       for (const [k, sum] of [...sums.entries()].sort(([a], [b]) => a.localeCompare(b))) {
         const target = fuelRecordTarget(sum.fuel, key.usage)!;
         const quantity = Number(sumDecimals(sum.litres));
@@ -262,10 +276,17 @@ export class FuelBatchFormationService {
           ...(source === 'shell' ? {} : { input: { invoice_no: key.invoiceRef } }),
         }) as CreateActivityRecordDto;
         const prepared = await this.records.previewCreate(user, dto, { fuelBatchId: batchId });
+        let created: { id: string };
         try {
-          await this.records.createInTransaction(tx, user, dto, prepared, { fuelBatchId: batchId });
+          created = await this.records.createInTransaction(tx, user, dto, prepared, { fuelBatchId: batchId });
         } catch (error) {
           throw this.records.createRefusal(error, dto, prepared);
+        }
+        if (files.length) {
+          await tx.activityRecordEvidence.createMany({
+            data: files.map((f) => ({ activityRecordId: created.id, evidenceId: f.id, subsidiaryId, linkedBy: user.id })),
+          });
+          filesLinked += files.length;
         }
       }
 
@@ -286,6 +307,7 @@ export class FuelBatchFormationService {
               usage: key.usage,
               rowsAdded: rows.length,
               litresAdded: sumDecimals(rows.map((r) => r.litres)),
+              ...(filesLinked ? { filesLinked } : {}),
             },
           },
         },

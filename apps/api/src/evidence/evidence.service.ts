@@ -33,6 +33,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { inRecordScope } from '../activity-records/record-scope';
 import { AuditService } from '../audit/audit.service';
 import { PeriodLockedError, RecordChangedError, RecordInBatchError } from '../activity-records/errors';
+import { lockAuthorAccess } from '../central-reporting/record-entities';
 import { fuelBatchScopeWhere } from '../fuel-batches/fuel-batch-scope';
 import {
   LIFECYCLE_TX,
@@ -488,12 +489,17 @@ export class EvidenceService {
     return { fileDeleted: gone.length > 0 };
   }
 
-  /** The batch row locked; still open, still the caller's, still holding exactly the records read. */
+  /** The batch row locked; still open, still the caller's (its access re-read), still holding exactly the records read. */
   private async lockOpenBatch(tx: Prisma.TransactionClient, user: RequestUser, fuelBatchId: string, recordIds: readonly string[]): Promise<void> {
-    const [row] = await tx.$queryRaw<Array<{ status: string; created_by: string }>>`
-      SELECT status, created_by::text FROM fuel_batches WHERE id = ${fuelBatchId}::uuid FOR UPDATE`;
+    const [row] = await tx.$queryRaw<Array<{ status: string; created_by: string; subsidiary_id: string; category: string }>>`
+      SELECT status, created_by::text, subsidiary_id::text, category FROM fuel_batches WHERE id = ${fuelBatchId}::uuid FOR UPDATE`;
     if (!row) throw new ResourceNotFoundError('fuel_batch_not_found');
     assertOpenBatchAuthor(user, { status: row.status, createdBy: row.created_by });
+    // The author's role and access to the batch's company and category,
+    // re-read at the write — after the batch row, before the periods — so a
+    // grant withdrawn while the file was uploading attaches nothing (D14; WP9
+    // PR B review, P1).
+    await lockAuthorAccess(tx, user, row.subsidiary_id, row.category, 'edit');
     const now = await tx.activityRecord.findMany({ where: { fuelBatchId, status: { not: 'voided' } }, select: { id: true }, orderBy: { id: 'asc' } });
     if (now.map((r) => r.id).join() !== [...recordIds].sort().join()) throw new RecordChangedError();
   }

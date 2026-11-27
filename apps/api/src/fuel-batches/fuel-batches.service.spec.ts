@@ -9,6 +9,11 @@ import type { ActivityRecordsService } from '../activity-records/activity-record
 import type { EvidenceService } from '../evidence/evidence.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import { FuelBatchesService } from './fuel-batches.service';
+import { lockAuthorAccess } from '../central-reporting/record-entities';
+
+// The author's standing re-read under lock is proven against the database
+// (`test/int/fuel-batch-lifecycle.int.spec.ts`); here, only when it is asked.
+vi.mock('../central-reporting/record-entities', () => ({ lockAuthorAccess: vi.fn(async () => null) }));
 
 /**
  * DB-free: the refusals the batch step owns (inc28-fuel-bulk D9; task 7.1) —
@@ -42,6 +47,7 @@ const batchOf = (over: Partial<FuelBatch> = {}): FuelBatch =>
     id: BATCH,
     organisationId: ORG,
     subsidiaryId: COMPANY,
+    category: 'Mobile Combustion',
     status: 'draft',
     createdBy: AUTHOR,
     submittedAt: null,
@@ -221,5 +227,53 @@ describe('FuelBatchesService — the step’s own refusals (task 7.1)', () => {
     const other = harness(pending);
     await other.service.approve(user('super_admin', 'r'), BATCH, SUBMITTED_AT.toISOString());
     expect(other.audit.record).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'approve' }), other.tx);
+  });
+});
+
+describe('FuelBatchesService — the author’s standing at the write (WP9 PR B review, P1)', () => {
+  it('refuses an author since made an auditor before reading anything: submit, recall, declarations, withdraw', async () => {
+    const h = harness(batchOf());
+    const auditor = user('auditor');
+    expect(await codeOf(h.service.submit(auditor, BATCH))).toBe('record_submit_forbidden');
+    expect(await codeOf(h.service.recall(auditor, BATCH))).toBe(403);
+    expect(await codeOf(h.service.changeDeclarations(auditor, BATCH, { usage: 'on_road' }))).toBe(403);
+    expect(await codeOf(h.service.withdraw(auditor, BATCH, 'why'))).toBe(403);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    expect(h.prisma.fuelBatch.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('re-reads the author’s access to the batch’s company and category inside submit and recall, never inside a decision', async () => {
+    vi.mocked(lockAuthorAccess).mockClear();
+    const h = harness(batchOf());
+    expect(await codeOf(h.service.submit(user('standard_user'), BATCH))).toBe('ok');
+    expect(lockAuthorAccess).toHaveBeenCalledWith(h.tx, user('standard_user'), COMPANY, 'Mobile Combustion', 'edit');
+    const submitted = batchOf({ status: 'submitted', submittedAt: SUBMITTED_AT, submissionCount: 1 });
+    vi.mocked(lockAuthorAccess).mockClear();
+    expect(await codeOf(harness(submitted).service.recall(user('standard_user'), BATCH))).toBe('ok');
+    expect(lockAuthorAccess).toHaveBeenCalledTimes(1);
+    vi.mocked(lockAuthorAccess).mockClear();
+    expect(await codeOf(harness(submitted).service.startReview(user('super_admin', 'r'), BATCH, SUBMITTED_AT.toISOString()))).toBe('ok');
+    expect(lockAuthorAccess).not.toHaveBeenCalled();
+  });
+
+  it('stops the step when the re-read refuses (a grant withdrawn since the request): no record, batch or audit row moves', async () => {
+    vi.mocked(lockAuthorAccess).mockRejectedValueOnce(new ForbiddenException('Your role may not modify activity records'));
+    const h = harness(batchOf());
+    expect(await codeOf(h.service.submit(user('standard_user'), BATCH))).toBe(403);
+    expect(h.records.submitLocked).not.toHaveBeenCalled();
+    expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
+    expect(h.audit.record).not.toHaveBeenCalled();
+  });
+});
+
+describe('taking a batch into review names the submission shown (WP9 PR B review, P2)', () => {
+  it('refuses a review that names no submission, or another one, and moves nothing', async () => {
+    const submitted = batchOf({ status: 'submitted', submittedAt: SUBMITTED_AT, submissionCount: 1 });
+    for (const seen of [undefined, '2026-11-19T10:00:00.000Z']) {
+      const h = harness(submitted);
+      expect(await codeOf(h.service.startReview(user('super_admin', 'r'), BATCH, seen))).toBe('record_changed');
+      expect(h.records.startReviewLocked).not.toHaveBeenCalled();
+      expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
+    }
   });
 });
