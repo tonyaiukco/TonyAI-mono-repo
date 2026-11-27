@@ -1,4 +1,4 @@
-import type { FuelBatchDTO, ManualFuel } from './fuel';
+import type { FileFuel, FuelBatchDTO, ManualFuel } from './fuel';
 import type { EvidenceDTO } from './index';
 
 export const EVIDENCE_READING_STATUSES = [
@@ -32,12 +32,13 @@ export interface EvidenceAssistantInvoiceDTO {
   pageTo: number;
 }
 
-export interface EvidenceAssistantLineDTO {
-  /**
-   * A batch's lines are always a file fuel (diesel or petrol). A manual record's
-   * line carries the record's own fuel, which may be on-road LPG in litres.
-   */
-  fuel: ManualFuel;
+/**
+ * One fuel line of a comparison. A batch's lines are always a file fuel (diesel
+ * or petrol, the default); a manual record's line carries the record's own fuel,
+ * which may be on-road LPG in litres (C6).
+ */
+export interface EvidenceAssistantLineDTO<F extends ManualFuel = FileFuel> {
+  fuel: F;
   /** Decimal strings keep the precision of the invoice and fuel rows. */
   invoiceLitres: string | null;
   packageLitres: string | null;
@@ -45,13 +46,15 @@ export interface EvidenceAssistantLineDTO {
   periodShift: boolean;
 }
 
-type EvidenceAssistantComparisonDTO = {
+type EvidenceAssistantComparisonBase = {
   enabled: true;
   tolerancePercent: number;
   invoice: EvidenceAssistantInvoiceDTO;
   unread?: never;
   otherLines: { product: string; litres: string }[];
-} & (
+};
+
+type EvidenceAssistantComparisonDTO = EvidenceAssistantComparisonBase & (
   | { level: 'package'; lines: EvidenceAssistantLineDTO[] }
   | {
       level: 'invoice';
@@ -64,10 +67,22 @@ type EvidenceAssistantComparisonDTO = {
     }
 );
 
-export type EvidenceAssistantDTO =
+type EvidenceAssistantOffOrUnread =
   | { enabled: false }
-  | { enabled: true; tolerancePercent: number; unread: { reason: EvidenceAssistantUnreadReason }; invoice?: never }
-  | EvidenceAssistantComparisonDTO;
+  | { enabled: true; tolerancePercent: number; unread: { reason: EvidenceAssistantUnreadReason }; invoice?: never };
+
+/** `GET /fuel-batches/:id/evidence-assistant`: lines are file fuels only. */
+export type EvidenceAssistantDTO = EvidenceAssistantOffOrUnread | EvidenceAssistantComparisonDTO;
+
+/**
+ * `GET /activity-records/:id/evidence-assistant` (C6): a manual record is a
+ * package of one record compared on its own figure. The shared-invoice rules
+ * read fuel rows and accounts, which a manual record has not, so its comparison
+ * is package-level only.
+ */
+export type EvidenceAssistantRecordDTO =
+  | EvidenceAssistantOffOrUnread
+  | (EvidenceAssistantComparisonBase & { level: 'package'; lines: EvidenceAssistantLineDTO<ManualFuel>[] });
 
 export const EVIDENCE_SPLIT_NOT_ATTACHED_REASONS = [
   'no_eligible_batch', 'manual_attachment_required', 'unverified_part', 'attachment_failed',

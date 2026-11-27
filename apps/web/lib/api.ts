@@ -32,6 +32,7 @@ import type {
   ReleaseParametersQuery,
   ActivityRecordDTO,
   EvidenceAssistantDTO,
+  EvidenceAssistantRecordDTO,
   FuelBatchEvidenceUploadDTO,
   RecordAuditTrailDTO,
   ApproveInput,
@@ -704,7 +705,7 @@ export const api = {
   getActivityRecord: (id: string) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${encodeURIComponent(id)}`),
   getRecordEvidenceAssistant: (id: string) =>
-    apiFetch<EvidenceAssistantDTO>(`/activity-records/${encodeURIComponent(id)}/evidence-assistant`),
+    apiFetch<EvidenceAssistantRecordDTO>(`/activity-records/${encodeURIComponent(id)}/evidence-assistant`),
   /** One record's history, oldest first (WP5): who may read it is `mayReadRecordTrail`. */
   getRecordAuditTrail: (id: string) =>
     apiFetch<RecordAuditTrailDTO>(`/activity-records/${encodeURIComponent(id)}/audit-trail`),
