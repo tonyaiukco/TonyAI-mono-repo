@@ -3,13 +3,14 @@
 import { useLocale, useTranslations } from "use-intl";
 import { Badge } from "@/components/ui/badge";
 import { formatNumber } from "@/lib/i18n/number";
-import { litresFractionDigits } from "@/lib/fuel-upload-view";
+import { formatLitresText } from "@/lib/fuel-upload-view";
 import type { FuelHoldReason, FuelRowCountDTO, Locale } from "@/lib/types";
 
 /** Litres as the screens print them: the server's decimal, read in the user's locale (display only). */
 export function formatLitres(litres: string, locale: Locale): string {
-  // Every decimal the stored figure has (0.0004 L is not 0 L — WP9 PR B review, P2).
-  return formatNumber(Number(litres), locale, { maximumFractionDigits: litresFractionDigits(litres) });
+  // Every decimal the stored figure has, from its text (0.0004 L is not 0 L — WP9 PR B reviews).
+  const separator = formatNumber(1.5, locale, { minimumFractionDigits: 1 }).replace(/\d/g, "");
+  return formatLitresText(litres, (value) => formatNumber(value, locale, { maximumFractionDigits: 0 }), separator);
 }
 
 /** "12 rows · 1.234,5 L" in the reader's language. */

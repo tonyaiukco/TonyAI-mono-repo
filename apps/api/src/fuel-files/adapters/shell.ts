@@ -23,6 +23,7 @@ export const shellAdapter: FuelAdapter = {
   sheetName: 'items',
   headers: Object.values(SHELL_HEADERS),
   maxRows: FUEL_UPLOAD_MAX_ROWS,
+  quota: 'rows',
   read(cells, fileRow) {
     const card = readCode(cells.get(SHELL_HEADERS.card));
     const station = readCode(cells.get(SHELL_HEADERS.station));

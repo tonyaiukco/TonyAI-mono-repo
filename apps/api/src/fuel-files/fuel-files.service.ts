@@ -32,6 +32,7 @@ import { readsCompany, usageCategory } from './fuel-scope';
 import { grantedCategories } from '../activity-records/record-scope';
 import { FUEL_PARSE_TIMEOUT_MS } from './limits';
 import { organisationDedupeKey } from './dedupe-key';
+import { lockActor } from './lock-actor';
 import { keyReading, readFuelFile, type KeyedFuelReading } from './read-fuel-file';
 import {
   planStaging,
@@ -157,6 +158,10 @@ export class FuelFilesService {
     const organisationId = user.organisationId!;
 
     const importId = await this.prisma.$transaction(async (tx) => {
+      // The uploader as it stands now, before the first write: a role lowered
+      // or an account disabled while the file was being read stores nothing
+      // — no import, no row, no account (third review of the branch, P1).
+      await lockActor(tx, user);
       const companies = await this.companies(tx, organisationId);
       const accounts = await this.lockAccounts(tx, user, upload, companies);
       const stored = await this.storedDuplicates(tx, organisationId, upload);

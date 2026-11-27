@@ -323,3 +323,19 @@ describe('a batch decision’s audit row names the verified decider (second revi
     expect(h.audit.record).toHaveBeenCalledWith(expect.objectContaining({ role: 'super_admin' }), expect.objectContaining({ action: 'approve' }), h.tx);
   });
 });
+
+describe('a decision holds its decider’s profile for the whole step (third review of the branch, P2)', () => {
+  const sqlOf = (call: unknown[]) => (Array.isArray(call[0]) ? (call[0] as string[]).join('?') : String(call[0]));
+  it('locks the decider’s profile row before the records are decided, and an author’s step does not', async () => {
+    const submitted = batchOf({ status: 'submitted', submittedAt: SUBMITTED_AT, submissionCount: 1, createdBy: 'someone-else' });
+    const h = harness(submitted);
+    await h.service.approve(user('super_admin', 'r'), BATCH, SUBMITTED_AT.toISOString());
+    const calls = h.tx.$queryRaw.mock.calls.map((c) => sqlOf(c as unknown[]));
+    const profileLock = calls.findIndex((sql) => /FROM profiles .*FOR SHARE/s.test(sql));
+    expect(profileLock).toBeGreaterThan(-1);
+    expect(h.records.lockSeenRecord.mock.invocationCallOrder[0]!).toBeGreaterThan(h.tx.$queryRaw.mock.invocationCallOrder[profileLock]!);
+    const author = harness(batchOf());
+    await author.service.submit(user('standard_user'), BATCH);
+    expect(author.tx.$queryRaw.mock.calls.map((c) => sqlOf(c as unknown[])).some((sql) => /FROM profiles/.test(sql))).toBe(false);
+  });
+});

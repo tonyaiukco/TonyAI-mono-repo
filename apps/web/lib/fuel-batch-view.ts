@@ -130,17 +130,23 @@ export function shownOf(paged: PagedBatches): { shown: number; total: number } {
   };
 }
 
+/** A part whose answer never came: the server submits batch by batch, so some may have gone. */
+export const BULK_OUTCOME_UNKNOWN = "bulk_outcome_unknown";
+
 /**
  * A selection submitted in parts the API takes (`FUEL_BULK_SUBMIT_MAX` each),
- * every part's outcome kept: a part refused whole (a network failure, a
- * session lost) names each of its batches as failed with that refusal's code,
- * and the parts after it still go (WP9 PR B review, P2 — a selection across
- * pages can pass 200).
+ * every part's outcome kept, and the parts after a failed one still sent
+ * (WP9 PR B review, P2 — a selection across pages can pass 200). A part that
+ * answered with a refusal of the whole request (a 4xx: nothing was submitted)
+ * names each batch failed with its code; one whose answer never came (a
+ * network failure, a 5xx) is not known to have failed — the server submits
+ * each batch in its own step — so its batches are `BULK_OUTCOME_UNKNOWN`,
+ * for the screen to read their status again (third review, P2).
  */
 export async function submitInParts(
   ids: readonly string[],
   submit: (part: string[]) => Promise<BulkSubmitFuelBatchesResultDTO>,
-  codeOf: (error: unknown) => string,
+  codeOf: (error: unknown) => string | null,
   size = FUEL_BULK_SUBMIT_MAX,
 ): Promise<BulkSubmitFuelBatchesResultDTO> {
   const out: BulkSubmitFuelBatchesResultDTO = { submitted: [], failed: [] };
@@ -151,7 +157,7 @@ export async function submitInParts(
       out.submitted.push(...result.submitted);
       out.failed.push(...result.failed);
     } catch (error) {
-      const code = codeOf(error);
+      const code = codeOf(error) ?? BULK_OUTCOME_UNKNOWN;
       out.failed.push(...part.map((batchId) => ({ batchId, code })));
     }
   }

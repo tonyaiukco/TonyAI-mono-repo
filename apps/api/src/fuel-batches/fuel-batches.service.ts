@@ -94,7 +94,8 @@ export class FuelBatchesService {
     const reviewOrder = filters.awaitingMyDecision || filters.status === 'submitted' || filters.status === 'under_review';
     let where: Prisma.FuelBatchWhereInput = filtered;
     const cursor = filters.after ? parseFuelBatchCursor(filters.after) : null;
-    if (filters.after && !cursor) return [];
+    // A cursor this list did not give (a date no calendar has, a malformed id) is refused before any query.
+    if (filters.after && !cursor) throw new BadRequestException(errorBody('validation_failed', 'Not a cursor this list gave.'));
     if (cursor) {
       // After the cursor in this list's own total order (the id breaks ties),
       // by the sort values the page showed — in the same query as the scope
@@ -298,6 +299,13 @@ export class FuelBatchesService {
         // the record cores do it, so no step waits on a period while holding
         // the author's rows (D14; WP9 PR B review, P1; lock order: QA review).
         if (action === 'submit' || action === 'recall') await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
+        // A decision holds its decider's profile row for the whole step, so the
+        // role and grants every record's approver check reads, and the batch's
+        // audit row names, are one and the same: a role or grant change (which
+        // takes that row first) waits for the decision (third review, P2).
+        if (action === 'review' || action === 'approve' || action === 'reject') {
+          await tx.$queryRaw`SELECT 1 FROM profiles WHERE id = ${user.id}::uuid FOR SHARE`;
+        }
         const now = await tx.activityRecord.findMany({ where: { fuelBatchId: id, status: { not: 'voided' } }, select: { id: true }, orderBy: { id: 'asc' } });
         // A record added or removed since the read: the caller acts on a batch it did not see.
         if (now.map((r) => r.id).join() !== seenRecords.map((r) => r.id).join()) throw new RecordChangedError();

@@ -207,7 +207,8 @@
       "author": "Its author (a masterkey)"
     },
     "loadMore": "Load more",
-    "shownOf": "Showing {shown} of {total} batches"
+    "shownOf": "Showing {shown} of {total} batches",
+    "bulkUnknown": "The answer for {count} batches was lost, so whether they were submitted is not known; the list now shows their status as it is."
   },
   "review": {
     "recordsTab": "Records ({count})",

@@ -82,9 +82,12 @@ export function BatchSheet({
     return detail;
   }, []);
 
+  /** The latest rows request: an earlier one answering late (a page asked before a declaration) is dropped. */
+  const rowsAsked = useRef(0);
   const loadRows = useCallback(async (id: string, offset: number, token: number) => {
+    const asked = ++rowsAsked.current;
     const page = await api.fuelBatchRows(id, { offset, limit: ROW_PAGE });
-    if (opening.current !== token) return;
+    if (opening.current !== token || rowsAsked.current !== asked) return;
     setRows({ ...page, offset });
   }, []);
 

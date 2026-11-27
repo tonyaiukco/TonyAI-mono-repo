@@ -262,6 +262,18 @@ describe('applying a fuel file (task 5.1)', () => {
     expect(replacing.map((r) => r.replacesId).sort()).toEqual(withdrawn.map((r) => r.id).sort());
   });
 
+  it('stores nothing for an uploader made an auditor while its file was read: no import, row or account (third review of the branch, P1)', async () => {
+    const reporter = await addMember(owner, tenant, UserRole.standard_user, { grants: [tenant.subsidiaryId] });
+    // The request was authorised as a standard user; the role drops before the write.
+    await owner.profile.update({ where: { id: reporter.id }, data: { role: 'auditor' } });
+    const file = salesList('INT-LATE', 2);
+    const status = await apply(reporter, file).then(() => 'stored', (e: unknown) => (e as { getStatus?: () => number }).getStatus?.() ?? String(e));
+    expect(status).toBe(403);
+    expect(await rowsOf()).toHaveLength(0);
+    expect(await owner.importBatch.count({ where: { organisationId: tenant.organisationId } })).toBe(0);
+    expect(await owner.fuelAccount.count({ where: { organisationId: tenant.organisationId, code: 'INT-LATE' } })).toBe(0);
+  });
+
   it('refuses an auditor and stores nothing', async () => {
     const file = salesList('INT-E', 1);
     const error = await apply(tenant.users.auditor, file).catch((e: unknown) => e);
@@ -479,6 +491,10 @@ describe('reading uploads, the tray, a takeover (task 5.4)', () => {
     expect(all).toHaveLength(3);
     expect((await files.uploads.list(user, fuelUploadCursor(all[0]!))).map((u) => u.id)).toEqual(all.slice(1).map((u) => u.id));
     expect(await files.uploads.list(user, fuelUploadCursor(all[2]!))).toEqual([]);
+    // A cursor no list gave is refused, before any query (third review of the branch, P2).
+    for (const bad of ['2025-02-30T00:00:00.000Z~3596acd1-8cda-4dc2-b648-91caf38d6a2c', `${all[0]!.createdAt}~------------------------------------`]) {
+      expect(await files.uploads.list(user, bad).then(() => 'listed', (e: unknown) => errorCodeOf(e))).toBe('validation_failed');
+    }
   });
 
   it('makes a masterkey the holder of an upload’s unbatched rows, ready again, with an audit row naming the uploader', async () => {

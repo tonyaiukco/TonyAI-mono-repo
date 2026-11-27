@@ -207,7 +207,8 @@
       "author": "Oluşturanı (bir masterkey)"
     },
     "loadMore": "Daha fazla yükle",
-    "shownOf": "{total} paketin {shown} tanesi gösteriliyor"
+    "shownOf": "{total} paketin {shown} tanesi gösteriliyor",
+    "bulkUnknown": "{count} paket için yanıt alınamadı; gönderilip gönderilmedikleri bilinmiyor. Liste şimdi durumlarını olduğu gibi gösteriyor."
   },
   "review": {
     "recordsTab": "Kayıtlar ({count})",

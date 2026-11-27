@@ -111,7 +111,7 @@ export interface LocalDateTime extends FuelLocalDate {
 const TEXT_DATE = /^(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/;
 const ISO_FIELDS = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/;
 /** An ISO date cell as written: date, optional time to the second (a fraction ignored), optional zone (ignored). */
-const WRITTEN_ISO = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
+const WRITTEN_ISO = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-](\d{2}):(\d{2}))?)?$/;
 
 function validDate(year: number, month: number, day: number): boolean {
   if (year < REPORTING_YEAR_MIN || year > REPORTING_YEAR_MAX || month < 1 || month > 12 || day < 1) return false;
@@ -135,6 +135,8 @@ export function readDateTime(cell: SheetCell | undefined): LocalDateTime | null 
     const [year, month, day] = [Number(written[1]), Number(written[2]), Number(written[3])];
     const [hour, minute, second] = [Number(written[4] ?? 0), Number(written[5] ?? 0), Number(written[6] ?? 0)];
     if (!validDate(year, month, day) || hour > 23 || minute > 59 || second > 59) return null;
+    // The zone is ignored, but only a zone that is one: +99:99 is not (third review of the branch).
+    if (written[7] !== undefined && (Number(written[7]) > 23 || Number(written[8]) > 59)) return null;
     return { year, month, day, hour, minute, second };
   }
   if (cell.kind === 'date') {

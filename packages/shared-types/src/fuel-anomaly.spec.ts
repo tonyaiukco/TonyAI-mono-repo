@@ -83,3 +83,23 @@ describe('judgeFuelBatch — sibling batches of one invoice (WP9 PR B review, P2
     expect(forward).toMatchObject({ priorCount: 3, baseline: 340 });
   });
 });
+
+describe('judgeFuelBatch — one invoice’s records summed in one order (third review of the branch, P2)', () => {
+  it('gives the same verdict whatever order an invoice’s records were read in', () => {
+    // 0.1 + 0.2 + 0.3 is not 0.3 + 0.2 + 0.1 in floating point; the verdict must not see the difference.
+    const parts = [record('r1', 'on_road_diesel', 0.1), record('r2', 'on_road_diesel', 0.2), record('r3', 'on_road_diesel', 0.3)];
+    const priorsOf = (order: typeof parts) => [
+      invoice('p1', 20250101, order),
+      invoice('p2', 20250115, [record('q', 'on_road_diesel', 0.6)]),
+      invoice('p3', 20250201, [record('s', 'on_road_diesel', 0.6)]),
+    ];
+    const current = invoice('now', 20250301, [record('x', 'on_road_diesel', 0.9)]);
+    const forward = judgeFuelBatch(current, priorsOf(parts)).x;
+    expect(judgeFuelBatch(current, priorsOf([...parts].reverse())).x).toEqual(forward);
+    expect(judgeFuelBatch(current, priorsOf([parts[1]!, parts[2]!, parts[0]!])).x).toEqual(forward);
+    // The current invoice's own records, reversed, too.
+    const split = invoice('now', 20250301, [record('x1', 'on_road_diesel', 0.3), record('x2', 'on_road_diesel', 0.2), record('x3', 'on_road_diesel', 0.1)]);
+    const reversedSplit = { ...split, records: [...split.records].reverse() };
+    expect(judgeFuelBatch(reversedSplit, priorsOf(parts)).x3).toEqual(judgeFuelBatch(split, priorsOf(parts)).x3);
+  });
+});

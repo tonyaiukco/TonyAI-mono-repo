@@ -51,7 +51,7 @@ export class FuelUploadsService {
   async list(user: RequestUser, after?: string): Promise<FuelUploadDTO[]> {
     this.assertOrganisation(user);
     const cursor = after ? parseFuelUploadCursor(after) : null;
-    if (after && !cursor) return [];
+    if (after && !cursor) throw new BadRequestException(errorBody('validation_failed', 'Not a cursor this list gave.'));
     // The next page after an upload's place, as the list showed it (newest
     // first, the id breaking ties; the API writes the time to the millisecond).
     const where: Prisma.ImportBatchWhereInput = cursor

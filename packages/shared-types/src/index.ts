@@ -6150,8 +6150,14 @@ export function judgeFuelBatch(
       b.period - a.period ||
       (a.invoiceRef < b.invoiceRef ? 1 : a.invoiceRef > b.invoiceRef ? -1 : 0) ||
       (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+  // Summed in one order (record id), never the order the records were read
+  // in: a float sum depends on its order, and a verdict on an edge must not
+  // (third review of the branch, P2).
   const figureOf = (records: readonly FuelBatchAnomalyRecord[]): number | null => {
-    const figures = records.map((r) => r.tCo2e).filter((v): v is number => v !== null);
+    const figures = [...records]
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .map((r) => r.tCo2e)
+      .filter((v): v is number => v !== null);
     return figures.length === 0 ? null : figures.reduce((sum, v) => sum + v, 0);
   };
   const verdicts: Record<string, AnomalyVerdict> = {};

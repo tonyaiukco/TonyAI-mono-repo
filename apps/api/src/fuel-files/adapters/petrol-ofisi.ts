@@ -21,6 +21,7 @@ export const petrolOfisiAdapter: FuelAdapter = {
   source: 'petrol_ofisi',
   headers: Object.values(PETROL_OFISI_HEADERS),
   maxRows: FUEL_UPLOAD_MAX_ROWS,
+  quota: 'rows',
   read(cells, fileRow) {
     const saleId = readCode(cells.get(PETROL_OFISI_HEADERS.saleId));
     if (saleId === null) return { refused: 'fuel_key_missing' };

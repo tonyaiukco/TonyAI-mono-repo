@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fuelBatchCursor, type FuelBatchDTO } from "@/lib/types";
-import { appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, reviewKey, shownOf, submitInParts, submittableIds, takesIntoReview, withPage } from "./fuel-batch-view";
+import { BULK_OUTCOME_UNKNOWN, appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, reviewKey, shownOf, submitInParts, submittableIds, takesIntoReview, withPage } from "./fuel-batch-view";
 
 const AUTHOR = { id: "u-author", role: "standard_user" };
 const MASTERKEY = { id: "u-mk", role: "masterkey" };
@@ -133,13 +133,23 @@ describe("a bulk submit past one part (the second review of the branch, P2)", ()
     let call = 0;
     const submit = vi.fn(async (part: string[]) => {
       call += 1;
-      if (call === 2) throw Object.assign(new Error("offline"), { code: "network_unavailable" });
+      if (call === 2) throw Object.assign(new Error("forbidden"), { status: 403, code: "record_submit_forbidden" });
       return { submitted: part.slice(1), failed: [{ batchId: part[0]!, code: "record_changed" }] };
     });
-    const out = await submitInParts(ids, submit, (e) => (e as { code: string }).code, 200);
+    const codeOf = (e: unknown) => ((e as { status?: number }).status === 403 ? (e as { code: string }).code : null);
+    const out = await submitInParts(ids, submit, codeOf, 200);
     expect(submit.mock.calls.map(([part]) => part.length)).toEqual([200, 200, 50]);
     expect(out.submitted).toHaveLength(199 + 49);
-    expect(out.failed.filter((f) => f.code === "network_unavailable")).toHaveLength(200);
+    expect(out.failed.filter((f) => f.code === "record_submit_forbidden")).toHaveLength(200);
     expect(out.failed.filter((f) => f.code === "record_changed").map((f) => f.batchId)).toEqual(["b0", "b400"]);
+  });
+
+  it("names a part whose answer was lost as of unknown outcome, never as not submitted (third review, P2)", async () => {
+    const submit = vi.fn(async () => {
+      throw new Error("network");
+    });
+    const out = await submitInParts(["b1", "b2"], submit, () => null, 200);
+    expect(out.failed).toEqual([{ batchId: "b1", code: BULK_OUTCOME_UNKNOWN }, { batchId: "b2", code: BULK_OUTCOME_UNKNOWN }]);
+    expect(out.submitted).toEqual([]);
   });
 });

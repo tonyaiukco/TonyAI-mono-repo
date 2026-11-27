@@ -19,6 +19,7 @@ export const tankerAdapter: FuelAdapter = {
   source: 'tanker',
   headers: Object.values(TANKER_HEADERS),
   maxRows: FUEL_TANKER_MAX_DELIVERIES,
+  quota: 'keyed',
   read(cells, fileRow) {
     const document = documentInvoiceRef(readCode(cells.get(TANKER_HEADERS.document)));
     if ('refused' in document) {

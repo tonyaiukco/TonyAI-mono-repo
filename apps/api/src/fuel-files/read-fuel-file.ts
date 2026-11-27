@@ -102,7 +102,7 @@ export async function readFuelFile(buffer: Buffer, source: FuelSource): Promise<
   const adapter = FUEL_ADAPTERS[source];
   const reading: FuelFileReading = { rowsRead: 0, rows: [], refused: [], duplicates: [] };
   const seen = new Set<string>();
-  /** Rows with a key so far: what the source's quota (`maxRows`) counts. */
+  /** Rows with a key so far: what a tanker file's quota (`maxRows`) counts. */
   let keyed = 0;
   /** The header row's column of each mapped header, once found. */
   let columns: ReadonlyMap<string, number> | null = null;
@@ -131,8 +131,8 @@ export async function readFuelFile(buffer: Buffer, source: FuelSource): Promise<
         }
 
         reading.rowsRead += 1;
-        // Past the bound, rows are only counted, so the refusal names a count the user can check.
-        if (keyed > adapter.maxRows || reading.rowsRead > adapter.maxRows + FUEL_UNKEYED_ROWS_MAX) return;
+        // Past the physical bound, rows are only counted, so the refusal names a count the user can check.
+        if (reading.rowsRead > adapter.maxRows + FUEL_UNKEYED_ROWS_MAX) return;
         const byColumn = new Map(cells.map((cell) => [cell.column, cell]));
         const mapped = new Map<string, SheetCell>();
         for (const [header, column] of columns) {
@@ -140,11 +140,9 @@ export async function readFuelFile(buffer: Buffer, source: FuelSource): Promise<
           if (cell !== undefined) mapped.set(header, cell);
         }
         const result = adapter.read(mapped, rowNumber);
-        // The source's quota counts rows with a key (deliveries, sales): a TOPLAM row has none (C18).
-        if (!('refused' in result && result.refused === 'fuel_key_missing')) {
-          keyed += 1;
-          if (keyed > adapter.maxRows) return;
-        }
+        if (!('refused' in result && result.refused === 'fuel_key_missing')) keyed += 1;
+        // Over the quota a row is still counted (the refusal states the true count) but never kept.
+        if ((adapter.quota === 'keyed' ? keyed : reading.rowsRead) > adapter.maxRows) return;
         if ('refused' in result) {
           reading.refused.push({ row: rowNumber, code: result.refused });
         } else if (seen.has(result.row.keyHash)) {
@@ -167,7 +165,10 @@ export async function readFuelFile(buffer: Buffer, source: FuelSource): Promise<
   );
 
   if (columns === null) throw columnsMissing(adapter.headers.filter((header) => !best.has(header)));
-  if (keyed > adapter.maxRows) throw tooManyRows(keyed, adapter.maxRows);
+  // C18: a card file's quota is its data rows; a tanker file's its deliveries (rows with a key —
+  // a TOPLAM row apart), the rows with no key bounded beyond it (third review of the branch, P2).
+  if (adapter.quota === 'rows' && reading.rowsRead > adapter.maxRows) throw tooManyRows(reading.rowsRead, adapter.maxRows);
   if (reading.rowsRead > adapter.maxRows + FUEL_UNKEYED_ROWS_MAX) throw tooManyRows(reading.rowsRead, adapter.maxRows);
+  if (keyed > adapter.maxRows) throw tooManyRows(keyed, adapter.maxRows);
   return reading;
 }

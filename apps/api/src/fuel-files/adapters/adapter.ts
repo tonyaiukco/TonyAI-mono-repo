@@ -61,8 +61,14 @@ export interface FuelAdapter {
   sheetName?: string;
   /** Every header the map needs, each exactly once, trimmed and matched exactly. */
   headers: readonly string[];
-  /** The most data rows a file of this source may hold. */
+  /** The most a file of this source may hold, of what `quota` counts. */
   maxRows: number;
+  /**
+   * What `maxRows` counts (C18): a card file's data rows (`rows`), a tanker
+   * file's deliveries — rows with a key, so its TOPLAM row is not one
+   * (`keyed`; WP9 PR B reviews).
+   */
+  quota: 'rows' | 'keyed';
   /** One data row, its cells by header. */
   read(cells: ReadonlyMap<string, SheetCell>, fileRow: number): FuelRowReading;
 }

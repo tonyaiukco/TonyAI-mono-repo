@@ -691,6 +691,15 @@ export interface FuelBatchFilters {
 /** `GET /fuel-batches` answers at most this many batches a call. */
 export const FUEL_BATCH_PAGE = 200;
 
+const ISO_MS = '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z';
+const UUID_TEXT = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+/** An ISO instant as the API writes it, and only a real one: 2025-02-30 is no instant (third review, P2). */
+function instantOf(text: string): Date | null {
+  const date = new Date(text);
+  return !Number.isNaN(date.getTime()) && date.toISOString() === text ? date : null;
+}
+
 /** `GET /fuel-files` answers at most this many uploads a call, newest first; `?after=` the next page. */
 export const FUEL_UPLOAD_PAGE = 100;
 
@@ -700,12 +709,14 @@ export function fuelUploadCursor(upload: { id: string; createdAt: string }): str
 }
 
 /** A cursor's shape: an ISO instant and an id. */
-export const FUEL_UPLOAD_CURSOR_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z~[0-9a-f-]{36}$/i;
+export const FUEL_UPLOAD_CURSOR_SHAPE = new RegExp(`^${ISO_MS}~${UUID_TEXT}$`, 'i');
 
+/** A cursor as `fuelUploadCursor` writes it; null for anything else (the API answers 400). */
 export function parseFuelUploadCursor(cursor: string): { createdAt: Date; id: string } | null {
   if (!FUEL_UPLOAD_CURSOR_SHAPE.test(cursor)) return null;
-  const [createdAt, id] = cursor.split('~') as [string, string];
-  return { createdAt: new Date(createdAt), id: id.toLowerCase() };
+  const [createdText, id] = cursor.split('~') as [string, string];
+  const createdAt = instantOf(createdText);
+  return createdAt ? { createdAt, id: id.toLowerCase() } : null;
 }
 
 /** `POST /fuel-batches/bulk-submit` takes at most this many batches a call; the screen sends more in parts. */
@@ -716,14 +727,17 @@ export function fuelBatchCursor(batch: { id: string; createdAt: string; submitte
   return `${batch.createdAt}~${batch.submittedAt ?? ''}~${batch.id}`;
 }
 
-const ISO_MS = '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z';
 /** A cursor's shape: two ISO instants (the second may be empty) and an id. */
-export const FUEL_BATCH_CURSOR_SHAPE = new RegExp(`^${ISO_MS}~(?:${ISO_MS})?~[0-9a-f-]{36}$`, 'i');
+export const FUEL_BATCH_CURSOR_SHAPE = new RegExp(`^${ISO_MS}~(?:${ISO_MS})?~${UUID_TEXT}$`, 'i');
 
+/** A cursor as `fuelBatchCursor` writes it; null for anything else (the API answers 400). */
 export function parseFuelBatchCursor(cursor: string): { createdAt: Date; submittedAt: Date | null; id: string } | null {
   if (!FUEL_BATCH_CURSOR_SHAPE.test(cursor)) return null;
-  const [createdAt, submittedAt, id] = cursor.split('~') as [string, string, string];
-  return { createdAt: new Date(createdAt), submittedAt: submittedAt === '' ? null : new Date(submittedAt), id: id.toLowerCase() };
+  const [createdText, submittedText, id] = cursor.split('~') as [string, string, string];
+  const createdAt = instantOf(createdText);
+  const submittedAt = submittedText === '' ? null : instantOf(submittedText);
+  if (!createdAt || (submittedText !== '' && !submittedAt)) return null;
+  return { createdAt, submittedAt, id: id.toLowerCase() };
 }
 
 export interface FuelBatchMetadataDTO {

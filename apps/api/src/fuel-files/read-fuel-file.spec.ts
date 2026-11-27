@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
-import { FUEL_TANKER_MAX_DELIVERIES } from '@tonyai/shared-types';
+import { FUEL_TANKER_MAX_DELIVERIES, FUEL_UPLOAD_MAX_ROWS } from '@tonyai/shared-types';
 import { OFFICE_RELATIONSHIPS, SPREADSHEETML, row as sheetRow, xlsx } from '../../test/xlsx';
 import { FUEL_HEADER_SEARCH_ROWS, FUEL_UNKEYED_ROWS_MAX, keyReading, readFuelFile } from './read-fuel-file';
 import { createHash, createHmac } from 'node:crypto';
@@ -288,6 +288,17 @@ describe('the dedupe digest (task 4.3)', () => {
   });
 });
 
+describe('a card file’s quota is its data rows (C18; third review of the branch, P2)', () => {
+  it('refuses a Shell file of more data rows than the quota, keyed or not, stating the true count', async () => {
+    const header = sheetRow(1, Object.values(SHELL_HEADERS));
+    const rows = [header];
+    // Rows with no card number: each would be refused on its own, but the file holds too many rows.
+    for (let i = 0; i < FUEL_UPLOAD_MAX_ROWS + 5; i += 1) rows.push(sheetRow(i + 2, ['0071234', 'Filo']));
+    const body = await refusal(readFuelFile(withSheetName(rows.join(''), 'items'), 'shell'));
+    expect(body).toMatchObject({ code: 'fuel_file_too_many_rows', params: { rows: FUEL_UPLOAD_MAX_ROWS + 5, max: FUEL_UPLOAD_MAX_ROWS } });
+  }, 60_000);
+});
+
 describe('an ISO date cell is read as written (WP9 PR B review, P2)', () => {
   const header = sheetRow(1, Object.values(SHELL_HEADERS));
   /** A Shell fill whose date is a `t="d"` cell holding `iso`. */
@@ -322,6 +333,12 @@ describe('an ISO date cell is read as written (WP9 PR B review, P2)', () => {
     );
     expect(reading.rows.map((r) => r.fileRow)).toEqual([2, 4]);
     expect(reading.refused).toEqual([{ row: 3, code: 'fuel_date_unreadable' }]);
+  });
+
+  it('refuses a date whose zone is no zone (+99:99), though a real zone is ignored', async () => {
+    const reading = await readFuelFile(withSheetName([header, fill(2, '2025-03-03T10:00:00+99:99'), fill(3, '2025-03-03T10:00:00-05:30')].join(''), 'items'), 'shell');
+    expect(reading.rows.map((r) => [r.fileRow, r.transactionAt])).toEqual([[3, '2025-03-03T10:00:00']]);
+    expect(reading.refused).toEqual([{ row: 2, code: 'fuel_date_unreadable' }]);
   });
 
   it('refuses a day the calendar does not have rather than rolling it over', async () => {

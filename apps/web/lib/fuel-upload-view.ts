@@ -173,3 +173,35 @@ export function litresFractionDigits(litres: string): number {
   const fraction = /\.(\d+)$/.exec(text)?.[1]?.replace(/0+$/, "") ?? "";
   return Math.min(fraction.length, 20);
 }
+
+/**
+ * A litres figure's decimal text in plain form: an exponent (`1e-7`) written
+ * out, a sign never (litres are not negative). Null for anything else.
+ */
+export function plainLitres(litres: string): { integer: string; fraction: string } | null {
+  const text = litres.trim();
+  const plain = /^(\d+)(?:\.(\d+))?$/.exec(text);
+  if (plain) return { integer: plain[1]!.replace(/^0+(?=\d)/, ""), fraction: (plain[2] ?? "").replace(/0+$/, "") };
+  const exp = /^(\d+)(?:\.(\d+))?e([-+]?\d+)$/i.exec(text);
+  if (!exp) return null;
+  const digits = `${exp[1]}${exp[2] ?? ""}`;
+  const point = exp[1]!.length + Number(exp[3]);
+  if (!Number.isSafeInteger(point) || Math.abs(point) > 400) return null;
+  const integer = point <= 0 ? "0" : point >= digits.length ? digits + "0".repeat(point - digits.length) : digits.slice(0, point);
+  const fraction = point <= 0 ? "0".repeat(-point) + digits : point >= digits.length ? "" : digits.slice(point);
+  return { integer: integer.replace(/^0+(?=\d)/, ""), fraction: fraction.replace(/0+$/, "") };
+}
+
+/**
+ * Litres as the screens print them, from the decimal text and never through
+ * a float: the integer part grouped as the locale groups it, every decimal
+ * the figure holds after the locale's separator — 0.000000000000000000001 L is
+ * shown, not 0 L (third review of the branch). `formatInteger` groups a whole
+ * number; `decimalSeparator` is the locale's.
+ */
+export function formatLitresText(litres: string, formatInteger: (value: number) => string, decimalSeparator: string): string {
+  const parts = plainLitres(litres);
+  if (!parts) return litres;
+  const whole = formatInteger(Number(parts.integer));
+  return parts.fraction ? `${whole}${decimalSeparator}${parts.fraction}` : whole;
+}

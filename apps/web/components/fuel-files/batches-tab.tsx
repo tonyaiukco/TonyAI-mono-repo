@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api } from "@/lib/api";
 import { useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatComputedAmount, formatNumber } from "@/lib/i18n/number";
-import { batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, shownOf, submitInParts, submittableIds, withPage, type PagedBatches } from "@/lib/fuel-batch-view";
+import { BULK_OUTCOME_UNKNOWN, batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, shownOf, submitInParts, submittableIds, withPage, type PagedBatches } from "@/lib/fuel-batch-view";
 import { FUEL_BATCH_PAGE, FUEL_BATCH_STATUSES, type AuthUser, type FuelBatchStatus, type Locale } from "@/lib/types";
 import { BatchSheet } from "./batch-sheet";
 import { RowCount } from "./common";
@@ -78,10 +78,15 @@ export function BatchesTab({ user, refreshKey, initialOpen = null }: { user: Aut
     setBusy(true);
     try {
       // In parts the API takes; a selection across pages can pass one part (WP9 PR B review, P2).
-      const out = await submitInParts(toSubmit, (part) => api.bulkSubmitFuelBatches(part), (error) =>
-        (error as { code?: string } | null)?.code ?? "unexpected");
+      // A refusal of the whole request (4xx) names its code; an answer lost or a server error leaves the outcome unknown.
+      const out = await submitInParts(toSubmit, (part) => api.bulkSubmitFuelBatches(part), (error) => {
+        const e = error as { status?: number; code?: string } | null;
+        return e?.status !== undefined && e.status >= 400 && e.status < 500 ? (e.code ?? "unexpected") : null;
+      });
       if (out.submitted.length) toast.success(t("batches.bulkSubmitted", { count: formatNumber(out.submitted.length, locale) }));
-      for (const f of out.failed) {
+      const unknown = out.failed.filter((f) => f.code === BULK_OUTCOME_UNKNOWN);
+      if (unknown.length) toast.warning(t("batches.bulkUnknown", { count: formatNumber(unknown.length, locale) }));
+      for (const f of out.failed.filter((x) => x.code !== BULK_OUTCOME_UNKNOWN)) {
         const b = batches?.find((x) => x.id === f.batchId);
         toast.error(t("batches.bulkFailed", {
           batch: b ? batchTitle(b) : f.batchId,

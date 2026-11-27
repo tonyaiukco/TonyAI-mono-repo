@@ -487,6 +487,7 @@ describe('the batch list past one page (WP9 PR B review, P2)', () => {
       expect((await s.batches.list(user, { after: fuelBatchCursor(first[at]!) })).map((b) => b.id)).toEqual(first.slice(at + 1).map((b) => b.id));
     }
     expect(await s.batches.list(user, { after: fuelBatchCursor(first[2]!) })).toEqual([]);
+    expect(await s.batches.list(user, { after: '2025-02-30T00:00:00.000Z~~3596acd1-8cda-4dc2-b648-91caf38d6a2c' }).then(() => 'listed', (e: unknown) => errorCodeOf(e))).toBe('validation_failed');
 
     // A batch that leaves a loaded page never makes the next page skip one (QA review of the fixes, P2):
     // the drafts' first page is read, its first batch is withdrawn, and the page after it is still whole.

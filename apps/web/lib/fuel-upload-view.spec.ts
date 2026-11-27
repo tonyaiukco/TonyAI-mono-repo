@@ -9,7 +9,9 @@ import {
   formUntilDone,
   formsAfterApply,
   initialUsage,
+  formatLitresText,
   litresFractionDigits,
+  plainLitres,
   previewTotals,
 } from "./fuel-upload-view";
 
@@ -134,5 +136,18 @@ describe("litres shown with every decimal they hold (WP9 PR B review, P2)", () =
     expect(litresFractionDigits("1e-7")).toBe(7);
     expect(litresFractionDigits("1.5E-6")).toBe(7);
     expect(litresFractionDigits("2e3")).toBe(0);
+  });
+});
+
+describe("litres printed from their text, never a float (third review of the branch)", () => {
+  const en = (v: number) => new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(v);
+  const tr = (v: number) => new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 }).format(v);
+  it("keeps every decimal, groups the whole part, and writes out an exponent", () => {
+    expect(formatLitresText("0.000000000000000000001", en, ".")).toBe("0.000000000000000000001");
+    expect(formatLitresText("15973.750", en, ".")).toBe("15,973.75");
+    expect(formatLitresText("15973.750", tr, ",")).toBe("15.973,75");
+    expect(formatLitresText("1e-7", en, ".")).toBe("0.0000001");
+    expect(formatLitresText("40", tr, ",")).toBe("40");
+    expect(plainLitres("abc")).toBeNull();
   });
 });

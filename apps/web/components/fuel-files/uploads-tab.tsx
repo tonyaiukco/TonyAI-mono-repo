@@ -26,12 +26,15 @@ export function UploadsTab({ role, refreshKey }: { role: UserRole | undefined; r
   /** A full last page may have more after it (WP9 PR B review, P2: the list was cut at 100). */
   const [maybeMore, setMaybeMore] = useState(false);
   const [more, setMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const seq = useRef(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState<FuelUploadDTO | null>(null);
 
   const load = useCallback(async () => {
     const mine = ++seq.current;
+    // While the first page is read again, no further page is asked for: its cursor would come from the old list.
+    setRefreshing(true);
     try {
       const page = await api.listFuelUploads();
       if (mine !== seq.current) return;
@@ -42,20 +45,25 @@ export function UploadsTab({ role, refreshKey }: { role: UserRole | undefined; r
       setUploads([]);
       setMaybeMore(false);
       showError(error);
+    } finally {
+      if (mine === seq.current) setRefreshing(false);
     }
   }, [showError]);
 
   async function loadMore() {
-    const last = uploads?.[uploads.length - 1];
-    if (!last) return;
+    const base = uploads;
+    const last = base?.[base.length - 1];
+    if (!base || !last || refreshing) return;
     const mine = seq.current;
     setMore(true);
     try {
       const page = await api.listFuelUploads(fuelUploadCursor(last));
       if (mine !== seq.current) return;
+      // Appended only to the list its cursor came from (third review of the branch, P2).
       setUploads((now) => {
-        const seen = new Set((now ?? []).map((u) => u.id));
-        return [...(now ?? []), ...page.filter((u) => !seen.has(u.id))];
+        if (now !== base) return now;
+        const seen = new Set(now.map((u) => u.id));
+        return [...now, ...page.filter((u) => !seen.has(u.id))];
       });
       setMaybeMore(page.length === FUEL_UPLOAD_PAGE);
     } catch (error) {
@@ -183,7 +191,7 @@ export function UploadsTab({ role, refreshKey }: { role: UserRole | undefined; r
         </Table>
         {maybeMore && (
           <div className="flex justify-end border-t pt-3">
-            <Button size="sm" variant="outline" disabled={more} onClick={() => void loadMore()} data-testid="uploads-more">
+            <Button size="sm" variant="outline" disabled={more || refreshing} onClick={() => void loadMore()} data-testid="uploads-more">
               {more && <Loader2 className="h-4 w-4 animate-spin" />}{t("batches.loadMore")}
             </Button>
           </div>
