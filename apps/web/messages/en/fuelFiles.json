@@ -196,5 +196,11 @@
       "masterkey": "A masterkey",
       "author": "Its author (a masterkey)"
     }
+  },
+  "review": {
+    "recordsTab": "Records ({count})",
+    "batchesTab": "Fuel batches ({count})",
+    "empty": "No fuel batch awaits a decision.",
+    "notYours": "Not yours to decide"
   }
 }
