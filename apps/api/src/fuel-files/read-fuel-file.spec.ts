@@ -257,6 +257,38 @@ describe('the dedupe digest (task 4.3)', () => {
   });
 });
 
+describe('an ISO date cell is read as written (WP9 PR B review, P2)', () => {
+  const header = sheetRow(1, Object.values(SHELL_HEADERS));
+  /** A Shell fill whose date is a `t="d"` cell holding `iso`. */
+  const fill = (r: number, iso: string) =>
+    sheetRow(r, ['0071234', 'Filo', '7000-0000-0000-0001', 'XDATEX', 'ST-0001', 'Motorin Med', 40]).replace(
+      `<c r="D${r}" t="inlineStr"><is><t>XDATEX</t></is></c>`,
+      `<c r="D${r}" t="d"><v>${iso}</v></c>`,
+    );
+
+  it('keeps the wall-clock fields of a date with a zone: the first half of April stays April', async () => {
+    const reading = await readFuelFile(withSheetName([header, fill(2, '2025-04-01T00:30:00+03:00')].join(''), 'items'), 'shell');
+    expect(reading.rows.map((r) => [r.transactionAt, r.year, r.month, r.invoiceRef])).toEqual([['2025-04-01T00:30:00', 2025, 4, '2025-04-1']]);
+  });
+
+  it('reads a date with no zone, or in UTC, as written too', async () => {
+    const reading = await readFuelFile(
+      withSheetName([header, fill(2, '2025-03-16T08:10:00'), fill(3, '2025-03-15T23:59:59Z')].join(''), 'items'),
+      'shell',
+    );
+    expect(reading.rows.map((r) => [r.transactionAt, r.invoiceRef])).toEqual([
+      ['2025-03-16T08:10:00', '2025-03-2'],
+      ['2025-03-15T23:59:59', '2025-03-1'],
+    ]);
+  });
+
+  it('refuses a day the calendar does not have rather than rolling it over', async () => {
+    const reading = await readFuelFile(withSheetName([header, fill(2, '2025-02-30T08:00:00')].join(''), 'items'), 'shell');
+    expect(reading.rows).toEqual([]);
+    expect(reading.refused).toEqual([{ row: 2, code: 'fuel_date_unreadable' }]);
+  });
+});
+
 describe('the stored digest is keyed per organisation (D5, revised)', () => {
   const keyA = Buffer.alloc(32, 0xa1);
   const keyB = Buffer.alloc(32, 0xb2);

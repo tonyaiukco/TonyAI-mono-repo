@@ -47,7 +47,7 @@
     "excluded": "Hariç (iştirak)",
     "waiting_account": "Hesap bekler",
     "waiting_fuel": "Yakıt adı bekler",
-    "outside_scope": "Şirketleriniz dışında"
+    "outside_scope": "Yetki kapsamınız dışında (şirket veya kategori)"
   },
   "accountStates": {
     "unmatched": "Eşleşmedi",
@@ -114,7 +114,16 @@
     "form": "Paket oluştur",
     "retry": "Yeniden dene",
     "takeOver": "Devral",
-    "takenOver": "Yüklemenin pakette olmayan satırları artık sizde."
+    "takenOver": "Yüklemenin pakette olmayan satırları artık sizde.",
+    "withdraw": "Satırları geri çek",
+    "withdrawTitle": "Bu yüklemenin satırlarını geri çek",
+    "withdrawDescription": "Hiçbir pakette olmayan satırlar — bir hesabınkiler ya da bir yakıt adını bekleyenler — gerekçenizle geri çekilir. Kayıtta kalırlar ve hiçbir toplama girmezler. Bir iştirakin hariç tutulan satırlarını, şirket kontrol edilen şirket olduktan sonra saymak için: satırları geri çekin, hesabın şirketini değiştirin ve dosyayı yeniden yükleyin.",
+    "withdrawChoose": "Geri çekilecek satırlar",
+    "withdrawFuelName": "“{name}” yakıt adı",
+    "withdrawExcluded": "{count} hariç tutulan",
+    "withdrawReason": "Gerekçe",
+    "withdrawNone": "Bu yüklemede geri çekebileceğiniz satır yok.",
+    "rowsWithdrawn": "Satırlar geri çekildi"
   },
   "accounts": {
     "title": "Hesaplar",
@@ -196,7 +205,9 @@
       "super_admin": "Şirketinin bir süper yöneticisi",
       "masterkey": "Bir masterkey",
       "author": "Oluşturanı (bir masterkey)"
-    }
+    },
+    "loadMore": "Daha fazla yükle",
+    "shownOf": "{total} paketin {shown} tanesi gösteriliyor"
   },
   "review": {
     "recordsTab": "Kayıtlar ({count})",

@@ -13,7 +13,8 @@ import { grantedCategories } from '../activity-records/record-scope';
  * - masterkey, auditor: every row and account of the organisation.
  * - A row with no company (`waiting_account`): its holder only, besides them.
  * - A row with a company: a super_admin granted the company; a standard user
- *   granted the company and the row's category; its holder while unbatched.
+ *   granted the company and the row's category, or as its holder while
+ *   unbatched (a super_admin holder of an ungranted company's row reads none).
  * - Accounts: a super_admin those mapped or proposed to a granted company; a
  *   standard user none.
  */
@@ -56,7 +57,14 @@ export function fuelRowScopeSql(user: RequestUser, alias = 'r'): Prisma.Sql {
   const column = (name: string) => Prisma.raw(`"${alias}"."${name}"`);
   const organisation = Prisma.sql`${column('organisation_id')} = ${user.organisationId}::uuid`;
   if (readsWholeOrganisation(user)) return organisation;
-  const holder = Prisma.sql`(${column('holder_id')} = ${user.id}::uuid AND ${column('fuel_batch_id')} IS NULL)`;
+  // Its holder reads an unbatched row with no company; one with a company
+  // only as a standard user (D14's "or as its holder") — never a super_admin,
+  // whose company rows are its grant's alone. PR A's RLS policy holds the same
+  // (`fuel_rows_select_scoped`; WP9 PR B review, P2).
+  const holderReads = can(user.role, 'scope.categories')
+    ? Prisma.sql`true`
+    : Prisma.sql`${column('subsidiary_id')} IS NULL`;
+  const holder = Prisma.sql`(${column('holder_id')} = ${user.id}::uuid AND ${column('fuel_batch_id')} IS NULL AND ${holderReads})`;
   return Prisma.sql`(${organisation} AND (${holder} OR (${column('subsidiary_id')} IS NOT NULL AND ${grantedRowSql(user, alias)})))`;
 }
 

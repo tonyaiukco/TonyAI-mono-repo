@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FuelBatchDTO } from "@/lib/types";
-import { batchActions, batchTitle, isRevised, reviewKey, submittableIds, takesIntoReview } from "./fuel-batch-view";
+import { appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextOffsets, reviewKey, shownOf, submittableIds, takesIntoReview } from "./fuel-batch-view";
 
 const AUTHOR = { id: "u-author", role: "standard_user" };
 const MASTERKEY = { id: "u-mk", role: "masterkey" };
@@ -86,5 +86,22 @@ describe("taking a batch into review from the queue (WP9 PR B review, P1)", () =
     expect(takesIntoReview(pending(), AUDITOR, new Set())).toBe(false);
     expect(takesIntoReview(pending(), AUTHOR, new Set())).toBe(false);
     expect(takesIntoReview(pending({ status: "under_review" }), SUPER, new Set())).toBe(false);
+  });
+});
+
+describe("a batch list past one page (WP9 PR B review, P2)", () => {
+  const many = (n: number, from = 0) => Array.from({ length: n }, (_, i) => batch({ id: `b${from + i}` }));
+
+  it("asks each filter for its next page until its total is listed", () => {
+    const paged = { lists: [many(200), many(40, 500)], totals: [560, 40] };
+    expect(nextOffsets(paged)).toEqual([200, null]);
+    expect(hasMoreBatches(paged)).toBe(true);
+    expect(shownOf(paged)).toEqual({ shown: 240, total: 600 });
+    expect(hasMoreBatches({ lists: [many(560)], totals: [560] })).toBe(false);
+  });
+
+  it("appends a page, keeping a batch already listed once", () => {
+    const list = appendPage(many(3), [batch({ id: "b2" }), batch({ id: "b3" })]);
+    expect(list.map((b) => b.id)).toEqual(["b0", "b1", "b2", "b3"]);
   });
 });

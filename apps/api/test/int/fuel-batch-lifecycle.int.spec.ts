@@ -11,7 +11,7 @@ import { FuelFilesService } from '../../src/fuel-files/fuel-files.service';
 import { FuelUploadsService } from '../../src/fuel-files/fuel-uploads.service';
 import { ReportsService } from '../../src/reports/reports.service';
 import { PdfRenderer } from '../../src/common/pdf-renderer';
-import { batchVerdictsOf } from '../../../../packages/db/scripts/anomaly-recompute.lib.mjs';
+import { batchVerdictsOf, rewriteVerdict, storedVerdict } from '../../../../packages/db/scripts/anomaly-recompute.lib.mjs';
 import { row as sheetRow, xlsx } from '../xlsx';
 import { attachEvidence, connect, connectOwner, createTenant, type Tenant } from './db';
 import { lifecycleServices, pdfFile } from './services';
@@ -201,6 +201,25 @@ describe('the batch lifecycle (task 7.1)', () => {
     // The fourth invoice was judged against the three before it.
     const last = records.find((r) => r.periodValue === 'April')!;
     expect(last.anomalyBaselinePriorCount).toBe(3);
+  });
+
+  it('lets anomaly:recompute --apply rewrite a batch record’s stale verdict, inside its batch’s step (WP9 PR B review, P2)', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025'], 'OZK-RS');
+    const r = await owner.activityRecord.findFirstOrThrow({
+      where: { fuelBatchId: id },
+      include: { subsidiary: { select: { organisationId: true } } },
+    });
+    // Without its batch's step the trigger refuses the write (TA029): the repair must declare it.
+    const bare = await runtime.activityRecord.updateMany({ where: { id: r.id }, data: { anomalyFlag: true } }).then(() => 'allowed', (e: unknown) => String(e));
+    expect(bare).toMatch(/TA029|fuel batch/i);
+    const fresh = { anomalous: !r.anomalyFlag, priorCount: 7, baseline: 1.5 };
+    expect(await rewriteVerdict(runtime, r, storedVerdict(r), fresh)).toBeNull();
+    const after = await owner.activityRecord.findUniqueOrThrow({ where: { id: r.id } });
+    expect([after.anomalyFlag, after.anomalyBaselinePriorCount, after.anomalyBaselineTCo2e]).toEqual([fresh.anomalous, 7, 1.5]);
+    expect(await owner.auditLog.count({ where: { entity: 'activity_record', entityId: r.id, action: 'rescore' } })).toBe(1);
+    // A record changed since the read is skipped, never clobbered.
+    expect(await rewriteVerdict(runtime, r, storedVerdict(r), fresh)).toBe('it changed between the read and the write');
   });
 
   it('refuses a flagged batch submitted without a variance reason and moves nothing; with one it submits', async () => {
@@ -433,6 +452,26 @@ describe('the author’s standing at the write (WP9 PR B review, P1)', () => {
     expect(after.map((r) => [r.id, r.status, JSON.stringify(r.parameters), r.updatedAt.getTime()])).toEqual(
       before.map((r) => [r.id, r.status, JSON.stringify(r.parameters), r.updatedAt.getTime()]),
     );
+  });
+});
+
+describe('the batch list past one page (WP9 PR B review, P2)', () => {
+  it('pages through every batch in one order, the metadata naming the total', async () => {
+    const user = await masterkey();
+    const ids = [
+      await formedBatch(user, ['03.03.2025'], 'OZK-PG1'),
+      await formedBatch(user, ['04.03.2025'], 'OZK-PG2'),
+      await formedBatch(user, ['05.03.2025'], 'OZK-PG3'),
+    ];
+    const s = services();
+    const first = await s.batches.list(user, {});
+    expect((await s.batches.metadata(user, {})).total).toBe(3);
+    expect(new Set(first.map((b) => b.id))).toEqual(new Set(ids));
+    // Each offset starts where the order says, so pages of any size join into the whole list.
+    for (const offset of [1, 2]) {
+      expect((await s.batches.list(user, { offset })).map((b) => b.id)).toEqual(first.slice(offset).map((b) => b.id));
+    }
+    expect(await s.batches.list(user, { offset: 3 })).toEqual([]);
   });
 });
 

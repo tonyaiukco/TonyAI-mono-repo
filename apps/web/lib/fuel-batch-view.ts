@@ -82,3 +82,36 @@ export function takesIntoReview(
 ): boolean {
   return batch.status === "submitted" && batchActions(batch, viewer).decide && !taken.has(reviewKey(batch));
 }
+
+/**
+ * A batch list loaded page by page, per filter (the review queue asks for
+ * two statuses at once): each filter's batches so far and its total from
+ * `/metadata` (WP9 PR B review, P2 — one upload can form hundreds).
+ */
+export interface PagedBatches {
+  lists: FuelBatchDTO[][];
+  totals: number[];
+}
+
+/** Each filter's next offset, or null once its list holds its total. */
+export function nextOffsets(paged: PagedBatches): Array<number | null> {
+  return paged.lists.map((list, i) => (list.length < (paged.totals[i] ?? 0) ? list.length : null));
+}
+
+export function hasMoreBatches(paged: PagedBatches): boolean {
+  return nextOffsets(paged).some((offset) => offset !== null);
+}
+
+/** A page appended to a filter's list; a batch already listed (moved between pages) is kept once. */
+export function appendPage(list: readonly FuelBatchDTO[], page: readonly FuelBatchDTO[]): FuelBatchDTO[] {
+  const seen = new Set(list.map((b) => b.id));
+  return [...list, ...page.filter((b) => !seen.has(b.id))];
+}
+
+/** How many batches are shown, and of how many. */
+export function shownOf(paged: PagedBatches): { shown: number; total: number } {
+  return {
+    shown: paged.lists.reduce((n, l) => n + l.length, 0),
+    total: paged.totals.reduce((n, t) => n + t, 0),
+  };
+}

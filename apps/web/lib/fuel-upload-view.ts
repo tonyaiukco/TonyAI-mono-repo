@@ -156,3 +156,13 @@ export function companyLabel(name: string | null, outsideScope: string): string 
 export function formsAfterApply(upload: Pick<FuelUploadDTO, "readerIsHolder" | "processableRows">): boolean {
   return upload.readerIsHolder && upload.processableRows > 0;
 }
+
+/**
+ * How many fraction digits a litres figure is shown with: those its decimal
+ * text holds (trailing zeros dropped), at least none and at most 20 (Intl's
+ * limit). A stored 0.0004 L is shown as such, never rounded to 0 L.
+ */
+export function litresFractionDigits(litres: string): number {
+  const fraction = /\.(\d+)$/.exec(litres.trim())?.[1]?.replace(/0+$/, "") ?? "";
+  return Math.min(fraction.length, 20);
+}

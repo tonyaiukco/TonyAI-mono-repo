@@ -23,6 +23,7 @@ import type {
   UpdateFuelBatchDeclarationsRequest,
   WithdrawFuelBatchRequest,
   WithdrawFuelRowsRequest,
+  FuelWithdrawableDTO,
 } from "@/lib/types";
 import type {
   ReleaseParametersDTO,
@@ -447,6 +448,7 @@ function fuelBatchQuery(filters: FuelBatchFilters): string {
   if (filters.subsidiaryId) search.set("subsidiaryId", filters.subsidiaryId);
   if (filters.awaitingMyDecision) search.set("awaitingMyDecision", "true");
   if (filters.mine) search.set("mine", "true");
+  if (filters.offset) search.set("offset", String(filters.offset));
   const qs = search.toString();
   return qs ? `?${qs}` : "";
 }
@@ -991,6 +993,8 @@ export const api = {
   /** One step of batch formation; call again while `processableRows` > 0. */
   formFuelBatches: (id: string, body: FormFuelBatchesRequest = {}) =>
     apiFetch<FormFuelBatchesResultDTO>(`/fuel-files/${encodeURIComponent(id)}/form-batches`, { method: "POST", body: JSON.stringify(body) }),
+  /** What the caller may withdraw of an upload's unbatched rows, by account and by waiting fuel name. */
+  fuelWithdrawable: (id: string) => apiFetch<FuelWithdrawableDTO>(`/fuel-files/${encodeURIComponent(id)}/withdrawable`),
   withdrawFuelRows: (id: string, body: WithdrawFuelRowsRequest) =>
     apiFetch<FuelUploadDTO>(`/fuel-files/${encodeURIComponent(id)}/withdraw-rows`, { method: "POST", body: JSON.stringify(body) }),
   /** A masterkey becomes the holder of an upload's rows that are in no batch. */

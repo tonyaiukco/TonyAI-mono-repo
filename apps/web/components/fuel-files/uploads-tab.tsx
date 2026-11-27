@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
-import { Hand, Loader2, RotateCcw, Layers } from "lucide-react";
+import { Hand, Loader2, RotateCcw, Layers, Undo2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +15,7 @@ import { formUntilDone } from "@/lib/fuel-upload-view";
 import { uploadActions } from "@/lib/fuel-files-view";
 import type { FuelUploadDTO, Locale, UserRole } from "@/lib/types";
 import { HeldRows, RowCount } from "./common";
+import { WithdrawRowsDialog } from "./withdraw-rows-dialog";
 
 /** Uploads (D16): each applied file, its rows by state, held rows by reason; "try again", forming, and a masterkey's takeover. */
 export function UploadsTab({ role, refreshKey }: { role: UserRole | undefined; refreshKey: number }) {
@@ -23,6 +24,7 @@ export function UploadsTab({ role, refreshKey }: { role: UserRole | undefined; r
   const showError = useStableErrorToast();
   const [uploads, setUploads] = useState<FuelUploadDTO[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [withdrawing, setWithdrawing] = useState<FuelUploadDTO | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -131,6 +133,12 @@ export function UploadsTab({ role, refreshKey }: { role: UserRole | undefined; r
                         {t("uploads.retry")}
                       </Button>
                     )}
+                    {actions.withdraw && (
+                      <Button size="sm" variant="outline" className="gap-1" disabled={busy !== null} onClick={() => setWithdrawing(u)} data-testid="upload-withdraw-rows">
+                        <Undo2 className="h-4 w-4" />
+                        {t("uploads.withdraw")}
+                      </Button>
+                    )}
                     {actions.takeOver && (
                       <Button size="sm" variant="outline" className="gap-1" disabled={busy !== null} onClick={() => takeOver(u)}>
                         <Hand className="h-4 w-4" />
@@ -144,6 +152,7 @@ export function UploadsTab({ role, refreshKey }: { role: UserRole | undefined; r
           </TableBody>
         </Table>
       </CardContent>
+      <WithdrawRowsDialog upload={withdrawing} onClose={() => setWithdrawing(null)} onDone={() => void load()} />
     </Card>
   );
 }

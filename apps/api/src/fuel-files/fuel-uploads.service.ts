@@ -12,6 +12,7 @@ import {
   type FuelSource,
   type FuelTrayDTO,
   type FuelUploadDTO,
+  type FuelWithdrawableDTO,
   type TakeOverFuelRowsRequest,
   type WithdrawFuelRowsRequest,
 } from '@tonyai/shared-types';
@@ -172,6 +173,35 @@ export class FuelUploadsService {
       );
     });
     return this.detail(user, id);
+  }
+
+  /**
+   * `GET /fuel-files/:id/withdrawable`: what `withdrawRows` would withdraw for
+   * this caller, by account and by waiting fuel name — the same predicate, so
+   * a choice offered is one the withdrawal accepts.
+   */
+  async withdrawable(user: RequestUser, id: string): Promise<FuelWithdrawableDTO> {
+    const upload = await this.visibleUpload(user, id, { asHolder: true });
+    const anyHolder = can(user.role, 'fuel_rows.take_over');
+    if (!anyHolder && !mayAuthorRecords(user)) return { accounts: [], fuelNames: [] };
+    const mayWithdraw = Prisma.sql`r.import_batch_id = ${upload.id}::uuid AND r.organisation_id = ${user.organisationId}::uuid
+      AND r.fuel_batch_id IS NULL AND r.state = ANY(${[...UNBATCHED_STATES]}::text[])
+      AND (${anyHolder} OR r.holder_id = ${user.id}::uuid)`;
+    const accounts = await this.prisma.$queryRaw<Array<{ id: string; code: string; name: string; rows: number; litres: string; excluded: number }>>`
+      SELECT a.id::text, a.code, a.name, count(*)::int AS rows, sum(r.litres)::text AS litres,
+             count(*) FILTER (WHERE r.state = 'excluded')::int AS excluded
+      FROM fuel_rows r JOIN fuel_accounts a ON a.id = r.fuel_account_id
+      WHERE ${mayWithdraw}
+      GROUP BY a.id, a.code, a.name ORDER BY a.code`;
+    const fuelNames = await this.prisma.$queryRaw<Array<{ raw_fuel: string; rows: number; litres: string }>>`
+      SELECT r.raw_fuel, count(*)::int AS rows, sum(r.litres)::text AS litres
+      FROM fuel_rows r
+      WHERE ${mayWithdraw} AND r.state = 'waiting_fuel' AND r.raw_fuel IS NOT NULL
+      GROUP BY r.raw_fuel ORDER BY r.raw_fuel`;
+    return {
+      accounts: accounts.map((a) => ({ accountId: a.id, code: a.code, name: a.name, rows: a.rows, litres: sumDecimals([a.litres]), excluded: a.excluded })),
+      fuelNames: fuelNames.map((f) => ({ rawName: f.raw_fuel, rows: f.rows, litres: sumDecimals([f.litres]) })),
+    };
   }
 
   /**

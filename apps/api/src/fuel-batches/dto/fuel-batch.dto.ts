@@ -25,6 +25,7 @@ export class FuelBatchFiltersDto implements FuelBatchFilters {
   @IsOptional() @Transform(lowercaseUuid) @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE }) subsidiaryId?: string;
   @IsOptional() @Transform(bool) @IsBoolean() awaitingMyDecision?: boolean;
   @IsOptional() @Transform(bool) @IsBoolean() mine?: boolean;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(1_000_000) offset?: number;
 }
 
 /** `GET /fuel-batches/:id/rows`: a page of the batch's rows. */

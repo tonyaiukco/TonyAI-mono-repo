@@ -142,6 +142,17 @@ describe('FuelFilesService — a preview', () => {
     expect(byCode['PO-9001']).toMatchObject({ subsidiaryId: ASSOCIATE, outcomes: [{ outcome: 'excluded', rows: 4, litres: '80' }] });
   });
 
+  it('says rows go to batches only in a category the standard user is granted (WP9 PR B review, P2)', async () => {
+    const { service } = harness();
+    const reporter: RequestUser = { ...user('standard_user', [LOGISTICS]), categoryGrants: { [LOGISTICS]: ['Mobile Combustion'] } };
+    const onRoad = await service.preview(reporter, asFile(file), { source: 'petrol_ofisi', usage: 'on_road' });
+    const stationary = await service.preview(reporter, asFile(file), { source: 'petrol_ofisi', usage: 'stationary' });
+    const outcomeOf = (p: typeof onRoad) => p.accounts.find((a) => a.code === 'PO-0001')!.outcomes.map((o) => o.outcome);
+    expect(outcomeOf(onRoad)).toEqual(['batches']);
+    // Stationary use is filed under Fuel, which the reporter does not hold: formation would hold the rows.
+    expect(outcomeOf(stationary)).toEqual(['outside_scope']);
+  });
+
   it('names no company the caller may not read, and says those rows are outside its scope', async () => {
     const { service } = harness();
     // A central reporter granted the logistics company only.

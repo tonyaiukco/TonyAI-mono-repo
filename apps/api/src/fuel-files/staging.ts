@@ -140,8 +140,14 @@ export function planStaging(input: StagingInput): StagingPlan {
   return plan;
 }
 
-/** What a planned row means on the preview for its reader (D3). */
-export function previewOutcome(row: PlannedRow, accessible: readonly string[]): FuelPreviewOutcome {
+/**
+ * What a planned row means on the preview for its reader (D3). `forms`: can
+ * the reader's batches take a row of this company and usage — its company
+ * granted and, for a standard user, the usage's category ticked; otherwise
+ * formation holds it (`fuel_out_of_scope`, `category_not_granted`) and the
+ * preview says so, never "batches" (WP9 PR B review, P2).
+ */
+export function previewOutcome(row: PlannedRow, forms: (subsidiaryId: string, usage: FuelUsage) => boolean): FuelPreviewOutcome {
   switch (row.state) {
     case 'waiting_account':
       return 'waiting_account';
@@ -150,6 +156,6 @@ export function previewOutcome(row: PlannedRow, accessible: readonly string[]): 
     case 'waiting_fuel':
       return 'waiting_fuel';
     default:
-      return row.subsidiaryId !== null && accessible.includes(row.subsidiaryId) ? 'batches' : 'outside_scope';
+      return row.subsidiaryId !== null && forms(row.subsidiaryId, row.usage) ? 'batches' : 'outside_scope';
   }
 }

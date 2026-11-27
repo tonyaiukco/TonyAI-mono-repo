@@ -23,7 +23,7 @@ import { AuditService } from '../audit/audit.service';
 import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
 import { PrismaService } from '../prisma/prisma.service';
-import { fuelAccountScopeSql, readsCompany } from '../fuel-files/fuel-scope';
+import { fuelAccountScopeSql, fuelRowScopeSql, readsCompany } from '../fuel-files/fuel-scope';
 import { mayConfirm } from '../fuel-files/fuel-uploads.service';
 
 /**
@@ -263,9 +263,12 @@ export class FuelAccountsService {
       include: { subsidiary: { select: { legalName: true, tradingName: true, control: true } } },
     });
     const counts = await this.prisma.$queryRaw<Array<{ fuel_account_id: string; state: string; rows: number; litres: string }>>`
-      SELECT fuel_account_id::text, state, count(*)::int AS rows, sum(litres)::text AS litres
-      FROM fuel_rows WHERE fuel_account_id = ANY(${[...ids]}::uuid[]) AND state <> 'withdrawn'
-      GROUP BY fuel_account_id, state`;
+      SELECT r.fuel_account_id::text, r.state, count(*)::int AS rows, sum(r.litres)::text AS litres
+      FROM fuel_rows r WHERE r.fuel_account_id = ANY(${[...ids]}::uuid[]) AND r.state <> 'withdrawn'
+        -- Only the rows the reader reads: an account's totals never count
+        -- another uploader's rows the reader cannot see (WP9 PR B review, P2).
+        AND ${fuelRowScopeSql(user, 'r')}
+      GROUP BY r.fuel_account_id, r.state`;
     const profiles = await resolveProfiles(this.prisma, accounts.map((a) => a.confirmedBy));
     const order = new Map(ids.map((id, i) => [id, i]));
     return accounts

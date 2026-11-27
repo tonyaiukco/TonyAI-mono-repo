@@ -96,6 +96,14 @@ export interface SheetCell {
   /** The cell as the user sees it; never empty. See `cellValue`. */
   value: string;
   kind: SheetCellKind;
+  /**
+   * An ISO date cell (`t="d"`) as the file wrote it. `value` is that instant
+   * in UTC, so a zone moves its fields; a fuel file reads the date and time
+   * as written instead, the zone ignored (D4: a transaction's time is the
+   * station's wall clock, and a UTC shift moves a day across a month or an
+   * invoice half — WP9 PR B review, P2). The template import reads `value`.
+   */
+  written?: string;
 }
 
 export interface MergedRange {
@@ -898,7 +906,12 @@ async function readSheet(
           if (parent === 'row' && cell) {
             const value = cellValue(cell, at.row, context);
             if (value !== '') {
-              cells.push({ column: cell.column, value, kind: cellKind(cell, context) });
+              cells.push({
+                column: cell.column,
+                value,
+                kind: cellKind(cell, context),
+                ...(cell.type === 'd' ? { written: cell.text.trim() } : {}),
+              });
             }
             at.lastColumn = cell.column;
             cell = null;

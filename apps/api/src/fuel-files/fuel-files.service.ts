@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable, PayloadTooLargeException } from '@nestjs/common';
 import { Prisma } from '@tonyai/db';
 import {
+  can,
   FUEL_UPLOAD_MAX_SIZE_BYTES,
   isFileFuel,
   isFuelCardSource,
@@ -27,7 +28,8 @@ import { CreateRoleRefusedError } from '../activity-records/errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { proposeCompany } from '../fuel-accounts/propose';
 import { LitreTally } from './decimal';
-import { readsCompany } from './fuel-scope';
+import { readsCompany, usageCategory } from './fuel-scope';
+import { grantedCategories } from '../activity-records/record-scope';
 import { FUEL_PARSE_TIMEOUT_MS } from './limits';
 import { organisationDedupeKey } from './dedupe-key';
 import { keyReading, readFuelFile, type KeyedFuelReading } from './read-fuel-file';
@@ -495,7 +497,7 @@ function previewAccounts(
   for (const row of plan.rows) {
     const byOutcome = outcomes.get(row.accountCode) ?? new Map<FuelPreviewOutcome, LitreTally>();
     outcomes.set(row.accountCode, byOutcome);
-    const outcome = previewOutcome(row, user.accessibleSubsidiaryIds);
+    const outcome = previewOutcome(row, (subsidiaryId, usage) => formsFor(user, subsidiaryId, usage));
     const tally = byOutcome.get(outcome) ?? new LitreTally();
     byOutcome.set(outcome, tally);
     tally.add(row.litres);
@@ -553,3 +555,10 @@ function byAccountAudit(rows: readonly PlannedRow[]): Array<{ code: string; stat
 }
 
 export type { ParsedUpload };
+
+/** Whether the uploader's own batches can take a row of this company and usage (formation's own scope checks). */
+function formsFor(user: RequestUser, subsidiaryId: string, usage: FuelUsage): boolean {
+  if (!user.accessibleSubsidiaryIds.includes(subsidiaryId)) return false;
+  if (!can(user.role, 'scope.categories')) return true;
+  return grantedCategories(user, subsidiaryId).includes(usageCategory(usage));
+}

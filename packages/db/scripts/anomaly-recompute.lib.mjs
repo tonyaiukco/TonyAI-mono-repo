@@ -380,3 +380,74 @@ export function batchVerdictsOf(invoices, records) {
   }
   return verdicts;
 }
+
+/**
+ * One stale verdict rewritten, in its own transaction, with its `rescore`
+ * audit row; answers why it was skipped, or null once written.
+ *
+ * The classification came from a snapshot; this is the guarantee. `updatedAt`
+ * is the optimistic-lock token precisely because every API write path bumps
+ * it, so a record approved, locked or edited since the read fails the
+ * predicate and is skipped rather than clobbered.
+ *
+ * A fuel batch's record is written only inside a step of its batch (TA029,
+ * inc28-fuel-bulk D9): its batch row is locked first, as every batch step
+ * does, and the step declared for this transaction — without it the trigger
+ * refused the write and the run stopped there (WP9 PR B review, P2).
+ */
+export async function rewriteVerdict(prisma, r, stored, fresh) {
+  let why = null;
+  await prisma.$transaction(async (tx) => {
+    if (r.fuelBatchId) {
+      await tx.$queryRaw`SELECT id FROM fuel_batches WHERE id = ${r.fuelBatchId}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', ${r.fuelBatchId}::text || ':' || pg_current_xact_id()::text, true)`;
+    }
+    const stillLocked = await tx.periodLock.findFirst({
+      where: {
+        subsidiaryId: r.subsidiaryId,
+        reportingYear: r.reportingYear,
+        reportingPeriod: r.reportingPeriod,
+        periodValue: r.periodValue,
+      },
+      select: { id: true },
+    });
+    if (stillLocked) {
+      why = 'its period was closed mid-run';
+      return;
+    }
+    const written = await tx.activityRecord.updateMany({
+      where: { id: r.id, status: { in: [...REWRITABLE] }, updatedAt: r.updatedAt },
+      data: {
+        anomalyFlag: fresh.anomalous,
+        anomalyBaselinePriorCount: fresh.priorCount,
+        anomalyBaselineTCo2e: fresh.baseline,
+      },
+    });
+    if (written.count === 0) {
+      why = 'it changed between the read and the write';
+      return;
+    }
+    // Its own verb, and a null actor: no person performed this. `update`
+    // would put a system re-score in the same bucket as an author changing a
+    // figure, and "who changed this number" has to stay answerable.
+    await tx.auditLog.create({
+      data: {
+        userId: null,
+        role: null,
+        organisationId: r.subsidiary.organisationId,
+        action: 'rescore',
+        entity: 'activity_record',
+        entityId: r.id,
+        diff: {
+          // `status` and `updatedAt` are recorded so the trail alone proves
+          // this tool honoured its own exclusions — otherwise "it never
+          // touched a closed record" is unverifiable after the fact.
+          before: { ...stored, status: r.status, updatedAt: r.updatedAt.toISOString() },
+          after: fresh,
+          source: 'anomaly:recompute',
+        },
+      },
+    });
+  });
+  return why;
+}

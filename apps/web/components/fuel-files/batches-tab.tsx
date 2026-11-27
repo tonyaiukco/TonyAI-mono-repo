@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
 import { Loader2, Send } from "lucide-react";
@@ -13,8 +13,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api } from "@/lib/api";
 import { useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatComputedAmount, formatNumber } from "@/lib/i18n/number";
-import { batchActions, batchTitle, isRevised, submittableIds } from "@/lib/fuel-batch-view";
-import { FUEL_BATCH_STATUSES, type AuthUser, type FuelBatchDTO, type FuelBatchStatus, type Locale } from "@/lib/types";
+import { appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextOffsets, shownOf, submittableIds, type PagedBatches } from "@/lib/fuel-batch-view";
+import { FUEL_BATCH_STATUSES, type AuthUser, type FuelBatchStatus, type Locale } from "@/lib/types";
 import { BatchSheet } from "./batch-sheet";
 import { RowCount } from "./common";
 
@@ -27,7 +27,9 @@ export function BatchesTab({ user, refreshKey, initialOpen = null }: { user: Aut
   const locale = useLocale() as Locale;
   const showError = useStableErrorToast();
   const [status, setStatus] = useState<FuelBatchStatus | typeof ALL>(ALL);
-  const [batches, setBatches] = useState<FuelBatchDTO[] | null>(null);
+  const [paged, setPaged] = useState<PagedBatches | null>(null);
+  const [more, setMore] = useState(false);
+  const batches = paged ? paged.lists[0]! : null;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<string | null>(initialOpen);
   useEffect(() => {
@@ -37,14 +39,30 @@ export function BatchesTab({ user, refreshKey, initialOpen = null }: { user: Aut
   const [version, setVersion] = useState(0);
   const viewer = user ? { id: user.id, role: user.role } : null;
 
+  const filter = useMemo(() => (status === ALL ? {} : { status }), [status]);
   const load = useCallback(async () => {
     try {
-      setBatches(await api.listFuelBatches(status === ALL ? {} : { status }));
+      const [list, meta] = await Promise.all([api.listFuelBatches(filter), api.fuelBatchMetadata(filter)]);
+      setPaged({ lists: [list], totals: [meta.total] });
     } catch (error) {
-      setBatches([]);
+      setPaged({ lists: [[]], totals: [0] });
       showError(error);
     }
-  }, [status, showError]);
+  }, [filter, showError]);
+  /** The next page (WP9 PR B review, P2: one upload can form hundreds of batches). */
+  async function loadMore() {
+    const offset = paged ? nextOffsets(paged)[0] : null;
+    if (!paged || offset === null || offset === undefined) return;
+    setMore(true);
+    try {
+      const page = await api.listFuelBatches({ ...filter, offset });
+      setPaged({ lists: [appendPage(paged.lists[0]!, page)], totals: paged.totals });
+    } catch (error) {
+      showError(error);
+    } finally {
+      setMore(false);
+    }
+  }
   useEffect(() => void load(), [load, refreshKey, version]);
 
   const toSubmit = batches ? submittableIds(batches, selected, viewer) : [];
@@ -153,6 +171,14 @@ export function BatchesTab({ user, refreshKey, initialOpen = null }: { user: Aut
               })}
             </TableBody>
           </Table>
+        )}
+        {paged && hasMoreBatches(paged) && (
+          <div className="flex items-center justify-between gap-2 border-t p-3 text-sm text-muted-foreground">
+            <span>{t("batches.shownOf", { shown: formatNumber(shownOf(paged).shown, locale), total: formatNumber(shownOf(paged).total, locale) })}</span>
+            <Button size="sm" variant="outline" disabled={more} onClick={() => void loadMore()} data-testid="batches-more">
+              {more && <Loader2 className="h-4 w-4 animate-spin" />}{t("batches.loadMore")}
+            </Button>
+          </div>
         )}
       </CardContent>
       <BatchSheet batchId={open} viewer={viewer} onClose={() => setOpen(null)} onChanged={() => setVersion((v) => v + 1)} />

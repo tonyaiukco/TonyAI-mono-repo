@@ -552,6 +552,19 @@ export interface WithdrawFuelRowsRequest {
   reason: string;
 }
 
+/**
+ * `GET /fuel-files/:id/withdrawable`: the upload's live rows in no batch that
+ * the caller may withdraw (`POST /fuel-files/:id/withdraw-rows`) — its own
+ * held rows, or a masterkey's any — by account, and by raw fuel name for the
+ * rows waiting for one. Excluded rows are among them: an associate's account
+ * later made a controlled company is withdrawn and the file uploaded again
+ * (C20; WP9 PR B review, P2).
+ */
+export interface FuelWithdrawableDTO {
+  accounts: Array<FuelRowCountDTO & { accountId: string; code: string; name: string; excluded: number }>;
+  fuelNames: Array<FuelRowCountDTO & { rawName: string }>;
+}
+
 /** `POST /fuel-files/:id/take-over` (masterkey, C8): optionally one account's rows only. */
 export interface TakeOverFuelRowsRequest {
   accountId?: string;
@@ -663,7 +676,16 @@ export interface FuelBatchFilters {
   awaitingMyDecision?: boolean;
   /** The caller's own batches (the Fuel files page's Batches tab). */
   mine?: boolean;
+  /**
+   * `GET /fuel-batches` only: the batches to skip, in the list's order — the
+   * next page starts at the count already loaded (`FUEL_BATCH_PAGE` a page;
+   * `/metadata` answers the total). One upload can form hundreds (WP9 PR B review, P2).
+   */
+  offset?: number;
 }
+
+/** `GET /fuel-batches` answers at most this many batches a call. */
+export const FUEL_BATCH_PAGE = 200;
 
 export interface FuelBatchMetadataDTO {
   total: number;

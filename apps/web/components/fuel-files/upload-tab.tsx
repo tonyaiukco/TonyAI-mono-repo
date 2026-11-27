@@ -20,7 +20,7 @@ import {
   FUEL_UPLOAD_MAX_SIZE_BYTES,
   FUEL_USAGES,
   PERIOD_VALUES,
-  isFuelCardSource,
+  isFuelCardSource, selectableReportingYears,
   type FormFuelBatchesResultDTO,
   type FuelFilePreviewDTO,
   type FuelSource,
@@ -137,10 +137,8 @@ export function UploadTab({ onApplied }: { onApplied: () => void }) {
   const totals = preview ? previewTotals(preview) : null;
   const toDeclare = preview ? deliveriesToDeclare(preview) : [];
   const card = isFuelCardSource(source);
-  const years = (() => {
-    const now = new Date().getFullYear();
-    return [now - 2, now - 1, now];
-  })();
+  // The same window as every year picker: this year and the ten before it (WP9 PR B review, P3).
+  const years = selectableReportingYears();
 
   return (
     <div className="space-y-4">

@@ -47,7 +47,7 @@
     "excluded": "Excluded (associate)",
     "waiting_account": "Waits for an account",
     "waiting_fuel": "Waits for a fuel name",
-    "outside_scope": "Outside your companies"
+    "outside_scope": "Outside your scope (company or category)"
   },
   "accountStates": {
     "unmatched": "Unmatched",
@@ -114,7 +114,16 @@
     "form": "Form batches",
     "retry": "Try again",
     "takeOver": "Take over",
-    "takenOver": "You now hold the upload's rows that are in no batch."
+    "takenOver": "You now hold the upload's rows that are in no batch.",
+    "withdraw": "Withdraw rows",
+    "withdrawTitle": "Withdraw rows of this upload",
+    "withdrawDescription": "Rows in no batch — one account’s, or those waiting for one fuel name — are withdrawn with your reason. They stay on record and count nowhere. To count an associate’s excluded rows once it is a controlled company, withdraw them, change the account’s company, and upload the file again.",
+    "withdrawChoose": "Rows to withdraw",
+    "withdrawFuelName": "Fuel name “{name}”",
+    "withdrawExcluded": "{count} excluded",
+    "withdrawReason": "Reason",
+    "withdrawNone": "No row of this upload is yours to withdraw.",
+    "rowsWithdrawn": "Rows withdrawn"
   },
   "accounts": {
     "title": "Accounts",
@@ -196,7 +205,9 @@
       "super_admin": "A super admin of its company",
       "masterkey": "A masterkey",
       "author": "Its author (a masterkey)"
-    }
+    },
+    "loadMore": "Load more",
+    "shownOf": "Showing {shown} of {total} batches"
   },
   "review": {
     "recordsTab": "Records ({count})",

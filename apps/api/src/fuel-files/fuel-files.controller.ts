@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { FormFuelBatchesResultDTO, FuelFilePreviewDTO, FuelTrayDTO, FuelUploadDTO } from '@tonyai/shared-types';
+import type { FormFuelBatchesResultDTO, FuelFilePreviewDTO, FuelTrayDTO, FuelUploadDTO, FuelWithdrawableDTO } from '@tonyai/shared-types';
 import { FuelBatchFormationService } from '../fuel-batches/fuel-batch-formation.service';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
@@ -59,6 +59,11 @@ export class FuelFilesController {
   @Get(':id')
   detail(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string): Promise<FuelUploadDTO> {
     return this.uploads.detail(user, id);
+  }
+
+  @Get(':id/withdrawable')
+  withdrawable(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string): Promise<FuelWithdrawableDTO> {
+    return this.uploads.withdrawable(user, id);
   }
 
   @Post(':id/withdraw-rows')

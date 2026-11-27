@@ -277,3 +277,31 @@ describe('taking a batch into review names the submission shown (WP9 PR B review
     }
   });
 });
+
+describe('a tanker declaration change is audited whole (WP9 PR B review, P2)', () => {
+  it('names the fuel, usage, year and month before and after, the unchanged ones included', async () => {
+    const h = harness(batchOf({ source: 'tanker', usage: 'stationary' } as Partial<FuelBatch>));
+    (h.tx as Record<string, unknown>).$queryRaw = vi.fn(async (strings: unknown) => {
+      const sql = Array.isArray(strings) ? strings.join('?') : String(strings);
+      return sql.includes('DISTINCT fuel') ? [{ fuel: 'diesel', year: 2025, month: 3 }] : [{ id: BATCH }];
+    });
+    (h.tx as Record<string, unknown>).fuelRow = { updateMany: vi.fn(async () => ({ count: 1 })) };
+    vi.spyOn(h.service as unknown as { rebuild: () => Promise<unknown[]> }, 'rebuild').mockResolvedValue([]);
+    await h.service.changeDeclarations(user('standard_user'), BATCH, { usage: 'stationary', month: 4 });
+    expect(h.audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        action: 'update',
+        entity: 'fuel_batch',
+        entityId: BATCH,
+        diff: {
+          declarations: {
+            before: { usage: 'stationary', fuel: 'diesel', year: 2025, month: 3 },
+            after: { usage: 'stationary', fuel: 'diesel', year: 2025, month: 4 },
+          },
+        },
+      },
+      h.tx,
+    );
+  });
+});

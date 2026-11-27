@@ -1,17 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "use-intl";
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { useStableErrorToast } from "@/lib/i18n/hooks";
-import { formatComputedAmount } from "@/lib/i18n/number";
-import { batchActions, batchTitle, isRevised } from "@/lib/fuel-batch-view";
+import { formatComputedAmount, formatNumber } from "@/lib/i18n/number";
+import { appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextOffsets, shownOf, type PagedBatches } from "@/lib/fuel-batch-view";
 import { reviewBatchFilters } from "@/lib/review-view";
-import type { AuthUser, FuelBatchDTO, Locale } from "@/lib/types";
+import type { AuthUser, Locale } from "@/lib/types";
 import { BatchSheet } from "./batch-sheet";
 import { RowCount } from "./common";
 
@@ -32,25 +33,50 @@ export function ReviewBatches({
   const t = useTranslations("fuelFiles");
   const locale = useLocale() as Locale;
   const showError = useStableErrorToast();
-  const [batches, setBatches] = useState<FuelBatchDTO[] | null>(null);
+  const [paged, setPaged] = useState<PagedBatches | null>(null);
+  const [more, setMore] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const seq = useRef(0);
   const viewer = { id: user.id, role: user.role };
 
+  const filters = useMemo(() => reviewBatchFilters({ subsidiaryId, showAll }), [subsidiaryId, showAll]);
   const load = useCallback(async () => {
     const mine = ++seq.current;
     try {
-      const lists = await Promise.all(reviewBatchFilters({ subsidiaryId, showAll }).map((f) => api.listFuelBatches(f)));
+      const [lists, totals] = await Promise.all([
+        Promise.all(filters.map((f) => api.listFuelBatches(f))),
+        Promise.all(filters.map((f) => api.fuelBatchMetadata(f).then((m) => m.total))),
+      ]);
       if (mine !== seq.current) return;
-      const merged = lists.flat().sort((a, b) => (a.submittedAt ?? "").localeCompare(b.submittedAt ?? "") || a.id.localeCompare(b.id));
-      setBatches(merged);
+      setPaged({ lists, totals });
     } catch (error) {
       if (mine !== seq.current) return;
-      setBatches([]);
+      setPaged({ lists: filters.map(() => []), totals: filters.map(() => 0) });
       showError(error);
     }
-  }, [subsidiaryId, showAll, showError]);
+  }, [filters, showError]);
   useEffect(() => void load(), [load, refreshKey]);
+
+  /** The next page of each list that has more (WP9 PR B review, P2). */
+  async function loadMore() {
+    if (!paged) return;
+    const mine = seq.current;
+    setMore(true);
+    try {
+      const offsets = nextOffsets(paged);
+      const pages = await Promise.all(filters.map((f, i) => (offsets[i] === null ? Promise.resolve([]) : api.listFuelBatches({ ...f, offset: offsets[i]! }))));
+      if (mine !== seq.current) return;
+      setPaged({ lists: paged.lists.map((list, i) => appendPage(list, pages[i]!)), totals: paged.totals });
+    } catch (error) {
+      showError(error);
+    } finally {
+      setMore(false);
+    }
+  }
+
+  const batches = paged
+    ? paged.lists.flat().sort((a, b) => (a.submittedAt ?? "").localeCompare(b.submittedAt ?? "") || a.id.localeCompare(b.id))
+    : null;
 
   return (
     <Card>
@@ -95,6 +121,14 @@ export function ReviewBatches({
               ))}
             </TableBody>
           </Table>
+        )}
+        {paged && hasMoreBatches(paged) && (
+          <div className="flex items-center justify-between gap-2 border-t p-3 text-sm text-muted-foreground">
+            <span>{t("batches.shownOf", { shown: formatNumber(shownOf(paged).shown, locale), total: formatNumber(shownOf(paged).total, locale) })}</span>
+            <Button size="sm" variant="outline" disabled={more} onClick={() => void loadMore()} data-testid="review-batches-more">
+              {more && <Loader2 className="h-4 w-4 animate-spin" />}{t("batches.loadMore")}
+            </Button>
+          </div>
         )}
       </CardContent>
       <BatchSheet

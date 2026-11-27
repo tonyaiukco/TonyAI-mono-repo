@@ -374,6 +374,51 @@ describe('reading uploads, the tray, a takeover (task 5.4)', () => {
     }
   });
 
+  it('reads as the RLS policy does: a super_admin holder never reads its rows of an ungranted company, and an account’s totals count only rows the reader reads (WP9 PR B review, P2)', async () => {
+    const superAdmin = tenant.users.superAdmin;
+    // An account mapped to the company the super_admin is NOT granted; the super_admin uploads its rows.
+    await confirmedAccount('INT-UNGRANTED', tenant.otherSubsidiaryId);
+    const upload = await apply(superAdmin, salesList('INT-UNGRANTED', 3));
+    expect(await owner.fuelRow.count({ where: { importBatchId: upload.id, holderId: superAdmin.id, subsidiaryId: tenant.otherSubsidiaryId } })).toBe(3);
+    const files = services();
+    const detail = await files.uploads.detail(superAdmin, upload.id);
+    expect(Object.values(detail.rows).reduce((n, c) => n + c.rows, 0)).toBe(0);
+    expect((await files.uploads.tray(superAdmin)).accounts).toEqual([]);
+    // The masterkey reads them all.
+    expect((await files.uploads.detail(await masterkey(), upload.id)).rows.ready).toMatchObject({ rows: 3 });
+
+    // Another uploader's rows of an account proposed to the super_admin's company wait with no company:
+    // the super_admin lists the account but counts none of them.
+    const company = await owner.subsidiary.findUniqueOrThrow({ where: { id: tenant.subsidiaryId } });
+    const reporter = await addMember(owner, tenant, UserRole.standard_user, { grants: [tenant.subsidiaryId] });
+    await apply(reporter, salesListNamed('INT-PROPOSED', company.legalName));
+    const listed = (await files.accounts.list(superAdmin)).find((a) => a.code === 'INT-PROPOSED');
+    expect(listed?.state).toBe('proposed');
+    expect(listed!.rows.waiting_account).toEqual({ rows: 0, litres: '0' });
+    const asMasterkey = (await files.accounts.list(await masterkey())).find((a) => a.code === 'INT-PROPOSED');
+    expect(asMasterkey!.rows.waiting_account).toEqual({ rows: 1, litres: '10' });
+  });
+
+  it('lists what each caller may withdraw — its own rows in no batch, excluded ones included — and the withdrawal takes exactly that (WP9 PR B review, P2)', async () => {
+    const assoc = await associate();
+    await confirmedAccount('INT-ASSOC', assoc);
+    const reporter = await addMember(owner, tenant, UserRole.standard_user, { grants: [tenant.subsidiaryId] });
+    const upload = await apply(reporter, salesList('INT-ASSOC', 3, 1));
+    const files = services();
+    const mine = await files.uploads.withdrawable(reporter, upload.id);
+    expect(mine.accounts).toMatchObject([{ code: 'INT-ASSOC', rows: 3, excluded: 3 }]);
+    // An unrecognised fuel name under an associate is excluded, not waiting: no fuel name to offer.
+    expect(mine.fuelNames).toEqual([]);
+    // Another author holds none of them; the masterkey may withdraw them all.
+    expect(errorCodeOf(await files.uploads.withdrawable(tenant.users.standardUser, upload.id).catch((e: unknown) => e))).toBe('fuel_file_not_found');
+    expect((await files.uploads.withdrawable(await masterkey(), upload.id)).accounts).toMatchObject([{ code: 'INT-ASSOC', rows: 3 }]);
+    expect(await files.uploads.withdrawable(tenant.users.auditor, upload.id)).toEqual({ accounts: [], fuelNames: [] });
+
+    await files.uploads.withdrawRows(reporter, upload.id, { accountId: mine.accounts[0]!.accountId, reason: 'the associate is now controlled' });
+    expect((await rowsOf()).map((r) => [r.state, r.withdrawnState])).toEqual(Array.from({ length: 3 }, () => ['withdrawn', 'excluded']));
+    expect(await files.uploads.withdrawable(reporter, upload.id)).toEqual({ accounts: [], fuelNames: [] });
+  });
+
   it('makes a masterkey the holder of an upload’s unbatched rows, ready again, with an audit row naming the uploader', async () => {
     const reporter = await addMember(owner, tenant, UserRole.standard_user, { grants: [tenant.subsidiaryId] });
     await confirmedAccount('INT-TAKE', tenant.otherSubsidiaryId);

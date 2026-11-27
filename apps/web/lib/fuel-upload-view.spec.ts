@@ -9,6 +9,7 @@ import {
   formUntilDone,
   formsAfterApply,
   initialUsage,
+  litresFractionDigits,
   previewTotals,
 } from "./fuel-upload-view";
 
@@ -119,5 +120,15 @@ describe("forming right after the apply", () => {
     expect(formsAfterApply({ readerIsHolder: true, processableRows: 3 })).toBe(true);
     expect(formsAfterApply({ readerIsHolder: true, processableRows: 0 })).toBe(false);
     expect(formsAfterApply({ readerIsHolder: false, processableRows: 3 })).toBe(false);
+  });
+});
+
+describe("litres shown with every decimal they hold (WP9 PR B review, P2)", () => {
+  it("keeps a small figure's digits and drops trailing zeros", () => {
+    expect(litresFractionDigits("0.0004")).toBe(4);
+    expect(litresFractionDigits("1168.00")).toBe(0);
+    expect(litresFractionDigits("12500.250")).toBe(2);
+    expect(litresFractionDigits("40")).toBe(0);
+    expect(litresFractionDigits("0.1234567890123456789012")).toBe(20);
   });
 });

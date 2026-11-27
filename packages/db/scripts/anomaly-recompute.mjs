@@ -75,7 +75,7 @@ import {
   lockKey,
   parseArgs,
   parseHost,
-  REWRITABLE,
+  rewriteVerdict,
   shouldScore,
 } from './anomaly-recompute.lib.mjs';
 import { PrismaClient } from '../generated/client/index.js';
@@ -255,58 +255,8 @@ async function main() {
   const skipped = [];
   for (const { item, stored, fresh } of rewritable) {
     const r = item.row;
-    await prisma.$transaction(async (tx) => {
-      // The classification above came from a snapshot; this is the guarantee.
-      // `updatedAt` is the optimistic-lock token precisely because every API
-      // write path bumps it, so a record approved, locked or edited since the
-      // read fails the predicate and is skipped rather than clobbered.
-      const stillLocked = await tx.periodLock.findFirst({
-        where: {
-          subsidiaryId: r.subsidiaryId,
-          reportingYear: r.reportingYear,
-          reportingPeriod: r.reportingPeriod,
-          periodValue: r.periodValue,
-        },
-        select: { id: true },
-      });
-      if (stillLocked) {
-        skipped.push({ id: r.id, why: 'its period was closed mid-run' });
-        return;
-      }
-      const written = await tx.activityRecord.updateMany({
-        where: { id: r.id, status: { in: [...REWRITABLE] }, updatedAt: r.updatedAt },
-        data: {
-          anomalyFlag: fresh.anomalous,
-          anomalyBaselinePriorCount: fresh.priorCount,
-          anomalyBaselineTCo2e: fresh.baseline,
-        },
-      });
-      if (written.count === 0) {
-        skipped.push({ id: r.id, why: 'it changed between the read and the write' });
-        return;
-      }
-      // Its own verb, and a null actor: no person performed this. `update`
-      // would put a system re-score in the same bucket as an author changing a
-      // figure, and "who changed this number" has to stay answerable.
-      await tx.auditLog.create({
-        data: {
-          userId: null,
-          role: null,
-          organisationId: r.subsidiary.organisationId,
-          action: 'rescore',
-          entity: 'activity_record',
-          entityId: r.id,
-          diff: {
-            // `status` and `updatedAt` are recorded so the trail alone proves
-            // this tool honoured its own exclusions — otherwise "it never
-            // touched a closed record" is unverifiable after the fact.
-            before: { ...stored, status: r.status, updatedAt: r.updatedAt.toISOString() },
-            after: fresh,
-            source: 'anomaly:recompute',
-          },
-        },
-      });
-    });
+    const why = await rewriteVerdict(prisma, r, stored, fresh);
+    if (why) skipped.push({ id: r.id, why });
   }
 
   const rewritten = rewritable.length - skipped.length;

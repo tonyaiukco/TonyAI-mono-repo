@@ -17,6 +17,7 @@ import {
   PERIOD_VALUES,
   fuelRecordTarget,
   mayAuthorRecords,
+  FUEL_BATCH_PAGE,
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
@@ -49,7 +50,6 @@ export { fuelBatchScopeWhere };
 
 const STEP_TX = { timeout: 60_000, maxWait: 10_000 } as const;
 const ROW_PAGE_MAX = 200;
-const LIST_LIMIT = 200;
 
 type LiveRecord = ActivityRecord & { location: { name: string } | null };
 
@@ -94,7 +94,9 @@ export class FuelBatchesService {
     const batches = await this.prisma.fuelBatch.findMany({
       where,
       orderBy: reviewOrder ? [{ submittedAt: 'asc' }, { id: 'asc' }] : [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: LIST_LIMIT,
+      // A page in a total order (the id breaks ties), so the next starts where this ended.
+      skip: filters.offset ?? 0,
+      take: FUEL_BATCH_PAGE,
     });
     return this.dtos(user, batches);
   }
@@ -452,7 +454,18 @@ export class FuelBatchesService {
         const batch = await this.lockOpen(tx, user, id, false);
         await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');
         await declareFuelBatchStep(tx, id);
-        const before = { usage: batch.usage };
+        // The declaration as it stood and as it now stands, whole: a tanker
+        // batch is one delivery, whose rows share one fuel and period — so the
+        // trail alone rebuilds both (WP9 PR B review, P2).
+        const declaredBefore = tanker
+          ? await tx.$queryRaw<Array<{ fuel: FileFuel | null; year: number; month: number }>>`
+              SELECT DISTINCT fuel, year, month FROM fuel_rows WHERE fuel_batch_id = ${id}::uuid AND state = 'assigned' ORDER BY 1, 2, 3`
+          : [];
+        const was = declaredBefore[0];
+        const before = tanker && was ? { usage: batch.usage, fuel: was.fuel, year: was.year, month: was.month } : { usage: batch.usage };
+        const after = tanker && was
+          ? { usage: change.usage, fuel: change.fuel ?? was.fuel, year: change.year ?? was.year, month: change.month ?? was.month }
+          : { usage: change.usage };
         await tx.fuelBatch.update({ where: { id }, data: { usage: change.usage, category: usageCategory(change.usage) } });
         await tx.fuelRow.updateMany({
           where: { fuelBatchId: id, state: 'assigned' },
@@ -466,7 +479,7 @@ export class FuelBatchesService {
         removed.push(...(await this.rebuild(tx, user, { ...batch, usage: change.usage })));
         await this.audit.record(
           user,
-          { action: 'update', entity: 'fuel_batch', entityId: id, diff: { declarations: { before, after: change } } },
+          { action: 'update', entity: 'fuel_batch', entityId: id, diff: { declarations: { before, after } } },
           tx,
         );
       }, STEP_TX);
