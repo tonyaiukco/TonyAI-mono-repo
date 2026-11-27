@@ -11,6 +11,8 @@ import {
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   LEAK_RATE_CHOICES,
   PERIOD_VALUES,
+  RECORD_INVOICE_NO_MAX_LENGTH,
+  RECORD_SUPPLIER_MAX_LENGTH,
   REPORTING_PERIODS,
   WHOLE_COMPANY_ENTITY_LABEL,
   recordActivityTypesFor,
@@ -225,7 +227,7 @@ export async function buildTemplateWorkbook(
   const first = reference.addRow(['How to use this template']);
   first.font = { bold: true, size: 14 };
   reference.addRow([
-    `Fill in the "${SHEET_RECORDS}" sheet. Every column there is required except locationId, activityType, varianceReason and the calculation inputs (described below).`,
+    `Fill in the "${SHEET_RECORDS}" sheet. Every column there is required except locationId, activityType, varianceReason, invoiceNo, supplier and the calculation inputs (described below).`,
   ]);
   reference.addRow([
     'Fuel, Mobile Combustion, Refrigerants and Fire Suppression rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
@@ -341,6 +343,15 @@ export async function buildTemplateWorkbook(
   reference.addRow([
     'leakRateChoice',
     `Blank or default for the equipment type's default leak rate. Refrigerants: alternative only for ${EQUIPMENT_TYPES_WITH_ALTERNATIVE.join(' and ')}. Fire Suppression: always the default.`,
+  ]);
+
+  reference.addRow([
+    'invoiceNo',
+    `Optional: the invoice number of the record's evidence, at most ${RECORD_INVOICE_NO_MAX_LENGTH} characters. A reviewer matches the record to its file by it.`,
+  ]);
+  reference.addRow([
+    'supplier',
+    `Optional: the supplier named on the invoice, at most ${RECORD_SUPPLIER_MAX_LENGTH} characters. An Electricity row's supplier is stored as its utility provider.`,
   ]);
 
   section('Periods');

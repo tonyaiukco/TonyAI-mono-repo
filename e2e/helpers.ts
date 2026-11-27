@@ -1579,6 +1579,9 @@ export interface BulkRow {
   activityValue: number | string;
   activityUnit?: string;
   varianceReason?: string;
+  /** The optional invoice number and supplier columns (inc28-fuel-bulk D18). */
+  invoiceNo?: string;
+  supplier?: string;
 }
 
 /**
@@ -1589,8 +1592,12 @@ export interface BulkRow {
  * hard-code one subsidiary and drift the first time the lanes move.
  */
 export function buildBulkCsv(rows: BulkRow[]): Buffer {
+  // The two reference columns only when a row names one, so every other spec
+  // keeps posting the earlier template's shape (which the import still reads).
+  const references = rows.some((r) => r.invoiceNo !== undefined || r.supplier !== undefined);
   const header =
-    'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
+    'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason' +
+    (references ? ',invoiceNo,supplier' : '');
   const lines = rows.map((r) =>
     [
       r.subsidiaryId,
@@ -1602,6 +1609,7 @@ export function buildBulkCsv(rows: BulkRow[]): Buffer {
       String(r.activityValue),
       r.activityUnit ?? E2E_BULK_UNIT,
       r.varianceReason ?? '',
+      ...(references ? [r.invoiceNo ?? '', r.supplier ?? ''] : []),
     ].join(','),
   );
   return Buffer.from([header, ...lines].join('\n'), 'utf8');

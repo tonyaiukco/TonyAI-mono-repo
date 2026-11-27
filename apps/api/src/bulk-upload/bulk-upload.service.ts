@@ -13,6 +13,11 @@ import { ActivityRecordStatus } from '@tonyai/db';
 import {
   BULK_UPLOAD_ALLOWED_EXTENSIONS,
   BULK_UPLOAD_COLUMNS,
+  ELECTRICITY_SUPPLIER_KEY,
+  RECORD_INVOICE_NO_KEY,
+  RECORD_INVOICE_NO_MAX_LENGTH,
+  RECORD_SUPPLIER_KEY,
+  RECORD_SUPPLIER_MAX_LENGTH,
   BULK_UPLOAD_MAX_ROWS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
   BULK_UPLOAD_MESSAGE_MAX_LENGTH,
@@ -1360,6 +1365,8 @@ export class BulkUploadService {
         },
       };
     }
+    const references = referenceIssue(cells);
+    if (references) return { issue: references };
     if (record.lines) {
       // A refrigerant record (D7): its quantity is the sum of its lines'
       // capacities, and its lines are its parameters.
@@ -1418,6 +1425,7 @@ export class BulkUploadService {
       ...(activityType === '' ? {} : { activityType }),
       activityUnit: cells.activityUnit.trim(),
       ...(varianceReason === '' ? {} : { varianceReason }),
+      ...referencesInput(cells),
     };
   }
 
@@ -1516,4 +1524,34 @@ export class BulkUploadService {
       message: 'This row could not be imported. It was not written.',
     };
   }
+}
+
+/**
+ * The invoice number and the supplier a row stores in `input`, as the form
+ * stores them (inc28-fuel-bulk D18): trimmed, absent when blank, the supplier
+ * under `utility_provider` on an Electricity row. No `input` key at all when
+ * both are blank, so a file without the columns imports as before.
+ */
+function referencesInput(cells: Record<BulkUploadColumn, string>): { input?: Record<string, string> } {
+  const invoiceNo = cells.invoiceNo.trim();
+  const supplier = cells.supplier.trim();
+  if (invoiceNo === '' && supplier === '') return {};
+  const supplierKey = cells.category.trim() === 'Electricity' ? ELECTRICITY_SUPPLIER_KEY : RECORD_SUPPLIER_KEY;
+  return {
+    input: {
+      ...(invoiceNo === '' ? {} : { [RECORD_INVOICE_NO_KEY]: invoiceNo }),
+      ...(supplier === '' ? {} : { [supplierKey]: supplier }),
+    },
+  };
+}
+
+/** A row's invoice number or supplier over the form's limit: the row refusal `invalid` with its column, quoting nothing back. */
+function referenceIssue(cells: Record<BulkUploadColumn, string>): CellIssue | null {
+  if (cells.invoiceNo.trim().length > RECORD_INVOICE_NO_MAX_LENGTH) {
+    return { column: 'invoiceNo', code: 'invalid', message: `The invoice number is longer than ${RECORD_INVOICE_NO_MAX_LENGTH} characters.` };
+  }
+  if (cells.supplier.trim().length > RECORD_SUPPLIER_MAX_LENGTH) {
+    return { column: 'supplier', code: 'invalid', message: `The supplier is longer than ${RECORD_SUPPLIER_MAX_LENGTH} characters.` };
+  }
+  return null;
 }

@@ -7370,6 +7370,15 @@ export const BULK_UPLOAD_COLUMNS = [
   'capacityKg',
   'refillKg',
   'leakRateChoice',
+  /**
+   * The invoice number and the supplier (inc28-fuel-bulk D18), optional in
+   * the header and on the row: stored in `input` as the form stores them
+   * (`invoice_no`; `supplier`, an Electricity row's `utility_provider`),
+   * under the form's limits (`RECORD_INVOICE_NO_MAX_LENGTH`,
+   * `RECORD_SUPPLIER_MAX_LENGTH`). A file without them reads as before.
+   */
+  'invoiceNo',
+  'supplier',
 ] as const;
 
 export type BulkUploadColumn = (typeof BULK_UPLOAD_COLUMNS)[number];
