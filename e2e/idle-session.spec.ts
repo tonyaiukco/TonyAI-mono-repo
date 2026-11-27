@@ -60,12 +60,19 @@ test('a reopened tab checks inactivity before mounting the dashboard', async ({ 
 });
 
 test('a password exchange in another tab takes precedence over the old idle deadline', async ({ page, context }) => {
-  await page.clock.install();
+  // The browser's clock starts two hours behind the auth server's: the 61 minutes
+  // fast-forwarded below pass the old idle deadline yet stay inside the lifetime
+  // of the token the server issues on the exchange. Started at the real time, the
+  // jump outran that one-hour token, and the new tab read its fresh session as
+  // expired ("Your account could not be loaded") whenever its first account read
+  // came late — the nightly e2e on main failed so (2026-11-27).
+  await page.clock.install({ time: Date.now() - 120 * minute });
   const signIn = await context.newPage();
   await signIn.goto('/login');
   await login(page, VIEWER_EMAIL);
-  // Both tabs must observe the same instant when the delayed exchange writes its timestamp.
-  await page.clock.pauseAt(new Date(Date.now() + 5000));
+  // Both tabs must observe the same instant when the delayed exchange writes its timestamp
+  // (an instant on the browser's clock, a few seconds ahead of it).
+  await page.clock.pauseAt(new Date((await page.evaluate(() => Date.now())) + 5000));
   await signIn.locator('#email').fill(VIEWER_EMAIL);
   await signIn.locator('#password').fill(PASSWORD);
 

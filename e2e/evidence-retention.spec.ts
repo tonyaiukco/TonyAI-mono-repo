@@ -2,7 +2,7 @@ import { test, expect, type APIRequestContext } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import {
   bearer, getAccessToken, supabaseEnv,
-  ADMIN_EMAIL, API_BASE, E2E_YEAR, E2E_PERIOD, EVIDENCE_FIXTURE,
+  ADMIN_EMAIL, API_BASE, E2E_YEAR, E2E_PERIOD, EVIDENCE_FIXTURE, SUB,
 } from './helpers';
 
 /**
@@ -53,10 +53,9 @@ async function objectExists(request: APIRequestContext, path: string): Promise<b
 
 test('deleting a record deletes its evidence FILES, not just the rows', async ({ request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
-  const subs = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
   const rec = await (await request.post(`${API_BASE}/activity-records`, {
     headers: bearer(token),
-    data: { subsidiaryId: subs[0].id, locationId: null, reportingYear: E2E_YEAR,
+    data: { subsidiaryId: SUB.energy, locationId: null, reportingYear: E2E_YEAR,
       reportingPeriod: E2E_PERIOD, periodValue: 'Q3', category: 'Electricity',
       activityValue: 77, activityUnit: 'kWh', varianceReason: null, input: null },
   })).json();
@@ -80,10 +79,9 @@ test('deleting a record deletes its evidence FILES, not just the rows', async ({
 
 test('deleting one evidence file leaves the record and its other files alone', async ({ request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
-  const subs = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
   const rec = await (await request.post(`${API_BASE}/activity-records`, {
     headers: bearer(token),
-    data: { subsidiaryId: subs[0].id, locationId: null, reportingYear: E2E_YEAR,
+    data: { subsidiaryId: SUB.energy, locationId: null, reportingYear: E2E_YEAR,
       reportingPeriod: E2E_PERIOD, periodValue: 'Q4', category: 'Electricity',
       activityValue: 88, activityUnit: 'kWh', varianceReason: null, input: null },
   })).json();
@@ -113,7 +111,9 @@ test('deleting one evidence file leaves the record and its other files alone', a
 
 test('a file shared by two records survives the first record and goes with its last link', async ({ request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
-  const subs = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
+  // TonyAI Energy by its seed id, never the list's first company: on a fresh
+  // database the group root (TonyAI Holding, no location) is created first, and
+  // the nightly on main failed on `subs[0]` so (2026-11-27).
   // At a LOCATION, unlike the two tests above. Uniqueness includes
   // `location_id` (NULLS NOT DISTINCT), so a site record is a different slot
   // from the whole-company one — and the whole-company quarters of this
@@ -121,7 +121,7 @@ test('a file shared by two records survives the first record and goes with its l
   // `bulk-upload-panel` takes Q3. The first nightly on `main` failed here
   // with a 409 for exactly that reason.
   const locs = await (await request.get(
-    `${API_BASE}/locations?subsidiaryId=${subs[0].id}`,
+    `${API_BASE}/locations?subsidiaryId=${SUB.energy}`,
     { headers: bearer(token) },
   )).json();
   expect(locs.length, 'the seed gives this subsidiary at least one location').toBeGreaterThan(0);
@@ -129,7 +129,7 @@ test('a file shared by two records survives the first record and goes with its l
   const create = async (periodValue: string) => {
     const res = await request.post(`${API_BASE}/activity-records`, {
       headers: bearer(token),
-      data: { subsidiaryId: subs[0].id, locationId, reportingYear: E2E_YEAR,
+      data: { subsidiaryId: SUB.energy, locationId, reportingYear: E2E_YEAR,
         reportingPeriod: E2E_PERIOD, periodValue, category: 'Electricity',
         activityValue: 66, activityUnit: 'kWh', varianceReason: null, input: null },
     });
