@@ -1644,6 +1644,14 @@ export class ActivityRecordsService {
     );
   }
 
+  /**
+   * The engine's figure for a record now (K11), for a fuel batch's step,
+   * which asks it before its transaction as the single-record paths do.
+   */
+  recomputeFor(user: RequestUser, record: ActivityRecord) {
+    return this.recordCalculation.recompute(user.accessibleSubsidiaryIds, record);
+  }
+
   // --- Workflow transitions --------------------------------------------------
   //
   // Each one reads the record (404 / tenant), checks the caller's role, then

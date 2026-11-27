@@ -1,0 +1,201 @@
+import { createHash } from 'node:crypto';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { COUNTED_STATUSES, isCalculated, type ActivityCalculationSnapshot } from '@tonyai/shared-types';
+import type { RequestUser } from '../../src/auth/auth.types';
+import { AuditService } from '../../src/audit/audit.service';
+import { errorCodeOf } from '../../src/common/api-error';
+import type { PrismaService } from '../../src/prisma/prisma.service';
+import { FuelBatchFormationService } from '../../src/fuel-batches/fuel-batch-formation.service';
+import { FuelBatchesService } from '../../src/fuel-batches/fuel-batches.service';
+import { FuelFilesService } from '../../src/fuel-files/fuel-files.service';
+import { FuelUploadsService } from '../../src/fuel-files/fuel-uploads.service';
+import { batchVerdictsOf } from '../../../../packages/db/scripts/anomaly-recompute.lib.mjs';
+import { row as sheetRow, xlsx } from '../xlsx';
+import { attachEvidence, connect, connectOwner, createTenant, type Tenant } from './db';
+import { lifecycleServices } from './services';
+import { loadTrReleases } from './tr-releases';
+
+/**
+ * inc28-fuel-bulk task 7.1: the batch is the lifecycle unit. Every step moves
+ * all of a batch's records or none, under the record service's own gates.
+ */
+
+let runtime: PrismaService;
+let owner: PrismaService;
+let tenant: Tenant;
+
+beforeAll(async () => {
+  runtime = connect(3);
+  owner = connectOwner();
+  await loadTrReleases();
+});
+afterAll(async () => {
+  await Promise.all([runtime, owner].map((c) => c.$disconnect()));
+});
+beforeEach(async () => {
+  tenant = await createTenant();
+  await owner.subsidiary.updateMany({ where: { organisationId: tenant.organisationId }, data: { geographyCode: 'TR' } });
+});
+afterEach(async () => {
+  await tenant.cleanup();
+});
+
+function services() {
+  const audit = new AuditService(runtime);
+  const uploads = new FuelUploadsService(runtime, audit);
+  const { records, periodLocks } = lifecycleServices(runtime);
+  return {
+    files: new FuelFilesService(runtime, audit, uploads),
+    formation: new FuelBatchFormationService(runtime, audit, records, uploads),
+    batches: new FuelBatchesService(runtime, audit, records),
+    records,
+    periodLocks,
+  };
+}
+
+async function masterkey(): Promise<RequestUser> {
+  const companies = await owner.subsidiary.findMany({ where: { organisationId: tenant.organisationId }, select: { id: true } });
+  return { ...tenant.users.masterkey, accessibleSubsidiaryIds: companies.map((c) => c.id) };
+}
+
+/** A formed batch of on-road diesel: one row per date given, 100 L each. */
+async function formedBatch(user: RequestUser, dates: string[], invoice = 'OZK-LC'): Promise<string> {
+  // One account for an anomaly series (its history is the account's), one per invoice otherwise.
+  const code = invoice.startsWith('OZK-AN') ? 'LC-AN' : `LC-${invoice}`;
+  if (!(await owner.fuelAccount.findFirst({ where: { organisationId: tenant.organisationId, code } }))) {
+    await runtime.fuelAccount.create({
+      data: {
+        organisationId: tenant.organisationId, source: 'petrol_ofisi', code, name: code, subsidiaryId: tenant.subsidiaryId,
+        state: 'confirmed', confirmedBy: user.id, confirmedAt: new Date(), createdBy: user.id,
+      },
+    });
+  }
+  const header = ['Satış ID', 'Filo Kod Adı', 'Filo', 'Tarih', 'Tip', 'Miktar', 'Fatura Numarası'];
+  const buffer = xlsx({
+    sheetData: [sheetRow(1, header), ...dates.map((d, i) => sheetRow(i + 2, [`${invoice}-${d}`, code, 'Fleet', `${d} 08:00`, 'Motorin', 100, invoice]))].join(''),
+  });
+  const s = services();
+  const up = await s.files.apply(user, { buffer, size: buffer.length, originalname: 'f.xlsx' } as Express.Multer.File, {
+    source: 'petrol_ofisi', usage: 'on_road', fileSha256: createHash('sha256').update(buffer).digest('hex'),
+  });
+  await s.formation.formBatches(user, up.id);
+  const batch = await owner.fuelBatch.findFirstOrThrow({ where: { organisationId: tenant.organisationId, invoiceRef: invoice }, orderBy: { sequence: 'desc' } });
+  return batch.id;
+}
+
+const statuses = async (batchId: string) =>
+  (await owner.activityRecord.findMany({ where: { fuelBatchId: batchId }, orderBy: { id: 'asc' } })).map((r) => r.status);
+async function withEvidence(batchId: string) {
+  const ids = (await owner.activityRecord.findMany({ where: { fuelBatchId: batchId }, select: { id: true } })).map((r) => r.id);
+  await attachEvidence(owner, tenant, ids);
+}
+/** The company's counted total, tCO₂e. */
+async function counted(): Promise<number> {
+  const records = await owner.activityRecord.findMany({ where: { subsidiaryId: tenant.subsidiaryId, status: { in: [...COUNTED_STATUSES] } } });
+  return records.reduce((sum, r) => {
+    const calc = r.calculation as unknown as ActivityCalculationSnapshot;
+    return sum + (isCalculated(calc) ? calc.tCo2e : 0);
+  }, 0);
+}
+
+describe('the batch lifecycle (task 7.1)', () => {
+  it('refuses a submit without evidence and changes nothing; with a file every record moves together', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025', '04.04.2025']);
+    expect(await statuses(id)).toEqual(['draft', 'draft']);
+    const refused = await services().batches.submit(user, id).catch((e: unknown) => e);
+    expect(errorCodeOf(refused)).toBe('evidence_required');
+    expect(await statuses(id)).toEqual(['draft', 'draft']);
+    await withEvidence(id);
+    const submitted = await services().batches.submit(user, id);
+    expect(submitted).toMatchObject({ status: 'submitted', submissionCount: 1 });
+    expect(await statuses(id)).toEqual(['submitted', 'submitted']);
+  });
+
+  it('submits neither record of a batch over two months while one month is locked', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025', '04.04.2025']);
+    await withEvidence(id);
+    await services().periodLocks.lock(user, { subsidiaryId: tenant.subsidiaryId, reportingYear: 2025, reportingPeriod: 'monthly', periodValue: 'April' } as never);
+    expect(errorCodeOf(await services().batches.submit(user, id).catch((e: unknown) => e))).toBe('period_locked');
+    expect(await statuses(id)).toEqual(['draft', 'draft']);
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id } })).status).toBe('draft');
+  });
+
+  it('moves the counted total +X at submit, −X at return, +X at resubmit, and not at approval', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025']);
+    await withEvidence(id);
+    const s = services();
+    const base = await counted();
+    const x = (await s.batches.detail(user, id)).tCo2e!;
+    expect(x).toBeGreaterThan(0);
+    const first = await s.batches.submit(user, id);
+    expect(await counted()).toBeCloseTo(base + x, 9);
+    // A return needs a reason, and names the submission seen.
+    expect(errorCodeOf(await s.batches.reject(user, id, '  ', first.submittedAt).catch((e: unknown) => e))).toBe('validation_failed');
+    await s.batches.reject(user, id, 'Wrong usage', first.submittedAt);
+    expect(await statuses(id)).toEqual(['rejected']);
+    expect(await counted()).toBeCloseTo(base, 9);
+    const second = await s.batches.submit(user, id);
+    expect(second).toMatchObject({ submissionCount: 2 });
+    expect(await counted()).toBeCloseTo(base + x, 9);
+    // An approval naming the first submission is refused as changed.
+    expect(errorCodeOf(await s.batches.approve(user, id, first.submittedAt).catch((e: unknown) => e))).toBe('record_changed');
+    const approved = await s.batches.approve(user, id, second.submittedAt);
+    expect(approved.status).toBe('approved');
+    expect(await statuses(id)).toEqual(['approved']);
+    expect(await counted()).toBeCloseTo(base + x, 9);
+    // A masterkey's own batch: a self-approval, on the batch's trail.
+    expect(await owner.auditLog.count({ where: { entity: 'fuel_batch', entityId: id, action: 'self_approve' } })).toBe(1);
+  });
+
+  it('lets exactly one of a recall and an approval racing on one batch succeed', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025']);
+    await withEvidence(id);
+    const submitted = await services().batches.submit(user, id);
+    const results = await Promise.allSettled([
+      services().batches.recall(user, id),
+      services().batches.approve(user, id, submitted.submittedAt),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const loser = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(['record_changed', 'record_not_approvable', 'record_not_recallable']).toContain(errorCodeOf(loser.reason));
+  });
+
+  it('closes recall once the batch is taken into review', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025']);
+    await withEvidence(id);
+    const submitted = await services().batches.submit(user, id);
+    await services().batches.startReview(user, id, submitted.submittedAt);
+    expect(await services().batches.recall(user, id).catch((e: unknown) => errorCodeOf(e))).toBe('record_changed');
+    expect(await statuses(id)).toEqual(['under_review']);
+  });
+
+  it('stores per-invoice verdicts that the recompute reaches unchanged (task 6.4)', async () => {
+    const user = await masterkey();
+    for (const [i, day] of ['03.01.2025', '03.02.2025', '03.03.2025', '03.04.2025'].entries()) {
+      const id = await formedBatch(user, [day], `OZK-AN-${i}`);
+      await withEvidence(id);
+      await services().batches.submit(user, id, 'checked');
+    }
+    const records = await owner.activityRecord.findMany({ where: { fuelBatch: { organisationId: tenant.organisationId } } });
+    const invoices = await owner.$queryRaw<Array<{ id: string; accountId: string; usage: string; invoiceRef: string; status: string; period: number }>>`
+      SELECT b.id::text, b.fuel_account_id::text AS "accountId", b.usage, b.invoice_ref AS "invoiceRef", b.status,
+             min(COALESCE(to_char(r.transaction_at, 'YYYYMMDD')::int, r.year * 10000 + r.month * 100 + 1))::int AS period
+      FROM fuel_batches b JOIN fuel_rows r ON r.fuel_batch_id = b.id AND r.state = 'assigned'
+      WHERE b.organisation_id = ${tenant.organisationId}::uuid GROUP BY b.id`;
+    const fresh = batchVerdictsOf(invoices, records) as Map<string, { anomalous: boolean; priorCount: number | null }>;
+    for (const r of records) {
+      expect({ flag: r.anomalyFlag, count: r.anomalyBaselinePriorCount }).toEqual({
+        flag: fresh.get(r.id)!.anomalous,
+        count: fresh.get(r.id)!.priorCount,
+      });
+    }
+    // The fourth invoice was judged against the three before it.
+    const last = records.find((r) => r.periodValue === 'April')!;
+    expect(last.anomalyBaselinePriorCount).toBe(3);
+  });
+});
