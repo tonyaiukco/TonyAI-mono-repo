@@ -7,6 +7,7 @@ import {
   copyToAll,
   declarationsOf,
   formUntilDone,
+  formsAfterApply,
   initialUsage,
   previewTotals,
 } from "./fuel-upload-view";
@@ -110,5 +111,13 @@ describe("totals and names", () => {
   it("names no company the server did not name", () => {
     expect(companyLabel(null, "Outside your companies")).toBe("Outside your companies");
     expect(companyLabel("TonyAI Logistics", "Outside your companies")).toBe("TonyAI Logistics");
+  });
+});
+
+describe("forming right after the apply", () => {
+  it("forms only when the uploader holds processable rows (a file of duplicates forms nothing)", () => {
+    expect(formsAfterApply({ readerIsHolder: true, processableRows: 3 })).toBe(true);
+    expect(formsAfterApply({ readerIsHolder: true, processableRows: 0 })).toBe(false);
+    expect(formsAfterApply({ readerIsHolder: false, processableRows: 3 })).toBe(false);
   });
 });

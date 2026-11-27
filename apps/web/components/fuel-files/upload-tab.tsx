@@ -34,6 +34,7 @@ import {
   declarationsOf,
   deliveriesToDeclare,
   formUntilDone,
+  formsAfterApply,
   initialUsage,
   previewTotals,
   type DeliveryChoice,
@@ -103,6 +104,15 @@ export function UploadTab({ onApplied }: { onApplied: () => void }) {
         declarations: isFuelCardSource(source) ? undefined : declarationsOf(preview, choices)!,
       });
       toast.success(t("upload.applied", { rows: formatNumber(upload.rowsRead - upload.rowsRefused - upload.rowsDuplicate, locale) }));
+      if (!formsAfterApply(upload)) {
+        // Nothing to form now: every row already stored, waiting or excluded.
+        toast.info(t("upload.nothingToForm"));
+        setPreview(null);
+        setFile(null);
+        if (input.current) input.current.value = "";
+        onApplied();
+        return;
+      }
       setBusy("forming");
       setFormed({ formed: 0, joined: 0 });
       const out = await formUntilDone(

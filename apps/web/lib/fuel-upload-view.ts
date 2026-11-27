@@ -10,6 +10,7 @@ import {
   type FuelSource,
   type FuelTankerDeclaration,
   type FuelTankerDeliveryDTO,
+  type FuelUploadDTO,
   type FuelUsage,
 } from "@/lib/types";
 
@@ -144,4 +145,14 @@ export function addDecimal(a: string, b: string): string {
  */
 export function companyLabel(name: string | null, outsideScope: string): string {
   return name ?? outsideScope;
+}
+
+/**
+ * Whether an applied upload is formed at once: only when its uploader holds
+ * rows a step can process. A file every row of which was already stored, or
+ * whose rows all wait or are excluded, forms nothing — and the API refuses a
+ * step from a caller who holds no unbatched row.
+ */
+export function formsAfterApply(upload: Pick<FuelUploadDTO, "readerIsHolder" | "processableRows">): boolean {
+  return upload.readerIsHolder && upload.processableRows > 0;
 }

@@ -1,4 +1,6 @@
-import { IsIn, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsIn, IsString, MaxLength, ValidateIf, Matches } from 'class-validator';
+import { ID_SHAPE_MESSAGE, UUID_SHAPE, lowercaseUuid } from '../../common/parse-uuid-param.pipe';
 import {
   FUEL_SOURCES,
   type ConfirmFuelAccountRequest,
@@ -12,17 +14,17 @@ export class CreateFuelAccountDto implements CreateFuelAccountRequest {
   @IsIn(FUEL_SOURCES) source!: FuelSource;
   @IsString() @MaxLength(64) code!: string;
   @IsString() @MaxLength(200) name!: string;
-  @IsUUID() subsidiaryId!: string;
+  @Transform(lowercaseUuid) @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE }) subsidiaryId!: string;
 }
 
 /** `POST /fuel-accounts/:id/confirm` (C5). */
 export class ConfirmFuelAccountDto implements ConfirmFuelAccountRequest {
-  @IsUUID() subsidiaryId!: string;
+  @Transform(lowercaseUuid) @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE }) subsidiaryId!: string;
 }
 
 /** `PATCH /fuel-accounts/:id` (masterkey): a company, or null to withdraw the mapping. */
 export class UpdateFuelAccountDto implements UpdateFuelAccountRequest {
   @ValidateIf((dto: UpdateFuelAccountDto) => dto.subsidiaryId !== null)
-  @IsUUID()
+  @Transform(lowercaseUuid) @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE })
   subsidiaryId!: string | null;
 }

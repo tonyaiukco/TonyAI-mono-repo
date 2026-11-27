@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, Matches } from 'class-validator';
+import { ID_SHAPE_MESSAGE, UUID_SHAPE, lowercaseUuid } from '../../common/parse-uuid-param.pipe';
 import {
   FILE_FUELS,
   FUEL_BATCH_STATUSES,
@@ -21,7 +22,7 @@ const bool = ({ value }: { value: unknown }) => (value === 'true' ? true : value
 /** `GET /fuel-batches` and `/metadata` (D10). */
 export class FuelBatchFiltersDto implements FuelBatchFilters {
   @IsOptional() @IsIn([...FUEL_BATCH_STATUSES]) status?: FuelBatchStatus;
-  @IsOptional() @IsUUID() subsidiaryId?: string;
+  @IsOptional() @Transform(lowercaseUuid) @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE }) subsidiaryId?: string;
   @IsOptional() @Transform(bool) @IsBoolean() awaitingMyDecision?: boolean;
   @IsOptional() @Transform(bool) @IsBoolean() mine?: boolean;
 }
@@ -41,7 +42,7 @@ export class WithdrawFuelBatchDto implements WithdrawFuelBatchRequest {
 }
 
 export class BulkSubmitFuelBatchesDto implements BulkSubmitFuelBatchesRequest {
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @IsUUID('all', { each: true }) batchIds!: string[];
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @Transform(({ value }) => (Array.isArray(value) ? value.map((v) => lowercaseUuid({ value: v })) : value)) @Matches(UUID_SHAPE, { each: true, message: ID_SHAPE_MESSAGE }) batchIds!: string[];
 }
 
 /** `PATCH /fuel-batches/:id/declarations` (D13). */

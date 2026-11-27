@@ -99,7 +99,8 @@
     "resultSummary": "{formed} batches formed and {joined} open batches joined.",
     "stillProcessable": "{rows} rows can still be processed. Open Uploads to continue.",
     "held": "Held rows, by reason",
-    "waiting": "Waiting rows"
+    "waiting": "Waiting rows",
+    "nothingToForm": "Nothing new to form: the file's rows are already stored, wait in Unmatched or are excluded."
   },
   "uploads": {
     "title": "Uploads",

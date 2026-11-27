@@ -99,7 +99,8 @@
     "resultSummary": "{formed} paket oluşturuldu ve {joined} açık pakete satır eklendi.",
     "stillProcessable": "{rows} satır hâlâ işlenebilir. Devam etmek için Yüklemeler'i açın.",
     "held": "Bekletilen satırlar, nedene göre",
-    "waiting": "Bekleyen satırlar"
+    "waiting": "Bekleyen satırlar",
+    "nothingToForm": "Oluşturulacak yeni bir şey yok: dosyanın satırları zaten kayıtlı, Eşleşmeyenler'de bekliyor ya da hariç tutuldu."
   },
   "uploads": {
     "title": "Yüklemeler",

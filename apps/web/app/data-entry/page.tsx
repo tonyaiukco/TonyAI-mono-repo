@@ -2136,7 +2136,16 @@ function DataEntryPageInner() {
       resetInputs(null, null, target.category);
     }
     setActivityType(target.activityType);
-    if (!target.units.includes(activityUnit)) setActivityUnit(target.units[0]!);
+    // A pair priced in other units (litres ↔ kg or tonnes): the unit is picked
+    // again and a typed quantity cleared, never re-read as the new unit's
+    // (UAT2 BUG-R2-11, as the unit-narrowing effect does).
+    if (!target.units.includes(activityUnit)) {
+      setActivityUnit(target.units[0]!);
+      if (activity.text.trim() !== "") {
+        activity.setValue(null);
+        toast.info(t("inputs.unitReset", { unit: unitSymbol(target.units[0]!) }));
+      }
+    }
   }
 
   /** "Add another fuel": the same company, site, year and period; fuel, usage and quantity cleared. */
@@ -2350,7 +2359,8 @@ function DataEntryPageInner() {
                   {pairUi && (
                     <>
                       <Field label={tFuel("entry.fuel")}>
-                        <Select value={fuelPair.fuel || undefined} onValueChange={(v) => choosePair(chooseFuel(v as ManualFuel))}>
+                        {/* "" (never undefined): a cleared pair shows its placeholder again — Radix keeps its last value for undefined. */}
+                        <Select value={fuelPair.fuel} onValueChange={(v) => choosePair(chooseFuel(v as ManualFuel))}>
                           <SelectTrigger aria-label={tFuel("entry.fuel")} data-testid="fuel-pair-fuel">
                             <SelectValue placeholder={t("chooseOne")} />
                           </SelectTrigger>
@@ -2367,7 +2377,7 @@ function DataEntryPageInner() {
                           <p className="py-2 text-sm" data-testid="fuel-pair-marine">{tFuel("usages.marine")}</p>
                         ) : (
                           <Select
-                            value={fuelPair.usage || undefined}
+                            value={fuelPair.usage}
                             disabled={!fuelPair.fuel}
                             onValueChange={(v) => choosePair({ ...fuelPair, usage: v as FuelEntryUsage })}
                           >
