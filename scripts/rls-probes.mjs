@@ -1875,7 +1875,9 @@ async function main() {
       return {
         role,
         read: denied(read),
-        write: !write.ok && /42501|permission denied/i.test(await write.text()),
+        // RLS alone would refuse with 42501 too ("violates row-level security
+        // policy"); only the privilege refusal proves the role holds no INSERT.
+        write: !write.ok && /permission denied for table evidence_readings/i.test(await write.text()),
       };
     }));
     check(

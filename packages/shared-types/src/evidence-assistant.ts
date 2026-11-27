@@ -1,4 +1,4 @@
-import type { FileFuel, FuelBatchDTO } from './fuel';
+import type { FuelBatchDTO, ManualFuel } from './fuel';
 import type { EvidenceDTO } from './index';
 
 export const EVIDENCE_READING_STATUSES = [
@@ -33,7 +33,11 @@ export interface EvidenceAssistantInvoiceDTO {
 }
 
 export interface EvidenceAssistantLineDTO {
-  fuel: FileFuel;
+  /**
+   * A batch's lines are always a file fuel (diesel or petrol). A manual record's
+   * line carries the record's own fuel, which may be on-road LPG in litres.
+   */
+  fuel: ManualFuel;
   /** Decimal strings keep the precision of the invoice and fuel rows. */
   invoiceLitres: string | null;
   packageLitres: string | null;

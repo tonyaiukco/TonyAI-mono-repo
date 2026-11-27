@@ -77,18 +77,43 @@ describe('evidence reading schema', () => {
       WHERE id = ${file.id}::uuid
     `).rejects.toMatchObject({ code: 'P2010', meta: { code: '23514' } });
 
+    const refused = { code: 'P2010', meta: { code: '23514' } };
+    await expect(runtime.$executeRaw`
+      UPDATE evidence SET source_page_from = 1, source_page_to = 1 WHERE id = ${file.id}::uuid
+    `).rejects.toMatchObject(refused);
+    await expect(runtime.$executeRaw`
+      UPDATE evidence SET source_sha256 = ${sha256}, source_page_from = 0, source_page_to = 1
+      WHERE id = ${file.id}::uuid
+    `).rejects.toMatchObject(refused);
+    for (const digest of ['A'.repeat(64), 'g'.repeat(64)]) {
+      await expect(runtime.$executeRaw`
+        UPDATE evidence SET source_sha256 = ${digest}, source_page_from = 1, source_page_to = 1
+        WHERE id = ${file.id}::uuid
+      `).rejects.toMatchObject(refused);
+    }
+
     await expect(runtime.evidence.update({
       where: { id: file.id },
       data: { sourceSha256: sha256, sourcePageFrom: 2, sourcePageTo: 2 },
     })).resolves.toMatchObject({ sourceSha256: sha256, sourcePageFrom: 2, sourcePageTo: 2 });
   });
 
-  it('ties readings to the evidence company and enforces the stored status vocabulary', async () => {
+  it('ties readings to the evidence company and enforces the version, status, page count and invoices checks', async () => {
     const file = await createEvidence();
     await expect(insertReading(file.id, tenant.otherSubsidiaryId))
       .rejects.toMatchObject({ code: 'P2010', meta: { code: '23503' } });
     await expect(insertReading(file.id, file.subsidiaryId, 'reader_busy'))
       .rejects.toMatchObject({ code: 'P2010', meta: { code: '23514' } });
+    const refused = { code: 'P2010', meta: { code: '23514' } };
+    await expect(insertReading(file.id, file.subsidiaryId, 'no_text', '  ')).rejects.toMatchObject(refused);
+    await expect(runtime.$executeRaw`
+      INSERT INTO evidence_readings (evidence_id, subsidiary_id, reader_version, status, page_count, invoices)
+      VALUES (${file.id}::uuid, ${file.subsidiaryId}::uuid, 'test-negative', 'no_text', -1, '[]'::jsonb)
+    `).rejects.toMatchObject(refused);
+    await expect(runtime.$executeRaw`
+      INSERT INTO evidence_readings (evidence_id, subsidiary_id, reader_version, status, page_count, invoices)
+      VALUES (${file.id}::uuid, ${file.subsidiaryId}::uuid, 'test-object', 'no_text', 1, '{}'::jsonb)
+    `).rejects.toMatchObject(refused);
     for (const status of EVIDENCE_READING_STATUSES) {
       await insertReading(file.id, file.subsidiaryId, status, `test-${status}`);
     }
