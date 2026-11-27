@@ -338,6 +338,21 @@ describe('evidence on the batch (task 7.3)', () => {
   });
 });
 
+describe('a batch file in a locked period (security review of PR B)', () => {
+  it('refuses to take a file off a draft batch whose period is locked, and keeps every link and the file', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025'], 'OZK-PL');
+    const s = services();
+    const file = await s.evidence.uploadForFuelBatch(user, id, pdfFile());
+    // A draft's period may be locked (only pending or returned records refuse a lock).
+    await s.periodLocks.lock(user, { subsidiaryId: tenant.subsidiaryId, reportingYear: 2025, reportingPeriod: 'monthly', periodValue: 'March' } as never);
+    const refused = await s.evidence.detachFromFuelBatch(user, id, file.id).then(() => 'ok', (e: unknown) => errorCodeOf(e));
+    expect(refused).toBe('period_locked');
+    expect(await owner.activityRecordEvidence.count({ where: { evidenceId: file.id } })).toBe(1);
+    expect(await owner.evidence.count({ where: { id: file.id } })).toBe(1);
+  });
+});
+
 describe('declarations, withdrawal and bulk submit (task 7.4)', () => {
   const code = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => errorCodeOf(e));
 

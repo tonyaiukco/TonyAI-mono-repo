@@ -118,6 +118,13 @@ describe('FuelBatchesService — the step’s own refusals (task 7.1)', () => {
     expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
   });
 
+  it('refuses a recall by anyone but the batch’s author, before any record is touched', async () => {
+    const h = harness(batchOf({ status: 'submitted', submittedAt: SUBMITTED_AT, submissionCount: 1 }));
+    expect(await codeOf(h.service.recall(user('masterkey', '00000000-0000-4000-8000-0000000000f9'), BATCH))).toBe('record_author_forbidden');
+    expect(h.records.recallLocked).not.toHaveBeenCalled();
+    expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
+  });
+
   it.each(['standard_user', 'auditor'] as const)('refuses a %s any decision before reading the batch', async (role) => {
     const h = harness(batchOf({ status: 'submitted', submittedAt: SUBMITTED_AT }));
     for (const step of [

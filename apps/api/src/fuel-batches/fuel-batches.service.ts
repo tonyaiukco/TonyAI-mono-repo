@@ -24,7 +24,7 @@ import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
 import { PrismaService } from '../prisma/prisma.service';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import { declareFuelBatchStep, lockPeriodsShared, periodOf } from '../activity-records/lifecycle-lock';
-import { RecordChangedError } from '../activity-records/errors';
+import { AuthorOnlyRefusedError, RecordChangedError } from '../activity-records/errors';
 import { grantedCategories } from '../activity-records/record-scope';
 import { approversFor, awaitingDecisionWhere } from '../activity-records/record-approver';
 import { sumDecimals } from '../fuel-files/decimal';
@@ -336,6 +336,8 @@ export class FuelBatchesService {
       user, id, 'recall',
       (batch) => {
         if (batch.status !== 'submitted') throw new ConflictException(errorBody('record_changed', 'Only a submitted batch nobody has opened can be recalled.'));
+        // The author's own step, at the batch as for each record (security review of PR B).
+        if (batch.createdBy !== user.id) throw new AuthorOnlyRefusedError('recall');
       },
       (tx, seen, current) => this.records.recallLocked(tx, user, seen, current),
       () => ({ status: 'draft', submittedAt: null }),

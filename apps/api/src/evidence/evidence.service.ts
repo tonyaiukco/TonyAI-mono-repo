@@ -462,6 +462,15 @@ export class EvidenceService {
       await this.lockOpenBatch(tx, user, batch.id, ids);
       await lockPeriodsShared(tx, records.map(periodOf));
       await lockActivityRecordRows(tx, ids);
+      // Every record's own refusal, as the upload's: a locked period (a draft
+      // batch's records may sit in one) keeps its evidence (security review of PR B).
+      const current = await tx.activityRecord.findMany({ where: { id: { in: ids } } });
+      const locked = await this.lockedRecordIds(current, tx);
+      const seen = new Map(records.map((r) => [r.id, r]));
+      for (const record of current) {
+        const refusal = this.refusalFor(user, record, locked.has(record.id), batch.id);
+        if (refusal) throw lockedRefusal(refusal, seen.get(record.id), record);
+      }
       await lockEvidenceRows(tx, [evidenceId]);
       const before = await tx.evidence.findUnique({ where: { id: evidenceId }, include: WITH_LINKED_RECORDS });
       const { count } = await tx.activityRecordEvidence.deleteMany({ where: { evidenceId, activityRecordId: { in: ids } } });
