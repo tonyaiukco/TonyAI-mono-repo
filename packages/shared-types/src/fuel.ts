@@ -351,8 +351,9 @@ export type FuelRowIssueCode = (typeof FUEL_ROW_ISSUE_CODES)[number];
 // ── Limits ──────────────────────────────────────────────────────────────────
 
 /**
- * The fuel upload's limits (C18): provisional until tasks group 10 measures a
- * file of the documented scale (44,902 rows), and set from those numbers. The
+ * The fuel upload's limits (C18), confirmed by task 10.4's measurement of a
+ * file of the documented scale (44,902 rows, 3.2 MB: read in 2.0 s, stored in
+ * 4.5 s, 560 batches formed in one 17.2 s step; `apps/api/src/fuel-files/limits.ts`). The
  * template import keeps its own (`BULK_UPLOAD_MAX_ROWS`, `BULK_UPLOAD_MAX_SIZE_BYTES`).
  */
 export const FUEL_UPLOAD_MAX_ROWS = 60_000;
