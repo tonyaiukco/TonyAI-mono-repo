@@ -987,7 +987,8 @@ export const api = {
       fileSha256: fields.fileSha256,
       declarations: fields.declarations ? JSON.stringify(fields.declarations) : undefined,
     }),
-  listFuelUploads: () => apiFetch<FuelUploadDTO[]>("/fuel-files"),
+  /** A page of fuel uploads, newest first; `after`: `fuelUploadCursor` of the last one loaded. */
+  listFuelUploads: (after?: string) => apiFetch<FuelUploadDTO[]>(after ? `/fuel-files?after=${encodeURIComponent(after)}` : "/fuel-files"),
   getFuelUpload: (id: string) => apiFetch<FuelUploadDTO>(`/fuel-files/${encodeURIComponent(id)}`),
   fuelTray: () => apiFetch<FuelTrayDTO>("/fuel-files/tray"),
   /** One step of batch formation; call again while `processableRows` > 0. */

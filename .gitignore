@@ -66,3 +66,5 @@ terraform.rc
 # OpenSpec planning (proposals, designs, specs, archives) is kept locally only,
 # not in the repository (owner decision 2026-11-25).
 /openspec/
+# The e2e fuel specs' upload ledger (e2e/helpers.ts `recordFuelUpload`)
+e2e/.fuel-e2e-ledger

@@ -24,6 +24,7 @@ import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
 import { PrismaService } from '../prisma/prisma.service';
 import { fuelAccountScopeSql, fuelRowScopeSql, readsCompany } from '../fuel-files/fuel-scope';
+import { lockActor } from '../fuel-files/lock-actor';
 import { mayConfirm } from '../fuel-files/fuel-uploads.service';
 
 /**
@@ -215,11 +216,8 @@ export class FuelAccountsService {
   }
 
   /** The actor as it stands now: same role and organisation, not disabled. */
-  private async lockActor(tx: Db, user: RequestUser): Promise<void> {
-    const [actor] = await tx.$queryRaw<Array<{ same: boolean }>>`
-      SELECT (p.role::text = ${user.role} AND p.organisation_id = ${user.organisationId}::uuid AND p.disabled_at IS NULL) AS same
-      FROM profiles p WHERE p.id = ${user.id}::uuid FOR SHARE`;
-    if (!actor?.same) throw new ForbiddenException();
+  private lockActor(tx: Db, user: RequestUser): Promise<void> {
+    return lockActor(tx, user);
   }
 
   /** A super_admin's grant of the target, read under its lock. */

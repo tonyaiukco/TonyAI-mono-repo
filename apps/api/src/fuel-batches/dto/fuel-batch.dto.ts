@@ -3,6 +3,8 @@ import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional
 import { ID_SHAPE_MESSAGE, UUID_SHAPE, lowercaseUuid } from '../../common/parse-uuid-param.pipe';
 import {
   FILE_FUELS,
+  FUEL_BATCH_CURSOR_SHAPE,
+  FUEL_BULK_SUBMIT_MAX,
   FUEL_BATCH_STATUSES,
   FUEL_USAGES,
   REPORTING_YEAR_MAX,
@@ -25,7 +27,7 @@ export class FuelBatchFiltersDto implements FuelBatchFilters {
   @IsOptional() @Transform(lowercaseUuid) @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE }) subsidiaryId?: string;
   @IsOptional() @Transform(bool) @IsBoolean() awaitingMyDecision?: boolean;
   @IsOptional() @Transform(bool) @IsBoolean() mine?: boolean;
-  @IsOptional() @Transform(lowercaseUuid) @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE }) after?: string;
+  @IsOptional() @IsString() @MaxLength(120) @Matches(FUEL_BATCH_CURSOR_SHAPE) after?: string;
 }
 
 /** `GET /fuel-batches/:id/rows`: a page of the batch's rows. */
@@ -43,7 +45,7 @@ export class WithdrawFuelBatchDto implements WithdrawFuelBatchRequest {
 }
 
 export class BulkSubmitFuelBatchesDto implements BulkSubmitFuelBatchesRequest {
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @Transform(({ value }) => (Array.isArray(value) ? value.map((v) => lowercaseUuid({ value: v })) : value)) @Matches(UUID_SHAPE, { each: true, message: ID_SHAPE_MESSAGE }) batchIds!: string[];
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(FUEL_BULK_SUBMIT_MAX) @Transform(({ value }) => (Array.isArray(value) ? value.map((v) => lowercaseUuid({ value: v })) : value)) @Matches(UUID_SHAPE, { each: true, message: ID_SHAPE_MESSAGE }) batchIds!: string[];
 }
 
 /** `PATCH /fuel-batches/:id/declarations` (D13). */

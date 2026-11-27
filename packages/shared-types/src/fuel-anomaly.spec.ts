@@ -64,3 +64,22 @@ describe('judgeFuelBatch', () => {
     expect(judgeFuelBatch(current, history).n).toMatchObject({ anomalous: false, priorCount: null });
   });
 });
+
+describe('judgeFuelBatch — sibling batches of one invoice (WP9 PR B review, P2)', () => {
+  it('gives the same verdict whatever order the history was read in, when the window edge falls between siblings', () => {
+    // Four earlier counted batches; two are siblings of one invoice and period. The window takes three,
+    // so the edge falls between the siblings: their order must not depend on the input.
+    const history = [
+      invoice('b-new', 20250310, [record('n', 'on_road_diesel', 10)]),
+      invoice('b-mid', 20250305, [record('m', 'on_road_diesel', 10)]),
+      invoice('sib-a', 20250301, [record('sa', 'on_road_diesel', 10)], true, 'OZK-SIB'),
+      invoice('sib-b', 20250301, [record('sb', 'on_road_diesel', 1000)], true, 'OZK-SIB'),
+    ];
+    const current = invoice('now', 20250320, [record('x', 'on_road_diesel', 20)]);
+    const forward = judgeFuelBatch(current, history).x;
+    const reversed = judgeFuelBatch(current, [...history].reverse()).x;
+    expect(reversed).toEqual(forward);
+    // The later id (sib-b) is the newer sibling, so it is the one inside the window.
+    expect(forward).toMatchObject({ priorCount: 3, baseline: 340 });
+  });
+});

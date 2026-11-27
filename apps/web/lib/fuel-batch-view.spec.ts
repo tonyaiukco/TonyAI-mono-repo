@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-import type { FuelBatchDTO } from "@/lib/types";
-import { appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, reviewKey, shownOf, submittableIds, takesIntoReview, withPage } from "./fuel-batch-view";
+import { describe, expect, it, vi } from "vitest";
+import { fuelBatchCursor, type FuelBatchDTO } from "@/lib/types";
+import { appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, reviewKey, shownOf, submitInParts, submittableIds, takesIntoReview, withPage } from "./fuel-batch-view";
 
 const AUTHOR = { id: "u-author", role: "standard_user" };
 const MASTERKEY = { id: "u-mk", role: "masterkey" };
@@ -95,7 +95,7 @@ describe("a batch list past one page (WP9 PR B review, P2)", () => {
   it("asks each filter for its next page until its total is listed", () => {
     const paged = { lists: [many(200), many(40, 500)], totals: [560, 40] };
     // The cursor is the last batch shown, so a batch leaving an earlier page never shifts the next one.
-    expect(nextCursors(paged)).toEqual(["b199", null]);
+    expect(nextCursors(paged)).toEqual([fuelBatchCursor(paged.lists[0]![199]!), null]);
     expect(hasMoreBatches(paged)).toBe(true);
     expect(shownOf(paged)).toEqual({ shown: 240, total: 600 });
     expect(hasMoreBatches({ lists: [many(560)], totals: [560] })).toBe(false);
@@ -124,5 +124,22 @@ describe("a short page ends the list (QA review of the WP9 PR B fixes)", () => {
     const paged = withPage({ lists: [many(2), many(1, 50)], totals: [2, 5] }, 1, many(2, 51), 200);
     expect(paged.lists.map((l) => l.map((b) => b.id))).toEqual([["b0", "b1"], ["b50", "b51", "b52"]]);
     expect(paged.totals).toEqual([2, 3]);
+  });
+});
+
+describe("a bulk submit past one part (the second review of the branch, P2)", () => {
+  it("sends at most one part's batches a call, keeps every outcome, and goes on after a part refused whole", async () => {
+    const ids = Array.from({ length: 450 }, (_, i) => `b${i}`);
+    let call = 0;
+    const submit = vi.fn(async (part: string[]) => {
+      call += 1;
+      if (call === 2) throw Object.assign(new Error("offline"), { code: "network_unavailable" });
+      return { submitted: part.slice(1), failed: [{ batchId: part[0]!, code: "record_changed" }] };
+    });
+    const out = await submitInParts(ids, submit, (e) => (e as { code: string }).code, 200);
+    expect(submit.mock.calls.map(([part]) => part.length)).toEqual([200, 200, 50]);
+    expect(out.submitted).toHaveLength(199 + 49);
+    expect(out.failed.filter((f) => f.code === "network_unavailable")).toHaveLength(200);
+    expect(out.failed.filter((f) => f.code === "record_changed").map((f) => f.batchId)).toEqual(["b0", "b400"]);
   });
 });

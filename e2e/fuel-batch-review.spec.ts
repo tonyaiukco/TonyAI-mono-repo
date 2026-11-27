@@ -17,6 +17,7 @@ import {
   listFuelBatches,
   login,
   seedFuelFactorFixture,
+  recordFuelUpload,
 } from './helpers';
 
 /**
@@ -69,6 +70,7 @@ async function uploadAsCentralReporter(request: APIRequestContext, token: string
   });
   expect(applied.status()).toBe(201);
   const { id } = (await applied.json()) as { id: string };
+  recordFuelUpload(id);
   for (let step = 0; step < 10; step += 1) {
     const formed = await request.post(`${API_BASE}/fuel-files/${id}/form-batches`, { headers: bearer(token), data: {} });
     expect(formed.status()).toBe(200);

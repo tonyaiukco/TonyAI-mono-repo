@@ -31,22 +31,24 @@ export async function organisationDedupeKey(
   let row = await prisma.fuelDedupeKey.findUnique({ where: { organisationId }, select: { secret: true } });
   if (!row) {
     await prisma.$transaction(async (tx) => {
-      // A key is created only for an organisation with no fuel row: every row
-      // is stored under a key, so rows without one mean the key was lost (a
-      // repair or restore by hand), and a fresh key would silently store each
-      // re-uploaded row again — counted twice. Refuse loudly instead.
-      if (await tx.fuelRow.findFirst({ where: { organisationId }, select: { id: true } })) {
-        throw new FuelDedupeKeyLostError();
-      }
       // Two first uploads at once: the one inserted first wins (the other's
       // insert waits for it, then skips), and both read the winner's key.
       const created = await tx.fuelDedupeKey.createMany({
         data: [{ organisationId, secret: randomBytes(FUEL_DEDUPE_KEY_BYTES) }],
         skipDuplicates: true,
       });
-      if (created.count === 1) {
-        await audit.record(user, { action: 'create', entity: 'fuel_dedupe_key', entityId: organisationId, diff: { fuelDedupeKey: 'created' } }, tx);
+      if (created.count === 0) return;
+      // Only the upload that creates the key asks whether rows exist without
+      // one, after its insert — so a concurrent first upload that committed a
+      // key and its rows meanwhile is never taken for a lost key (review of
+      // the fixes, P2). Every row is stored under a key, so rows with none mean
+      // the key was lost (a repair or restore by hand), and a fresh key would
+      // silently store each re-uploaded row again — counted twice. Refuse
+      // loudly; the new key goes with the rollback.
+      if (await tx.fuelRow.findFirst({ where: { organisationId }, select: { id: true } })) {
+        throw new FuelDedupeKeyLostError();
       }
+      await audit.record(user, { action: 'create', entity: 'fuel_dedupe_key', entityId: organisationId, diff: { fuelDedupeKey: 'created' } }, tx);
     });
     row = await prisma.fuelDedupeKey.findUniqueOrThrow({ where: { organisationId }, select: { secret: true } });
   }

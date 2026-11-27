@@ -6128,7 +6128,8 @@ export function fuelOfBatchActivityType(activityType: string | null): string | n
  * their months. Its history is the earlier counted invoices of the same
  * account and usage that hold that fuel (`earlier` is every other invoice of
  * that account and usage; this selects), newest first by invoice period, ties
- * by invoice reference; `computeAnomalyVerdict` judges them unchanged. With no
+ * by invoice reference, then by batch id (an invoice's sibling batches);
+ * `computeAnomalyVerdict` judges them unchanged. With no
  * earlier invoice, each record is judged by its own first-period ceiling. The
  * verdict is stored on every record of that fuel: answered by record id.
  *
@@ -6143,7 +6144,12 @@ export function judgeFuelBatch(
     other.period < batch.period || (other.period === batch.period && other.invoiceRef < batch.invoiceRef);
   const history = earlier
     .filter((other) => other.id !== batch.id && other.counted && before(other))
-    .sort((a, b) => b.period - a.period || (a.invoiceRef < b.invoiceRef ? 1 : a.invoiceRef > b.invoiceRef ? -1 : 0));
+    // A total order: an invoice's sibling batches (one period, one reference) are ordered by id, so
+    // the window never depends on the order the history was read in (WP9 PR B review, P2).
+    .sort((a, b) =>
+      b.period - a.period ||
+      (a.invoiceRef < b.invoiceRef ? 1 : a.invoiceRef > b.invoiceRef ? -1 : 0) ||
+      (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
   const figureOf = (records: readonly FuelBatchAnomalyRecord[]): number | null => {
     const figures = records.map((r) => r.tCo2e).filter((v): v is number => v !== null);
     return figures.length === 0 ? null : figures.reduce((sum, v) => sum + v, 0);

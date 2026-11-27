@@ -1,7 +1,10 @@
 import {
+  FUEL_BULK_SUBMIT_MAX,
+  fuelBatchCursor,
   FUEL_BATCH_OPEN_STATUSES,
   can,
   mayDecideRecord,
+  type BulkSubmitFuelBatchesResultDTO,
   type FuelBatchDTO,
   type FuelBatchStatus,
 } from "@/lib/types";
@@ -93,9 +96,9 @@ export interface PagedBatches {
   totals: number[];
 }
 
-/** Each filter's cursor for its next page (its last batch), or null once its list is complete. */
+/** Each filter's cursor for its next page (its last batch's place), or null once its list is complete. */
 export function nextCursors(paged: PagedBatches): Array<string | null> {
-  return paged.lists.map((list, i) => (list.length > 0 && list.length < (paged.totals[i] ?? 0) ? list[list.length - 1]!.id : null));
+  return paged.lists.map((list, i) => (list.length > 0 && list.length < (paged.totals[i] ?? 0) ? fuelBatchCursor(list[list.length - 1]!) : null));
 }
 
 export function hasMoreBatches(paged: PagedBatches): boolean {
@@ -125,4 +128,32 @@ export function shownOf(paged: PagedBatches): { shown: number; total: number } {
     shown: paged.lists.reduce((n, l) => n + l.length, 0),
     total: paged.totals.reduce((n, t) => n + t, 0),
   };
+}
+
+/**
+ * A selection submitted in parts the API takes (`FUEL_BULK_SUBMIT_MAX` each),
+ * every part's outcome kept: a part refused whole (a network failure, a
+ * session lost) names each of its batches as failed with that refusal's code,
+ * and the parts after it still go (WP9 PR B review, P2 — a selection across
+ * pages can pass 200).
+ */
+export async function submitInParts(
+  ids: readonly string[],
+  submit: (part: string[]) => Promise<BulkSubmitFuelBatchesResultDTO>,
+  codeOf: (error: unknown) => string,
+  size = FUEL_BULK_SUBMIT_MAX,
+): Promise<BulkSubmitFuelBatchesResultDTO> {
+  const out: BulkSubmitFuelBatchesResultDTO = { submitted: [], failed: [] };
+  for (let i = 0; i < ids.length; i += size) {
+    const part = ids.slice(i, i + size);
+    try {
+      const result = await submit(part);
+      out.submitted.push(...result.submitted);
+      out.failed.push(...result.failed);
+    } catch (error) {
+      const code = codeOf(error);
+      out.failed.push(...part.map((batchId) => ({ batchId, code })));
+    }
+  }
+  return out;
 }

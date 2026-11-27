@@ -678,17 +678,53 @@ export interface FuelBatchFilters {
   /** The caller's own batches (the Fuel files page's Batches tab). */
   mine?: boolean;
   /**
-   * `GET /fuel-batches` only: the last batch of the page already loaded; the
-   * next page starts right after it in the list's order (`FUEL_BATCH_PAGE` a
-   * page; `/metadata` answers the total). A cursor, not an offset, so a batch
-   * that leaves an earlier page never makes a later one skip a batch. One
-   * upload can form hundreds (WP9 PR B review, P2).
+   * `GET /fuel-batches` only: `fuelBatchCursor` of the last batch already
+   * loaded; the next page starts right after it in the list's order
+   * (`FUEL_BATCH_PAGE` a page; `/metadata` answers the total). It carries
+   * that batch's sort values as the page showed them, so a batch that leaves
+   * an earlier page, or is recalled, never makes a later page skip one or end
+   * early (WP9 PR B review, P2: one upload can form hundreds).
    */
   after?: string;
 }
 
 /** `GET /fuel-batches` answers at most this many batches a call. */
 export const FUEL_BATCH_PAGE = 200;
+
+/** `GET /fuel-files` answers at most this many uploads a call, newest first; `?after=` the next page. */
+export const FUEL_UPLOAD_PAGE = 100;
+
+/** An upload's place in its list (newest first): its creation and id, as the list answered them. */
+export function fuelUploadCursor(upload: { id: string; createdAt: string }): string {
+  return `${upload.createdAt}~${upload.id}`;
+}
+
+/** A cursor's shape: an ISO instant and an id. */
+export const FUEL_UPLOAD_CURSOR_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z~[0-9a-f-]{36}$/i;
+
+export function parseFuelUploadCursor(cursor: string): { createdAt: Date; id: string } | null {
+  if (!FUEL_UPLOAD_CURSOR_SHAPE.test(cursor)) return null;
+  const [createdAt, id] = cursor.split('~') as [string, string];
+  return { createdAt: new Date(createdAt), id: id.toLowerCase() };
+}
+
+/** `POST /fuel-batches/bulk-submit` takes at most this many batches a call; the screen sends more in parts. */
+export const FUEL_BULK_SUBMIT_MAX = 200;
+
+/** A batch's place in either list order: its creation, its submission and its id, as the list answered them. */
+export function fuelBatchCursor(batch: { id: string; createdAt: string; submittedAt: string | null }): string {
+  return `${batch.createdAt}~${batch.submittedAt ?? ''}~${batch.id}`;
+}
+
+const ISO_MS = '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z';
+/** A cursor's shape: two ISO instants (the second may be empty) and an id. */
+export const FUEL_BATCH_CURSOR_SHAPE = new RegExp(`^${ISO_MS}~(?:${ISO_MS})?~[0-9a-f-]{36}$`, 'i');
+
+export function parseFuelBatchCursor(cursor: string): { createdAt: Date; submittedAt: Date | null; id: string } | null {
+  if (!FUEL_BATCH_CURSOR_SHAPE.test(cursor)) return null;
+  const [createdAt, submittedAt, id] = cursor.split('~') as [string, string, string];
+  return { createdAt: new Date(createdAt), submittedAt: submittedAt === '' ? null : new Date(submittedAt), id: id.toLowerCase() };
+}
 
 export interface FuelBatchMetadataDTO {
   total: number;

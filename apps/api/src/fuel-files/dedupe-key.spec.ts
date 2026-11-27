@@ -79,12 +79,21 @@ describe('organisationDedupeKey', () => {
     expect(raw.audit.record).not.toHaveBeenCalled();
   });
 
-  it('refuses to create a key for an organisation that already holds fuel rows (a lost key)', async () => {
+  it('refuses to create a key for an organisation that already holds fuel rows (a lost key), auditing nothing', async () => {
     const { prisma, audit, raw } = store(null, { rows: true });
     await expect(organisationDedupeKey(prisma, audit, user)).rejects.toBeInstanceOf(FuelDedupeKeyLostError);
     expect(raw.tx.fuelRow.findFirst).toHaveBeenCalledWith({ where: { organisationId: ORG }, select: { id: true } });
-    expect(raw.tx.fuelDedupeKey.createMany).not.toHaveBeenCalled();
     expect(raw.audit.record).not.toHaveBeenCalled();
+  });
+
+  it('never takes a key another first upload committed meanwhile, with its rows, for a lost one (review of the fixes, P2)', async () => {
+    const winner = Buffer.alloc(FUEL_DEDUPE_KEY_BYTES, 5);
+    // This upload found no key; meanwhile another stored one and its rows: the insert now skips.
+    const { prisma, audit, raw } = store(null, { rows: true });
+    raw.tx.fuelDedupeKey.createMany.mockImplementationOnce(async () => ({ count: 0 }));
+    raw.prisma.fuelDedupeKey.findUniqueOrThrow.mockImplementationOnce(async () => ({ secret: winner }));
+    expect(await organisationDedupeKey(prisma, audit, user)).toEqual(winner);
+    expect(raw.tx.fuelRow.findFirst).not.toHaveBeenCalled();
   });
 
   it('refuses a key of the wrong length', async () => {

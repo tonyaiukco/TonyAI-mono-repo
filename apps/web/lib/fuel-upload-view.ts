@@ -163,6 +163,13 @@ export function formsAfterApply(upload: Pick<FuelUploadDTO, "readerIsHolder" | "
  * limit). A stored 0.0004 L is shown as such, never rounded to 0 L.
  */
 export function litresFractionDigits(litres: string): number {
-  const fraction = /\.(\d+)$/.exec(litres.trim())?.[1]?.replace(/0+$/, "") ?? "";
+  const text = litres.trim();
+  // An exponent form (1e-7, 1.5E-6) counts its shifted digits too.
+  const exponent = /^\d+(?:\.(\d+))?e([-+]?\d+)$/i.exec(text);
+  if (exponent) {
+    const mantissa = (exponent[1] ?? "").replace(/0+$/, "").length;
+    return Math.min(Math.max(mantissa - Number(exponent[2]), 0), 20);
+  }
+  const fraction = /\.(\d+)$/.exec(text)?.[1]?.replace(/0+$/, "") ?? "";
   return Math.min(fraction.length, 20);
 }

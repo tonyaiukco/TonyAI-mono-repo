@@ -17,6 +17,7 @@ import {
   login,
   seedFuelFactorFixture,
   listFuelUploads,
+  trackFuelUploads,
 } from './helpers';
 
 /**
@@ -45,6 +46,9 @@ const ROWS_STORED = 21;
 const UNMATCHED_CODE = '000456';
 /** The company the masterkey maps it to. */
 const MAPPED_TO = { id: SUB.energy, name: 'TonyAI Energy' };
+
+// Every upload a test applies is recorded, so the cleanup removes exactly those.
+test.beforeEach(({ page }) => trackFuelUploads(page));
 
 test.beforeAll(async ({ request }) => {
   await cleanupFuelData(request);

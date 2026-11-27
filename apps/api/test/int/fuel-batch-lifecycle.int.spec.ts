@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { COUNTED_STATUSES, isCalculated, type ActivityCalculationSnapshot } from '@tonyai/shared-types';
+import { COUNTED_STATUSES, fuelBatchCursor, isCalculated, type ActivityCalculationSnapshot } from '@tonyai/shared-types';
 import type { RequestUser } from '../../src/auth/auth.types';
 import { AuditService } from '../../src/audit/audit.service';
 import { errorCodeOf } from '../../src/common/api-error';
@@ -49,6 +49,7 @@ function services() {
   const { evidence } = lifecycleServices(runtime);
   return {
     evidence,
+    uploads,
     files: new FuelFilesService(runtime, audit, uploads),
     formation: new FuelBatchFormationService(runtime, audit, records, uploads),
     batches: new FuelBatchesService(runtime, audit, records, evidence),
@@ -455,6 +456,20 @@ describe('the author’s standing at the write (WP9 PR B review, P1)', () => {
   });
 });
 
+describe('a standard user’s own batch rows after a category untick (second review of the branch, P2)', () => {
+  it('still counts its own batch’s rows in its upload’s summary, as it still reads the batch', async () => {
+    const author = tenant.users.standardUser;
+    const id = await formedBatch(author, ['03.03.2025', '04.03.2025'], 'OZK-UT');
+    const importId = (await owner.fuelRow.findFirstOrThrow({ where: { fuelBatchId: id } })).importBatchId;
+    // Mobile Combustion is unticked; the company stays granted.
+    await owner.userSubsidiaryAccess.updateMany({ where: { userId: author.id }, data: { categories: ['Fuel'] } });
+    const now: RequestUser = { ...author, categoryGrants: { [tenant.subsidiaryId]: ['Fuel'] } };
+    const s = services();
+    expect((await s.batches.detail(now, id)).id).toBe(id);
+    expect((await s.uploads.detail(now, importId)).rows.assigned).toEqual({ rows: 2, litres: '200' });
+  });
+});
+
 describe('the batch list past one page (WP9 PR B review, P2)', () => {
   it('pages through every batch in one order, the metadata naming the total', async () => {
     const user = await masterkey();
@@ -469,15 +484,26 @@ describe('the batch list past one page (WP9 PR B review, P2)', () => {
     expect(new Set(first.map((b) => b.id))).toEqual(new Set(ids));
     // Each cursor continues right after its batch, so pages of any size join into the whole list.
     for (const at of [0, 1]) {
-      expect((await s.batches.list(user, { after: first[at]!.id })).map((b) => b.id)).toEqual(first.slice(at + 1).map((b) => b.id));
+      expect((await s.batches.list(user, { after: fuelBatchCursor(first[at]!) })).map((b) => b.id)).toEqual(first.slice(at + 1).map((b) => b.id));
     }
-    expect(await s.batches.list(user, { after: first[2]!.id })).toEqual([]);
+    expect(await s.batches.list(user, { after: fuelBatchCursor(first[2]!) })).toEqual([]);
 
     // A batch that leaves a loaded page never makes the next page skip one (QA review of the fixes, P2):
     // the drafts' first page is read, its first batch is withdrawn, and the page after it is still whole.
     const drafts = await s.batches.list(user, { status: 'draft' });
     await s.batches.withdraw(user, drafts[0]!.id, 'left the list');
-    expect((await s.batches.list(user, { status: 'draft', after: drafts[0]!.id })).map((b) => b.id)).toEqual(drafts.slice(1).map((b) => b.id));
+    expect((await s.batches.list(user, { status: 'draft', after: fuelBatchCursor(drafts[0]!) })).map((b) => b.id)).toEqual(drafts.slice(1).map((b) => b.id));
+
+    // In the review order, a page's last batch recalled meanwhile (its submission cleared) still
+    // leads to the rest of the queue (the second review of the branch, P2).
+    for (const id of drafts.slice(1).map((b) => b.id)) {
+      await withEvidence(id);
+      await s.batches.submit(user, id, 'checked');
+    }
+    const queue = await s.batches.list(user, { status: 'submitted' });
+    expect(queue).toHaveLength(2);
+    await s.batches.recall(user, queue[0]!.id);
+    expect((await s.batches.list(user, { status: 'submitted', after: fuelBatchCursor(queue[0]!) })).map((b) => b.id)).toEqual([queue[1]!.id]);
   });
 });
 
@@ -516,6 +542,26 @@ describe('declarations, withdrawal and bulk submit (task 7.4)', () => {
     // A submitted batch refuses a change and a withdrawal.
     expect(await code(s.batches.changeDeclarations(user, id, { usage: 'on_road' }))).toBe('fuel_batch_not_open');
     expect(await code(s.batches.withdraw(user, id, 'no'))).toBe('fuel_batch_not_open');
+  });
+
+  it('changes the declarations of a batch holding a tiny quantity, and its rows read as plain decimals (WP9 PR B review, P2)', async () => {
+    const user = await masterkey();
+    const code = 'LC-TINY';
+    await runtime.fuelAccount.create({
+      data: { organisationId: tenant.organisationId, source: 'petrol_ofisi', code, name: code, subsidiaryId: tenant.subsidiaryId, state: 'confirmed', confirmedBy: user.id, confirmedAt: new Date(), createdBy: user.id },
+    });
+    const header = ['Satış ID', 'Filo Kod Adı', 'Filo', 'Tarih', 'Tip', 'Miktar', 'Fatura Numarası'];
+    const buffer = xlsx({ sheetData: [sheetRow(1, header), sheetRow(2, ['TINY-1', code, 'Fleet', '03.03.2025 08:00', 'Motorin', 0.0000001, 'OZK-TINY']), sheetRow(3, ['TINY-2', code, 'Fleet', '04.03.2025 08:00', 'Motorin', 50, 'OZK-TINY'])].join('') });
+    const s = services();
+    const up = await s.files.apply(user, { buffer, size: buffer.length, originalname: 'tiny.xlsx' } as Express.Multer.File, {
+      source: 'petrol_ofisi', usage: 'on_road', fileSha256: createHash('sha256').update(buffer).digest('hex'),
+    });
+    await s.formation.formBatches(user, up.id);
+    const id = (await owner.fuelBatch.findFirstOrThrow({ where: { organisationId: tenant.organisationId, invoiceRef: 'OZK-TINY' } })).id;
+    const page = await s.batches.rows(user, id, {});
+    expect(page.rows.map((r) => r.litres).sort()).toEqual(['0.0000001', '50']);
+    const after = await s.batches.changeDeclarations(user, id, { usage: 'off_road' });
+    expect(after.usage).toBe('off_road');
   });
 
   it('leaves everything as it was when the rebuild is refused by a locked period', async () => {

@@ -130,5 +130,9 @@ describe("litres shown with every decimal they hold (WP9 PR B review, P2)", () =
     expect(litresFractionDigits("12500.250")).toBe(2);
     expect(litresFractionDigits("40")).toBe(0);
     expect(litresFractionDigits("0.1234567890123456789012")).toBe(20);
+    // An exponent form, as a number's text may be (review of the fixes, P2).
+    expect(litresFractionDigits("1e-7")).toBe(7);
+    expect(litresFractionDigits("1.5E-6")).toBe(7);
+    expect(litresFractionDigits("2e3")).toBe(0);
   });
 });

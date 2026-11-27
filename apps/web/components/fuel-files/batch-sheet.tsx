@@ -65,26 +65,31 @@ export function BatchSheet({
   const file = useRef<HTMLInputElement>(null);
   /** The submissions this sheet has taken into review, by batch and submission (a resubmission is a new one). */
   const opened = useRef<Set<string>>(new Set());
-  /** The batch open now: an answer for any other is late and dropped (WP9 PR B review, P1). */
-  const current = useRef<string | null>(batchId);
-  current.current = batchId;
-  const isCurrent = (id: string) => current.current === id;
+  /**
+   * This opening of the sheet: every answer is tied to the opening that asked
+   * for it, so one for another batch — or for an earlier opening of this same
+   * batch, closed and opened again — is late and dropped (WP9 PR B review, P1;
+   * second review, P2).
+   */
+  const opening = useRef(0);
+  const isCurrent = (token: number) => opening.current === token;
 
-  const load = useCallback(async (id: string) => {
+  const load = useCallback(async (id: string, token: number) => {
     const detail = await api.getFuelBatch(id);
-    if (current.current !== id) return null;
+    if (opening.current !== token) return null;
     setBatch(detail);
     setDeclared({ usage: detail.usage });
     return detail;
   }, []);
 
-  const loadRows = useCallback(async (id: string, offset: number) => {
+  const loadRows = useCallback(async (id: string, offset: number, token: number) => {
     const page = await api.fuelBatchRows(id, { offset, limit: ROW_PAGE });
-    if (current.current !== id) return;
+    if (opening.current !== token) return;
     setRows({ ...page, offset });
   }, []);
 
   useEffect(() => {
+    const token = ++opening.current;
     setBatch(null);
     setRows(null);
     setReason("");
@@ -93,7 +98,7 @@ export function BatchSheet({
     const id = batchId;
     (async () => {
       try {
-        const detail = await load(id);
+        const detail = await load(id, token);
         if (!detail) return;
         // Only the batch still open, at the submission it shows, and once per submission.
         if (takeIntoReview && takesIntoReview(detail, viewer, opened.current)) {
@@ -105,12 +110,12 @@ export function BatchSheet({
             throw error;
           });
           onChanged();
-          if (!isCurrent(id)) return;
+          if (!isCurrent(token)) return;
           setBatch(reviewed);
         }
-        await loadRows(id, 0);
+        await loadRows(id, 0, token);
       } catch (error) {
-        if (isCurrent(id)) showError(error);
+        if (isCurrent(token)) showError(error);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,21 +123,27 @@ export function BatchSheet({
 
   async function run(step: () => Promise<FuelBatchDetailDTO | unknown>, done: string, close = false) {
     if (!batch) return;
-    // The batch shown when the button was pressed: its answer never lands on another.
+    // The batch and opening shown when the button was pressed: its answer never lands on another.
     const id = batch.id;
+    const token = opening.current;
     setBusy(true);
     try {
       const out = await step();
       toast.success(done);
       onChanged();
-      if (!isCurrent(id)) return;
-      if (close) onClose();
-      else if (out && typeof out === "object" && "records" in (out as object)) setBatch(out as FuelBatchDetailDTO);
-      else await load(id);
+      if (!isCurrent(token)) return;
+      if (close) {
+        onClose();
+        return;
+      }
+      if (out && typeof out === "object" && "records" in (out as object)) setBatch(out as FuelBatchDetailDTO);
+      else await load(id, token);
+      // A step can change the rows too (a declaration rewrites their fuel, usage and month): read them again.
+      await loadRows(id, 0, token);
     } catch (error) {
       showError(error);
       // A stale answer (recalled, resubmitted, decided elsewhere): show the batch as it is now.
-      await load(id).catch(() => undefined);
+      await load(id, token).catch(() => undefined);
     } finally {
       setBusy(false);
     }
@@ -276,10 +287,10 @@ export function BatchSheet({
                   </TableBody>
                 </Table>
                 <div className="flex items-center justify-end gap-2">
-                  <Button size="sm" variant="outline" disabled={rows.offset === 0} onClick={() => loadRows(batch.id, Math.max(rows.offset - ROW_PAGE, 0)).catch(showError)}>
+                  <Button size="sm" variant="outline" disabled={rows.offset === 0} onClick={() => loadRows(batch.id, Math.max(rows.offset - ROW_PAGE, 0), opening.current).catch(showError)}>
                     {t("batches.previous")}
                   </Button>
-                  <Button size="sm" variant="outline" disabled={rows.offset + ROW_PAGE >= rows.total} onClick={() => loadRows(batch.id, rows.offset + ROW_PAGE).catch(showError)}>
+                  <Button size="sm" variant="outline" disabled={rows.offset + ROW_PAGE >= rows.total} onClick={() => loadRows(batch.id, rows.offset + ROW_PAGE, opening.current).catch(showError)}>
                     {t("batches.next")}
                   </Button>
                 </div>

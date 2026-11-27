@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
 import { FUEL_TANKER_MAX_DELIVERIES } from '@tonyai/shared-types';
 import { OFFICE_RELATIONSHIPS, SPREADSHEETML, row as sheetRow, xlsx } from '../../test/xlsx';
-import { FUEL_HEADER_SEARCH_ROWS, keyReading, readFuelFile } from './read-fuel-file';
+import { FUEL_HEADER_SEARCH_ROWS, FUEL_UNKEYED_ROWS_MAX, keyReading, readFuelFile } from './read-fuel-file';
 import { createHash, createHmac } from 'node:crypto';
 import { dedupeDigest, keyHashOf } from './adapters/adapter';
 import { SHELL_HEADERS } from './adapters/shell';
@@ -159,6 +159,21 @@ describe('readFuelFile — tanker', () => {
     });
   });
 
+  it('reads the full quota of deliveries with a TOPLAM row below it (C18; review of the fixes, P2)', async () => {
+    const rows = [sheetRow(1, ['EVRAK NO', 'AÇIKLAMA', 'MİKTAR'])];
+    for (let i = 0; i < FUEL_TANKER_MAX_DELIVERIES; i += 1) rows.push(sheetRow(i + 2, [`D${i}`, 'X', 10]));
+    rows.push(sheetRow(FUEL_TANKER_MAX_DELIVERIES + 2, [null, 'TOPLAM', 10 * FUEL_TANKER_MAX_DELIVERIES]));
+    const reading = await readFuelFile(xlsx({ sheetData: rows.join('') }), 'tanker');
+    expect(reading.rows).toHaveLength(FUEL_TANKER_MAX_DELIVERIES);
+    expect(reading.refused).toEqual([{ row: FUEL_TANKER_MAX_DELIVERIES + 2, code: 'fuel_key_missing' }]);
+  });
+
+  it('still bounds the rows with no key a file may add beyond its quota', async () => {
+    const rows = [sheetRow(1, ['EVRAK NO', 'AÇIKLAMA', 'MİKTAR']), sheetRow(2, ['D0', 'X', 10])];
+    for (let i = 0; i <= FUEL_TANKER_MAX_DELIVERIES + FUEL_UNKEYED_ROWS_MAX; i += 1) rows.push(sheetRow(i + 3, [null, 'note', 1]));
+    expect((await refusal(readFuelFile(xlsx({ sheetData: rows.join('') }), 'tanker'))).code).toBe('fuel_file_too_many_rows');
+  });
+
   it(`looks for the header in the first ${FUEL_HEADER_SEARCH_ROWS} rows only`, async () => {
     const rows = Array.from({ length: FUEL_HEADER_SEARCH_ROWS }, (_, i) => sheetRow(i + 1, [`title ${i}`]));
     rows.push(sheetRow(FUEL_HEADER_SEARCH_ROWS + 1, ['EVRAK NO', 'AÇIKLAMA', 'MİKTAR']));
@@ -296,6 +311,17 @@ describe('an ISO date cell is read as written (WP9 PR B review, P2)', () => {
       ['2025-03-16T08:10:00', '2025-03-2'],
       ['2025-03-15T23:59:59', '2025-03-1'],
     ]);
+  });
+
+  it('refuses only the row of a date cell that is no date, and ignores one in a column it does not read (review of the fixes, P2)', async () => {
+    // An unmapped column holding a bad date (column Z) on a good row, and a bad mapped date on another.
+    const withStray = fill(2, '2025-03-03T08:10:00').replace('</row>', '<c r="Z2" t="d"><v>2025-13-01</v></c></row>');
+    const reading = await readFuelFile(
+      withSheetName([header, withStray, fill(3, '2025-13-01'), fill(4, '2025-03-04T09:00:00')].join(''), 'items'),
+      'shell',
+    );
+    expect(reading.rows.map((r) => r.fileRow)).toEqual([2, 4]);
+    expect(reading.refused).toEqual([{ row: 3, code: 'fuel_date_unreadable' }]);
   });
 
   it('refuses a day the calendar does not have rather than rolling it over', async () => {

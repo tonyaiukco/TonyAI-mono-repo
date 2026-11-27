@@ -28,6 +28,14 @@ export const FUEL_ADAPTERS: Readonly<Record<FuelSource, FuelAdapter>> = Object.f
  */
 export const FUEL_HEADER_SEARCH_ROWS = 20;
 
+/**
+ * Rows with no key a file may hold beyond its source's quota — a total row,
+ * notes, blank-keyed lines — before the read stops: the quota counts rows
+ * with a key (C18: 1,000 tanker deliveries, a TOPLAM row apart), and this
+ * bounds the work on the rest (WP9 PR B review, P2).
+ */
+export const FUEL_UNKEYED_ROWS_MAX = 1_000;
+
 export interface FuelFileReading<Row = FuelReadRow> {
   /** Data rows below the header that hold a value. */
   rowsRead: number;
@@ -94,6 +102,8 @@ export async function readFuelFile(buffer: Buffer, source: FuelSource): Promise<
   const adapter = FUEL_ADAPTERS[source];
   const reading: FuelFileReading = { rowsRead: 0, rows: [], refused: [], duplicates: [] };
   const seen = new Set<string>();
+  /** Rows with a key so far: what the source's quota (`maxRows`) counts. */
+  let keyed = 0;
   /** The header row's column of each mapped header, once found. */
   let columns: ReadonlyMap<string, number> | null = null;
   /** The leading row that held most of the headers: what a refusal names as missing. */
@@ -121,8 +131,8 @@ export async function readFuelFile(buffer: Buffer, source: FuelSource): Promise<
         }
 
         reading.rowsRead += 1;
-        // Past the cap, rows are only counted, so the refusal names a count the user can check.
-        if (reading.rowsRead > adapter.maxRows) return;
+        // Past the bound, rows are only counted, so the refusal names a count the user can check.
+        if (keyed > adapter.maxRows || reading.rowsRead > adapter.maxRows + FUEL_UNKEYED_ROWS_MAX) return;
         const byColumn = new Map(cells.map((cell) => [cell.column, cell]));
         const mapped = new Map<string, SheetCell>();
         for (const [header, column] of columns) {
@@ -130,6 +140,11 @@ export async function readFuelFile(buffer: Buffer, source: FuelSource): Promise<
           if (cell !== undefined) mapped.set(header, cell);
         }
         const result = adapter.read(mapped, rowNumber);
+        // The source's quota counts rows with a key (deliveries, sales): a TOPLAM row has none (C18).
+        if (!('refused' in result && result.refused === 'fuel_key_missing')) {
+          keyed += 1;
+          if (keyed > adapter.maxRows) return;
+        }
         if ('refused' in result) {
           reading.refused.push({ row: rowNumber, code: result.refused });
         } else if (seen.has(result.row.keyHash)) {
@@ -144,12 +159,15 @@ export async function readFuelFile(buffer: Buffer, source: FuelSource): Promise<
     {
       ...(adapter.sheetName === undefined ? {} : { sheetName: adapter.sheetName }),
       maxUnpackedBytes: FUEL_XLSX_MAX_UNPACKED_BYTES,
+      // A bad date cell is its row's refusal (`fuel_date_unreadable`), never the file's.
+      keepUnreadableDates: true,
       asyncInflate: true,
       sliceBytes: FUEL_XLSX_SLICE_BYTES,
     },
   );
 
   if (columns === null) throw columnsMissing(adapter.headers.filter((header) => !best.has(header)));
-  if (reading.rowsRead > adapter.maxRows) throw tooManyRows(reading.rowsRead, adapter.maxRows);
+  if (keyed > adapter.maxRows) throw tooManyRows(keyed, adapter.maxRows);
+  if (reading.rowsRead > adapter.maxRows + FUEL_UNKEYED_ROWS_MAX) throw tooManyRows(reading.rowsRead, adapter.maxRows);
   return reading;
 }

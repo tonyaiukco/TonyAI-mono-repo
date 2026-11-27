@@ -12,6 +12,8 @@ import {
   type FuelSource,
   type FuelTrayDTO,
   type FuelUploadDTO,
+  FUEL_UPLOAD_PAGE,
+  parseFuelUploadCursor,
   type FuelWithdrawableDTO,
   type TakeOverFuelRowsRequest,
   type WithdrawFuelRowsRequest,
@@ -22,6 +24,7 @@ import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
 import { PrismaService } from '../prisma/prisma.service';
 import { sumDecimals } from './decimal';
+import { lockActor } from './lock-actor';
 import { fuelRowScopeSql, fuelUploadScopeWhere, readsCompany, readsWholeOrganisation } from './fuel-scope';
 
 /**
@@ -32,7 +35,6 @@ import { fuelRowScopeSql, fuelUploadScopeWhere, readsCompany, readsWholeOrganisa
 
 /** The live rows no batch holds yet: a withdrawal or a takeover acts on these (C14, C8). */
 const UNBATCHED_STATES = ['waiting_account', 'waiting_fuel', 'ready', 'held', 'excluded'] as const;
-const UPLOAD_LIST_LIMIT = 100;
 const REASON_MAX_LENGTH = 1_000;
 
 type CountRow = { import_batch_id: string; state: string; hold_reason: string | null; rows: number; litres: string };
@@ -46,12 +48,19 @@ export class FuelUploadsService {
     private readonly audit: AuditService,
   ) {}
 
-  async list(user: RequestUser): Promise<FuelUploadDTO[]> {
+  async list(user: RequestUser, after?: string): Promise<FuelUploadDTO[]> {
     this.assertOrganisation(user);
+    const cursor = after ? parseFuelUploadCursor(after) : null;
+    if (after && !cursor) return [];
+    // The next page after an upload's place, as the list showed it (newest
+    // first, the id breaking ties; the API writes the time to the millisecond).
+    const where: Prisma.ImportBatchWhereInput = cursor
+      ? { AND: [fuelUploadScopeWhere(user), { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] }] }
+      : fuelUploadScopeWhere(user);
     const imports = await this.prisma.importBatch.findMany({
-      where: fuelUploadScopeWhere(user),
+      where,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: UPLOAD_LIST_LIMIT,
+      take: FUEL_UPLOAD_PAGE,
     });
     return this.summaries(user, imports);
   }
@@ -146,6 +155,8 @@ export class FuelUploadsService {
     if (!anyHolder && !mayAuthorRecords(user)) throw new ForbiddenException();
 
     await this.prisma.$transaction(async (tx) => {
+      // The role that decided whose rows may go, re-read at the write (WP9 PR B review, P1).
+      await lockActor(tx, user);
       const rows = await tx.$queryRaw<Array<{ code: string; state: string; rows: number; litres: string }>>`
         WITH withdrawn AS (
           UPDATE fuel_rows r
@@ -195,7 +206,8 @@ export class FuelUploadsService {
     const accounts = await this.prisma.$queryRaw<Array<{ id: string; code: string; name: string | null; rows: number; litres: string; excluded: number }>>`
       SELECT a.id::text, a.code, CASE WHEN bool_and(${fuelRowScopeSql(user, 'r')}) THEN a.name END AS name,
              count(*)::int AS rows, sum(r.litres)::text AS litres,
-             count(*) FILTER (WHERE r.state = 'excluded')::int AS excluded
+             -- Excluded (a mapping decision, not the file's content) counted only where the caller reads the row.
+             count(*) FILTER (WHERE r.state = 'excluded' AND ${fuelRowScopeSql(user, 'r')})::int AS excluded
       FROM fuel_rows r JOIN fuel_accounts a ON a.id = r.fuel_account_id
       WHERE ${mayWithdraw}
       GROUP BY a.id, a.code, a.name ORDER BY a.code`;
@@ -221,6 +233,8 @@ export class FuelUploadsService {
     const upload = await this.visibleUpload(user, id);
     const accountId = request.accountId ?? null;
     await this.prisma.$transaction(async (tx) => {
+      // Still a masterkey, still enabled, at the write (WP9 PR B review, P1).
+      await lockActor(tx, user);
       const rows = await tx.$queryRaw<Array<{ holder: string; rows: number; litres: string }>>`
         WITH before AS (
           SELECT id, holder_id FROM fuel_rows

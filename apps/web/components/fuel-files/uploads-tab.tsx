@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
 import { Hand, Loader2, RotateCcw, Layers, Undo2 } from "lucide-react";
@@ -13,7 +13,7 @@ import { useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
 import { formUntilDone } from "@/lib/fuel-upload-view";
 import { uploadActions } from "@/lib/fuel-files-view";
-import type { FuelUploadDTO, Locale, UserRole } from "@/lib/types";
+import { FUEL_UPLOAD_PAGE, fuelUploadCursor, type FuelUploadDTO, type Locale, type UserRole } from "@/lib/types";
 import { HeldRows, RowCount } from "./common";
 import { WithdrawRowsDialog } from "./withdraw-rows-dialog";
 
@@ -23,17 +23,47 @@ export function UploadsTab({ role, refreshKey }: { role: UserRole | undefined; r
   const locale = useLocale() as Locale;
   const showError = useStableErrorToast();
   const [uploads, setUploads] = useState<FuelUploadDTO[] | null>(null);
+  /** A full last page may have more after it (WP9 PR B review, P2: the list was cut at 100). */
+  const [maybeMore, setMaybeMore] = useState(false);
+  const [more, setMore] = useState(false);
+  const seq = useRef(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState<FuelUploadDTO | null>(null);
 
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     try {
-      setUploads(await api.listFuelUploads());
+      const page = await api.listFuelUploads();
+      if (mine !== seq.current) return;
+      setUploads(page);
+      setMaybeMore(page.length === FUEL_UPLOAD_PAGE);
     } catch (error) {
+      if (mine !== seq.current) return;
       setUploads([]);
+      setMaybeMore(false);
       showError(error);
     }
   }, [showError]);
+
+  async function loadMore() {
+    const last = uploads?.[uploads.length - 1];
+    if (!last) return;
+    const mine = seq.current;
+    setMore(true);
+    try {
+      const page = await api.listFuelUploads(fuelUploadCursor(last));
+      if (mine !== seq.current) return;
+      setUploads((now) => {
+        const seen = new Set((now ?? []).map((u) => u.id));
+        return [...(now ?? []), ...page.filter((u) => !seen.has(u.id))];
+      });
+      setMaybeMore(page.length === FUEL_UPLOAD_PAGE);
+    } catch (error) {
+      showError(error);
+    } finally {
+      setMore(false);
+    }
+  }
   useEffect(() => void load(), [load, refreshKey]);
 
   async function form(upload: FuelUploadDTO, retryHeld: boolean) {
@@ -151,6 +181,13 @@ export function UploadsTab({ role, refreshKey }: { role: UserRole | undefined; r
             })}
           </TableBody>
         </Table>
+        {maybeMore && (
+          <div className="flex justify-end border-t pt-3">
+            <Button size="sm" variant="outline" disabled={more} onClick={() => void loadMore()} data-testid="uploads-more">
+              {more && <Loader2 className="h-4 w-4 animate-spin" />}{t("batches.loadMore")}
+            </Button>
+          </div>
+        )}
       </CardContent>
       <WithdrawRowsDialog upload={withdrawing} onClose={() => setWithdrawing(null)} onDone={() => void load()} />
     </Card>

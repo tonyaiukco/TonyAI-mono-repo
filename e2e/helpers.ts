@@ -1,7 +1,7 @@
 import { expect, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import {
   CATEGORIES,
@@ -1893,23 +1893,55 @@ export async function getFuelBatch(request: APIRequestContext, token: string, id
 }
 
 /**
- * Remove what the fuel specs uploaded, and only that (WP9 PR B review, P1):
- * the seed organisation's fuel imports whose file is one of `FUEL_FIXTURES`
- * (matched by SHA-256 — the specs upload nothing else), their rows
- * (replacements before what they replace), the batches those rows formed and
- * their records (each deleted inside a step that declares its batch for the
- * transaction — TA029 refuses even the owner otherwise, as
- * `apps/api/test/int/db.ts` does it), the accounts first seen by those
- * imports once no row or batch is left on them (never the seed's two), and
- * the files the records held once no record links them. A developer's own
- * uploads, batches and accounts are never touched; a batch that also holds a
- * row of another upload stops the cleanup with nothing deleted rather than
- * take that row's batch with it. Owner and service role, local only.
+ * The fuel uploads the specs made, one id a line, kept across runs so a
+ * killed run's are removed by the next (git-ignored). Appended line by line,
+ * so parallel workers never lose one another's.
+ */
+const FUEL_LEDGER = resolve(__dirname, '.fuel-e2e-ledger');
+
+/** Record an upload a spec made (`POST /fuel-files` answered it): `cleanupFuelData` removes exactly these. */
+export function recordFuelUpload(id: string): void {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error(`recordFuelUpload: not an upload id: ${id}`);
+  appendFileSync(FUEL_LEDGER, `${id}\n`);
+}
+
+/** Record every fuel upload this page applies, from the API's own answer. */
+export function trackFuelUploads(page: Page): void {
+  page.on('response', async (res) => {
+    if (res.request().method() !== 'POST' || !res.ok() || !/\/api\/v1\/fuel-files$/.test(new URL(res.url()).pathname)) return;
+    const body = (await res.json().catch(() => null)) as { id?: string } | null;
+    if (body?.id) recordFuelUpload(body.id);
+  });
+}
+
+function recordedFuelUploads(): string[] {
+  try {
+    return [...new Set(readFileSync(FUEL_LEDGER, 'utf8').split('\n').map((l) => l.trim()).filter((l) => /^[0-9a-f-]{36}$/i.test(l)))];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Remove what the fuel specs made, and only that (WP9 PR B reviews, P1): the
+ * uploads they recorded (`recordFuelUpload`, `trackFuelUploads`) — never one
+ * a developer made, whatever its file — their rows (replacements before what
+ * they replace), the batches those rows formed and their records (each
+ * deleted inside a step that declares its batch for the transaction — TA029
+ * refuses even the owner otherwise, as `apps/api/test/int/db.ts` does it),
+ * the accounts those uploads first created (their `bulk_import` audit rows'
+ * `accountsFirstSeen`) once no row or batch is left on them — never the
+ * seed's two, never an account made before — and the files the records held
+ * once no record links them. A batch that also holds another upload's rows,
+ * or a row of another upload replacing one of these, stops it with nothing
+ * deleted. Owner and service role, local only. The ledger is emptied once
+ * its uploads are gone.
  */
 export async function cleanupFuelData(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
   assertLocalTarget(url);
-  const fixtureHashes = Object.values(FUEL_FIXTURES).map((path) => createHash('sha256').update(readFileSync(path)).digest('hex'));
+  const recorded = recordedFuelUploads();
+  if (recorded.length === 0) return;
   const scope = await withOwner(async (owner) => {
     const [org] = await owner.$queryRawUnsafe<Array<{ id: string }>>(
       'SELECT organisation_id::text AS id FROM subsidiaries WHERE id = $1::uuid',
@@ -1919,12 +1951,12 @@ export async function cleanupFuelData(request: APIRequestContext): Promise<void>
     const imports = (
       await owner.$queryRawUnsafe<Array<{ id: string }>>(
         `SELECT id::text AS id FROM import_batches
-          WHERE organisation_id = $1::uuid AND source IN ('shell', 'petrol_ofisi', 'tanker') AND sha256 = ANY($2::text[])`,
+          WHERE organisation_id = $1::uuid AND source IN ('shell', 'petrol_ofisi', 'tanker') AND id = ANY($2::uuid[])`,
         org.id,
-        fixtureHashes,
+        recorded,
       )
     ).map((r) => r.id);
-    if (imports.length === 0) return null;
+    if (imports.length === 0) return { orgId: org.id, imports, batches: [] as string[], accounts: [] as string[] };
     const batches = (
       await owner.$queryRawUnsafe<Array<{ id: string }>>(
         `SELECT DISTINCT fuel_batch_id::text AS id FROM fuel_rows WHERE import_batch_id = ANY($1::uuid[]) AND fuel_batch_id IS NOT NULL`,
@@ -1942,27 +1974,26 @@ export async function cleanupFuelData(request: APIRequestContext): Promise<void>
         WHERE r.import_batch_id = ANY($1::uuid[]) AND NOT (x.import_batch_id = ANY($1::uuid[]))`,
       imports,
     );
-    if (replacing.length > 0) {
+    if (mixed.length > 0 || replacing.length > 0) {
       throw new Error(
-        `cleanupFuelData: row(s) ${replacing.map((m) => m.id).join(', ')} of an upload the specs did not make replace the specs' rows; ` +
-          'nothing was deleted. Remove that data by hand, then run again.',
+        `cleanupFuelData: batch(es) ${mixed.map((m) => m.id).join(', ') || '—'} or row(s) ${replacing.map((m) => m.id).join(', ') || '—'} ` +
+          "of an upload the specs did not make hold the specs' rows; nothing was deleted. Remove that data by hand, then run again.",
       );
     }
-    if (mixed.length > 0) {
-      throw new Error(
-        `cleanupFuelData: batch(es) ${mixed.map((m) => m.id).join(', ')} also hold rows of an upload the specs did not make; ` +
-          'nothing was deleted. Withdraw or remove that data by hand, then run again.',
-      );
-    }
+    // The accounts these uploads first created, by their own audit rows.
     const accounts = (
       await owner.$queryRawUnsafe<Array<{ id: string }>>(
-        'SELECT DISTINCT fuel_account_id::text AS id FROM fuel_rows WHERE import_batch_id = ANY($1::uuid[])',
+        `SELECT DISTINCT a.id::text AS id
+           FROM audit_log l
+           JOIN import_batches i ON i.id::text = l.entity_id
+           CROSS JOIN LATERAL jsonb_array_elements(COALESCE(l.diff -> 'fuelUpload' -> 'accountsFirstSeen', '[]'::jsonb)) seen
+           JOIN fuel_accounts a ON a.organisation_id = i.organisation_id AND a.source = i.source AND a.code = seen ->> 'code'
+          WHERE l.entity = 'import_batch' AND l.action = 'bulk_import' AND l.entity_id = ANY($1::text[])`,
         imports,
       )
     ).map((r) => r.id);
     return { orgId: org.id, imports, batches, accounts };
   });
-  if (!scope) return;
   const files = scope.batches.length
     ? await evidenceFilesFor(
         request,
@@ -1999,6 +2030,8 @@ export async function cleanupFuelData(request: APIRequestContext): Promise<void>
     await owner.$executeRawUnsafe('DELETE FROM import_batches WHERE id = ANY($1::uuid[])', scope.imports);
   });
   reportCleanup(await removeUnlinkedEvidence(request, files));
+  // Every recorded upload is gone (or was never stored): start the ledger again.
+  writeFileSync(FUEL_LEDGER, '');
 }
 
 /**

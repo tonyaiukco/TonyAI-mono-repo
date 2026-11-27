@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { UserRole } from '@tonyai/db';
+import { fuelUploadCursor } from '@tonyai/shared-types';
 import type { RequestUser } from '../../src/auth/auth.types';
 import { AuditService } from '../../src/audit/audit.service';
 import { errorCodeOf } from '../../src/common/api-error';
@@ -414,8 +415,22 @@ describe('reading uploads, the tray, a takeover (task 5.4)', () => {
     expect((await files.uploads.withdrawable(await masterkey(), upload.id)).accounts).toMatchObject([{ code: 'INT-ASSOC', rows: 3 }]);
     expect(await files.uploads.withdrawable(tenant.users.auditor, upload.id)).toEqual({ accounts: [], fuelNames: [] });
 
+    // A super_admin holder of an associate's rows (a company it is not granted) is offered them, but
+    // neither the account's name nor how many a later mapping excluded (second review of the branch, P2).
+    const theirs = xlsx({
+      sheetData: [
+        sheetRow(1, ['Satış ID', 'Filo Kod Adı', 'Filo', 'Tarih', 'Tip', 'Miktar', 'Fatura Numarası']),
+        sheetRow(2, ['SA-1', 'INT-ASSOC', 'Fleet', '06.03.2025 08:00', 'Motorin Med', 10, 'OZK-SA']),
+        sheetRow(3, ['SA-2', 'INT-ASSOC', 'Fleet', '07.03.2025 08:00', 'Motorin Med', 11, 'OZK-SA']),
+      ].join(''),
+    });
+    const superAdminUpload = await apply(tenant.users.superAdmin, theirs);
+    expect((await files.uploads.withdrawable(tenant.users.superAdmin, superAdminUpload.id)).accounts).toEqual([
+      { accountId: mine.accounts[0]!.accountId, code: 'INT-ASSOC', name: null, rows: 2, litres: '21', excluded: 0 },
+    ]);
+
     await files.uploads.withdrawRows(reporter, upload.id, { accountId: mine.accounts[0]!.accountId, reason: 'the associate is now controlled' });
-    expect((await rowsOf()).map((r) => [r.state, r.withdrawnState])).toEqual(Array.from({ length: 3 }, () => ['withdrawn', 'excluded']));
+    expect((await rowsOf()).filter((r) => r.importBatchId === upload.id).map((r) => [r.state, r.withdrawnState])).toEqual(Array.from({ length: 3 }, () => ['withdrawn', 'excluded']));
     expect(await files.uploads.withdrawable(reporter, upload.id)).toEqual({ accounts: [], fuelNames: [] });
   });
 
@@ -438,6 +453,32 @@ describe('reading uploads, the tray, a takeover (task 5.4)', () => {
     await files.uploads.withdrawRows(user, upload.id, { rawFuelName: 'Otogaz LPG', reason: 'not a fuel we report' });
     const rows = await rowsOf();
     expect(rows.map((r) => [r.fileRow, r.state])).toEqual([[2, 'withdrawn'], [3, 'withdrawn'], [4, 'waiting_account']]);
+  });
+
+  it('lets a masterkey demoted after the request neither take over nor withdraw another holder’s rows (WP9 PR B review, P1)', async () => {
+    const reporter = await addMember(owner, tenant, UserRole.standard_user, { grants: [tenant.subsidiaryId] });
+    const upload = await apply(reporter, salesList('INT-DEMOTE', 3));
+    // A second masterkey (an organisation keeps one), whose role drops after its request was authorised.
+    const stale = await addMember(owner, tenant, UserRole.masterkey);
+    await owner.profile.update({ where: { id: stale.id }, data: { role: 'super_admin' } });
+    const files = services();
+    const status = (p: Promise<unknown>) => p.then(() => 'allowed', (e: unknown) => (e as { getStatus?: () => number }).getStatus?.() ?? String(e));
+    expect(await status(files.uploads.takeOver(stale, upload.id, {}))).toBe(403);
+    const account = await owner.fuelAccount.findFirstOrThrow({ where: { organisationId: tenant.organisationId, code: 'INT-DEMOTE' } });
+    expect(await status(files.uploads.withdrawRows(stale, upload.id, { accountId: account.id, reason: 'not mine' }))).toBe(403);
+    const rows = await rowsOf();
+    expect(rows.every((r) => r.holderId === reporter.id && r.state !== 'withdrawn')).toBe(true);
+    expect(await owner.auditLog.count({ where: { entity: 'import_batch', entityId: upload.id, action: { in: ['take_over', 'retract'] } } })).toBe(0);
+  });
+
+  it('pages the uploads by cursor, newest first (the second review of the branch, P2)', async () => {
+    const user = await masterkey();
+    for (const code of ['INT-UP-1', 'INT-UP-2', 'INT-UP-3']) await apply(user, salesList(code, 1));
+    const files = services();
+    const all = await files.uploads.list(user);
+    expect(all).toHaveLength(3);
+    expect((await files.uploads.list(user, fuelUploadCursor(all[0]!))).map((u) => u.id)).toEqual(all.slice(1).map((u) => u.id));
+    expect(await files.uploads.list(user, fuelUploadCursor(all[2]!))).toEqual([]);
   });
 
   it('makes a masterkey the holder of an upload’s unbatched rows, ready again, with an audit row naming the uploader', async () => {

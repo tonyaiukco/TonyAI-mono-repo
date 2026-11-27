@@ -134,6 +134,14 @@ export interface WorksheetReadOptions {
   sheetName?: string;
   /** The unpack budget for the whole read; `XLSX_MAX_UNPACKED_BYTES` when absent. */
   maxUnpackedBytes?: number;
+  /**
+   * A date cell that is no date (`2025-13-01`, a serial past any calendar) is
+   * kept as a `date` cell holding its text as written, for the row reading
+   * it to refuse, instead of refusing the whole workbook — so one bad cell, or
+   * one in a column the reader never looks at, stops no other row (a fuel
+   * file; WP9 PR B review, P2). The template import refuses the file, as always.
+   */
+  keepUnreadableDates?: boolean;
   /** Inflate on zlib's thread pool rather than on the event loop (`ZipArchive.readAsync`). */
   asyncInflate?: boolean;
   /**
@@ -228,7 +236,7 @@ async function readWorkbookFile(
       : await readDateStyles(await read(resolvePart(workbookPart, found.styles)));
   await readSheet(
     await read(resolvePart(workbookPart, sheet.target)),
-    { sharedStrings, dateStyles, date1904: workbook.date1904 },
+    { sharedStrings, dateStyles, date1904: workbook.date1904, keepUnreadableDates: options.keepUnreadableDates === true },
     visitor,
     options.sliceBytes ?? SLICE_BYTES,
   );
@@ -672,6 +680,7 @@ interface SheetContext {
   sharedStrings: readonly string[];
   dateStyles: readonly boolean[];
   date1904: boolean;
+  keepUnreadableDates: boolean;
 }
 
 interface OpenCell {
@@ -758,6 +767,12 @@ function cellValue(cell: OpenCell, row: number, context: SheetContext): string {
       return fail();
     case 'd': {
       if (text === '') return '';
+      if (context.keepUnreadableDates) {
+        const match = ISO_DATE.exec(text);
+        if (!match) return text;
+        const date = new Date(text.includes('T') && match[1] === undefined ? `${text}Z` : text);
+        return Number.isNaN(date.getTime()) ? text : date.toISOString();
+      }
       // A time with no zone is UTC, as a serial date is — not the server's
       // local time, which read the same cell three hours early in Istanbul.
       const [, zone] = ISO_DATE.exec(text) ?? fail();
@@ -768,9 +783,12 @@ function cellValue(cell: OpenCell, row: number, context: SheetContext): string {
       if (text === '') return '';
       const value = NUMBER.test(text) ? Number(text) : Number.NaN;
       if (!Number.isFinite(value)) fail();
-      return context.dateStyles[cell.style]
-        ? isoDate(excelDate(value, context.date1904), row, cell.column)
-        : String(value);
+      if (!context.dateStyles[cell.style]) return String(value);
+      if (context.keepUnreadableDates) {
+        const date = excelDate(value, context.date1904);
+        return Number.isNaN(date.getTime()) ? text : date.toISOString();
+      }
+      return isoDate(excelDate(value, context.date1904), row, cell.column);
     }
     default:
       return fail();

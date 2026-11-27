@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { FormFuelBatchesResultDTO, FuelFilePreviewDTO, FuelTrayDTO, FuelUploadDTO, FuelWithdrawableDTO } from '@tonyai/shared-types';
 import { FuelBatchFormationService } from '../fuel-batches/fuel-batch-formation.service';
@@ -8,7 +8,7 @@ import { FUEL_MULTIPART_LIMITS } from '../common/multipart-limits';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 import { RuntimeUploadWorkInterceptor } from '../common/runtime-request';
 import { FuelFileFieldsDto } from './dto/fuel-file-fields.dto';
-import { FormFuelBatchesDto, TakeOverFuelRowsDto, WithdrawFuelRowsDto } from './dto/fuel-rows.dto';
+import { FormFuelBatchesDto, FuelUploadsQueryDto, TakeOverFuelRowsDto, WithdrawFuelRowsDto } from './dto/fuel-rows.dto';
 import { FuelFilesService } from './fuel-files.service';
 import { FuelUploadsService } from './fuel-uploads.service';
 
@@ -47,8 +47,8 @@ export class FuelFilesController {
   }
 
   @Get()
-  list(@CurrentUser() user: RequestUser): Promise<FuelUploadDTO[]> {
-    return this.uploads.list(user);
+  list(@CurrentUser() user: RequestUser, @Query() query: FuelUploadsQueryDto): Promise<FuelUploadDTO[]> {
+    return this.uploads.list(user, query.after);
   }
 
   @Get('tray')

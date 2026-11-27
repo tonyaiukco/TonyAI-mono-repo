@@ -24,6 +24,7 @@ import {
   pickByFieldLabel,
   seedFuelFactorFixture,
   listFuelUploads,
+  trackFuelUploads,
 } from './helpers';
 
 /**
@@ -72,6 +73,9 @@ async function clearLane(request: APIRequestContext): Promise<void> {
   }
   await deleteRecordsAsService(request, ids);
 }
+
+// Every upload a test applies is recorded, so the cleanup removes exactly those.
+test.beforeEach(({ page }) => trackFuelUploads(page));
 
 test.beforeAll(async ({ request }) => {
   await clearLane(request);

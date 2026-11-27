@@ -49,9 +49,9 @@ function grantedRowSql(user: RequestUser, alias: string): Prisma.Sql {
 }
 
 /**
- * The rows the reader may read, as a predicate on `fuel_rows` under `alias`.
- * A batched row is read here only by its company's scope; a batch's own rows
- * are read through the batch (D10).
+ * The rows the reader may read, as a predicate on `fuel_rows` under `alias`:
+ * PR A's `fuel_rows_select_scoped`, row for row — its company's scope, its
+ * holder's while unbatched, and a standard user's own batch's.
  */
 export function fuelRowScopeSql(user: RequestUser, alias = 'r'): Prisma.Sql {
   const column = (name: string) => Prisma.raw(`"${alias}"."${name}"`);
@@ -65,7 +65,18 @@ export function fuelRowScopeSql(user: RequestUser, alias = 'r'): Prisma.Sql {
     ? Prisma.sql`true`
     : Prisma.sql`${column('subsidiary_id')} IS NULL`;
   const holder = Prisma.sql`(${column('holder_id')} = ${user.id}::uuid AND ${column('fuel_batch_id')} IS NULL AND ${holderReads})`;
-  return Prisma.sql`(${organisation} AND (${holder} OR (${column('subsidiary_id')} IS NOT NULL AND ${grantedRowSql(user, alias)})))`;
+  // A row in a batch is read exactly when its batch is: a standard user reads
+  // its own batch in a company it is still granted, in any category (D14, as
+  // `fuel_rows_select_scoped`), so a category untick never hides that batch's
+  // rows from its counts while the batch itself stays open to it (second
+  // review of the branch, P2). A super_admin's batches are its grant's (above).
+  const companies = user.accessibleSubsidiaryIds;
+  const ownBatch =
+    can(user.role, 'scope.categories') && companies.length > 0
+      ? Prisma.sql` OR (${column('fuel_batch_id')} IS NOT NULL AND ${column('subsidiary_id')} = ANY(${companies}::uuid[])
+          AND EXISTS (SELECT 1 FROM fuel_batches own WHERE own.id = ${column('fuel_batch_id')} AND own.created_by = ${user.id}::uuid))`
+      : Prisma.empty;
+  return Prisma.sql`(${organisation} AND (${holder} OR (${column('subsidiary_id')} IS NOT NULL AND ${grantedRowSql(user, alias)})${ownBatch}))`;
 }
 
 /** The accounts the reader may read, as a predicate on `fuel_accounts` under `alias`; null: none at all. */

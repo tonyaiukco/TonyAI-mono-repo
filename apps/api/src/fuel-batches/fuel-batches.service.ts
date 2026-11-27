@@ -18,6 +18,7 @@ import {
   fuelRecordTarget,
   mayAuthorRecords,
   FUEL_BATCH_PAGE,
+  parseFuelBatchCursor,
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
@@ -28,7 +29,7 @@ import { ActivityRecordsService } from '../activity-records/activity-records.ser
 import { declareFuelBatchStep, lockPeriodsShared, periodOf } from '../activity-records/lifecycle-lock';
 import { AuthorOnlyRefusedError, RecordChangedError, SubmitRoleRefusedError } from '../activity-records/errors';
 import { lockAuthorAccess } from '../central-reporting/record-entities';
-import { approversFor, awaitingDecisionWhere } from '../activity-records/record-approver';
+import { approversFor, awaitingDecisionWhere, deciderFor } from '../activity-records/record-approver';
 import { sumDecimals } from '../fuel-files/decimal';
 import { fuelBatchVerdicts } from './fuel-batch-anomaly';
 import { EvidenceService } from '../evidence/evidence.service';
@@ -92,20 +93,19 @@ export class FuelBatchesService {
     if (filtered === null) return [];
     const reviewOrder = filters.awaitingMyDecision || filters.status === 'submitted' || filters.status === 'under_review';
     let where: Prisma.FuelBatchWhereInput = filtered;
-    if (filters.after) {
-      // The batches after the cursor in this list's own total order (the id
-      // breaks ties), compared in SQL at the column's full precision. A cursor
-      // that no longer has a place in the order (recalled: no submission)
-      // answers an empty page, and the screen takes the list as complete.
-      const after = filters.after;
-      const later = reviewOrder
-        ? await this.prisma.$queryRaw<Array<{ id: string }>>`
-            SELECT b.id::text FROM fuel_batches b JOIN fuel_batches c ON c.id = ${after}::uuid
-            WHERE b.organisation_id = ${user.organisationId}::uuid AND (b.submitted_at, b.id) > (c.submitted_at, c.id)`
-        : await this.prisma.$queryRaw<Array<{ id: string }>>`
-            SELECT b.id::text FROM fuel_batches b JOIN fuel_batches c ON c.id = ${after}::uuid
-            WHERE b.organisation_id = ${user.organisationId}::uuid AND (b.created_at, b.id) < (c.created_at, c.id)`;
-      where = { AND: [filtered, { id: { in: later.map((r) => r.id) } }] };
+    const cursor = filters.after ? parseFuelBatchCursor(filters.after) : null;
+    if (filters.after && !cursor) return [];
+    if (cursor) {
+      // After the cursor in this list's own total order (the id breaks ties),
+      // by the sort values the page showed — in the same query as the scope
+      // and the page limit. Every batch time is written by the API at
+      // millisecond precision, so these compare exactly.
+      if (reviewOrder) {
+        if (cursor.submittedAt === null) return [];
+        where = { AND: [filtered, { OR: [{ submittedAt: { gt: cursor.submittedAt } }, { submittedAt: cursor.submittedAt, id: { gt: cursor.id } }] }] };
+      } else {
+        where = { AND: [filtered, { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] }] };
+      }
     }
     const batches = await this.prisma.fuelBatch.findMany({
       where,
@@ -139,7 +139,7 @@ export class FuelBatchesService {
           month: (PERIOD_VALUES.monthly as readonly string[]).indexOf(r.periodValue) + 1,
           activityType: r.activityType ?? '',
           status: r.status,
-          litres: String(r.activityValue),
+          litres: new Prisma.Decimal(r.activityValue).toFixed(),
           tCo2e: isCalculated(calc) ? calc.tCo2e : null,
         };
       }),
@@ -166,7 +166,8 @@ export class FuelBatchesService {
         month: r.month,
         rawFuel: r.rawFuel,
         fuel: (r.fuel as FileFuel | null) ?? null,
-        litres: r.litres.toString(),
+        // Plain decimal text: `toString()` writes 0.0000001 as 1e-7 (WP9 PR B review, P2).
+        litres: r.litres.toFixed(),
         state: r.state as FuelRowState,
       })),
     };
@@ -305,8 +306,16 @@ export class FuelBatchesService {
           await perRecord(tx, seen, current, batch);
         }
         const updated = await tx.fuelBatch.update({ where: { id }, data: after(batch) });
+        // A decision's batch row names the decider as the record cores just
+        // verified it (`deciderFor`: the role re-read in this transaction), so
+        // the batch's audit row and its records' agree on the role that
+        // authorised the step (second review of the branch, P2).
+        const actor =
+          action === 'review' || action === 'approve' || action === 'reject'
+            ? await deciderFor(tx, user, { createdBy: batch.createdBy, subsidiaryId: batch.subsidiaryId }, action)
+            : user;
         await this.audit.record(
-          user,
+          actor,
           {
             action: action === 'approve' && batch.createdBy === user.id ? 'self_approve' : action,
             entity: 'fuel_batch',
@@ -575,7 +584,7 @@ export class FuelBatchesService {
       const key = `${r.year}|${r.month}|${target.category}|${target.activityType}`;
       const entry = wanted.get(key) ?? { fuel: r.fuel as FileFuel, year: r.year, month: r.month, litres: [] };
       wanted.set(key, entry);
-      entry.litres.push(r.litres.toString());
+      entry.litres.push(r.litres.toFixed());
     }
     const existing = await tx.activityRecord.findMany({ where: { fuelBatchId: batch.id, status: { not: 'voided' } }, orderBy: { id: 'asc' } });
     const keyOfRecord = (r: ActivityRecord) =>

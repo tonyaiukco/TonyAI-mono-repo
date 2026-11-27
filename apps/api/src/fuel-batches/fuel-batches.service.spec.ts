@@ -10,10 +10,16 @@ import type { EvidenceService } from '../evidence/evidence.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import { FuelBatchesService } from './fuel-batches.service';
 import { lockAuthorAccess } from '../central-reporting/record-entities';
+import { deciderFor } from '../activity-records/record-approver';
 
 // The author's standing re-read under lock is proven against the database
 // (`test/int/fuel-batch-lifecycle.int.spec.ts`); here, only when it is asked.
 vi.mock('../central-reporting/record-entities', () => ({ lockAuthorAccess: vi.fn(async () => null) }));
+// The decider as the record cores verify it: the request's user unless a test says otherwise.
+vi.mock('../activity-records/record-approver', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../activity-records/record-approver')>()),
+  deciderFor: vi.fn(async (_tx: unknown, user: unknown) => user),
+}));
 
 /**
  * DB-free: the refusals the batch step owns (inc28-fuel-bulk D9; task 7.1) —
@@ -303,5 +309,17 @@ describe('a tanker declaration change is audited whole (WP9 PR B review, P2)', (
       },
       h.tx,
     );
+  });
+});
+
+describe('a batch decision’s audit row names the verified decider (second review of the branch, P2)', () => {
+  it('stamps the role the record cores verified in the transaction, not the request’s', async () => {
+    const submitted = batchOf({ status: 'submitted', submittedAt: SUBMITTED_AT, submissionCount: 1, createdBy: 'someone-else' });
+    const h = harness(submitted);
+    const requested = user('masterkey', 'r');
+    vi.mocked(deciderFor).mockImplementationOnce(async (_tx, u) => ({ ...u, role: 'super_admin' }));
+    await h.service.approve(requested, BATCH, SUBMITTED_AT.toISOString());
+    expect(deciderFor).toHaveBeenCalledWith(h.tx, requested, { createdBy: 'someone-else', subsidiaryId: COMPANY }, 'approve');
+    expect(h.audit.record).toHaveBeenCalledWith(expect.objectContaining({ role: 'super_admin' }), expect.objectContaining({ action: 'approve' }), h.tx);
   });
 });
