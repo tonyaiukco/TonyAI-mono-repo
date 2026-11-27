@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { judgeFuelBatch, type FuelBatchAnomalyInvoice, type FuelBatchAnomalyRecord } from './index';
+import { computeAnomalyVerdict, judgeFuelBatch, type FuelBatchAnomalyInvoice, type FuelBatchAnomalyRecord } from './index';
 
 /** inc28-fuel-bulk D12 (task 6.4): a fuel batch is checked per invoice and fuel. */
 
@@ -115,11 +115,26 @@ describe('judgeFuelBatch — an exactly 50% deviation is not flagged (fourth rev
       ];
       // Baseline 0.6; 0.3 and 0.9 are exactly 50% off it: not flagged.
       for (const value of [0.3, 0.9]) {
-        const verdict = judgeFuelBatch(invoice('now', 20250301, [record('x', 'on_road_diesel', value)]), history).x;
-        expect(verdict).toMatchObject({ anomalous: false, priorCount: 3, baseline: 0.6 });
+        const verdict = judgeFuelBatch(invoice('now', 20250301, [record('x', 'on_road_diesel', value)]), history).x!;
+        expect(verdict).toMatchObject({ anomalous: false, priorCount: 3 });
+        expect(verdict.baseline).toBeCloseTo(0.6, 12);
       }
       // Beyond it, flagged.
       expect(judgeFuelBatch(invoice('now', 20250301, [record('x', 'on_road_diesel', 0.95)]), history).x).toMatchObject({ anomalous: true });
+    }
+  });
+});
+
+describe('judgeFuelBatch and computeAnomalyVerdict judge alike just above 50% (fifth review of the branch, P3)', () => {
+  it('flags a single-record invoice exactly where the shared rule flags the same figures', () => {
+    const history = [
+      invoice('p1', 20250101, [record('a', 'on_road_diesel', 1000)]),
+      invoice('p2', 20250115, [record('b', 'on_road_diesel', 1000)]),
+      invoice('p3', 20250201, [record('c', 'on_road_diesel', 1000)]),
+    ];
+    for (const value of [1500, 1500.000000001, 1500.1, 499.999999999]) {
+      const batch = judgeFuelBatch(invoice('now', 20250301, [record('x', 'on_road_diesel', value)]), history).x!;
+      expect(batch.anomalous).toBe(computeAnomalyVerdict(value, [1000, 1000, 1000]).anomalous);
     }
   });
 });

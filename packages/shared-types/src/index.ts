@@ -6163,12 +6163,11 @@ export function judgeFuelBatch(
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       .map((r) => r.tCo2e)
       .filter((v): v is number => v !== null);
-    if (figures.length === 0) return null;
-    // An invoice's figure at 12 significant digits: a float sum's last-bit
-    // noise (0.1 + 0.2 + 0.3 = 0.6000000000000001) must not carry an exactly
-    // 50% deviation over the threshold, which flags only what exceeds it
-    // (fourth review of the branch, P2). Far below any figure's precision.
-    return Number(figures.reduce((sum, v) => sum + v, 0).toPrecision(12));
+    // The figure as summed; `computeAnomalyVerdict` compares the deviation at
+    // 12 decimals, so a sum's last-bit noise never carries an exactly-50%
+    // deviation over the threshold, and a batch and a manual record are judged
+    // by one comparison (fourth and fifth reviews of WP9 PR B).
+    return figures.length === 0 ? null : figures.reduce((sum, v) => sum + v, 0);
   };
   const verdicts: Record<string, AnomalyVerdict> = {};
   const fuels = [...new Set(batch.records.map((r) => fuelOfBatchActivityType(r.activityType)))];

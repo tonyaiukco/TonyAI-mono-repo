@@ -745,6 +745,21 @@ describe('SubsidiariesService', () => {
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
+    it('refuses the delete of a company that reported a fuel batch for another, its records gone (fifth review of WP9 PR B, P2)', async () => {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      fuel(prisma, {});
+      // Only a withdrawn batch of another company names it as its reporting company.
+      for (const db of [prisma, prisma.txClient]) {
+        db.fuelBatch.count.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => (where.reportedBySubsidiaryId !== undefined ? 1 : 0));
+      }
+      const e = await service.remove(makeMasterkey(), 'sub-1').catch((err: unknown) => err);
+      expect(e).toMatchObject({ response: { code: 'subsidiary_in_use' } });
+      expect((e as Error).message).toMatch(/1 record\(s\) of other companies/);
+      expect(prisma.txClient.fuelBatch.count).toHaveBeenCalledWith({ where: { reportedBySubsidiaryId: 'sub-1', subsidiaryId: { not: 'sub-1' } } });
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
     it('refuses the delete of a company a fuel account is mapped or proposed to, until the mapping goes', async () => {
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);

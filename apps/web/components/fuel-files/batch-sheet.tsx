@@ -104,7 +104,7 @@ export function BatchSheet({
         const detail = await load(id, token);
         if (!detail) return;
         // Only the batch still open, at the submission it shows, and once per submission.
-        if (takeIntoReview && takesIntoReview(detail, viewer, opened.current)) {
+        if (takeIntoReview && isCurrent(token) && takesIntoReview(detail, viewer, opened.current)) {
           const key = reviewKey(detail);
           opened.current.add(key);
           // A failed take is not a taken one: reopening the batch tries again.
@@ -121,6 +121,11 @@ export function BatchSheet({
         if (isCurrent(token)) showError(error);
       }
     })();
+    // Leaving (another batch, the sheet closed, the page left): this opening's
+    // late answers are dropped, and none takes a batch into review unseen (fifth review, P2).
+    return () => {
+      if (opening.current === token) opening.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchId]);
 

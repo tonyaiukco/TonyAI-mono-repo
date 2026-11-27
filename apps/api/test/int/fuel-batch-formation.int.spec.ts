@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -414,6 +414,32 @@ describe('later rows, the tray, the reporting company and the holder (task 6.3)'
     expect((await batchService().list(mk, {})).find((d) => d.id === byReporter!.id)).toMatchObject({ status: 'withdrawn', reportingSubsidiaryId: T() });
   });
 
+  it('moves the batch’s reporting company with its records when a rebuild writes them under a moved main company (fifth review, P2)', async () => {
+    const reporter = await centralReporter();
+    await confirmed('MV', S());
+    const up = await upload(reporter, sales([['MV-1', 'MV', '03.03.2025', 'Motorin', 10, 'OZK-MV']]));
+    await services().formation.formBatches(reporter, up.id);
+    const [batch] = await batchesOf();
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id: batch!.id } })).reportedBySubsidiaryId).toBe(T());
+    // The reporter's main company moves from T to a new company U.
+    const u = await owner.subsidiary.create({
+      data: { organisationId: tenant.organisationId, legalName: `Int-test U ${randomUUID().slice(0, 6)}`, geographyCode: 'TR', nodeType: 'company', parentId: S(), control: 'controlled' },
+    });
+    await owner.userSubsidiaryAccess.delete({ where: { userId_subsidiaryId: { userId: reporter.id, subsidiaryId: T() } } });
+    await owner.userSubsidiaryAccess.create({ data: { userId: reporter.id, subsidiaryId: u.id, organisationId: tenant.organisationId, kind: 'assigned', categories: ['Water'] } });
+    const moved: RequestUser = {
+      ...reporter,
+      accessibleSubsidiaryIds: [u.id, S()],
+      categoryGrants: { [u.id]: ['Water'], [S()]: ['Mobile Combustion'] },
+      grantKinds: { [u.id]: 'assigned', [S()]: 'central_reporter' },
+    };
+    // A declaration change rebuilds the records (on-road to off-road): they are written for U now, and so is the header.
+    await batchService().changeDeclarations(moved, batch!.id, { usage: 'off_road' });
+    expect((await recordsOf(batch!.id)).map((r) => r.reportedBySubsidiaryId)).toEqual([u.id]);
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id: batch!.id } })).reportedBySubsidiaryId).toBe(u.id);
+    expect((await batchService().list(moved, {})).find((d) => d.id === batch!.id)).toMatchObject({ reportingSubsidiaryId: u.id });
+  });
+
   it('holds a central reporter’s rows for a month the company’s own user entered, with the single-entry conflict', async () => {
     await createRecord(runtime, tenant, {
       category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres', periodValue: 'March', reportingYear: 2025,
@@ -438,6 +464,18 @@ describe('later rows, the tray, the reporting company and the holder (task 6.3)'
       formedBatches: 0, held: [{ reason: 'fuel_out_of_scope', rows: 1 }],
     });
     expect(await batchesOf()).toEqual([]);
+  });
+
+  it('holds an invoice of any size in one statement: 50,000 judged rows pass no parameter limit (fifth review, P2)', async () => {
+    await confirmed('BIG', S());
+    const up = await upload(tenant.users.superAdmin, sales([['BIG-1', 'BIG', '03.03.2025', 'Motorin', 10, 'OZK-BIG']]));
+    const row = await owner.fuelRow.findFirstOrThrow({ where: { importBatchId: up.id } });
+    const ids = [row.id, ...Array.from({ length: 49_999 }, () => randomUUID())];
+    const formation = services().formation as unknown as {
+      holdGroup: (importId: string, holderId: string, reason: string, judged: { rowIds: string[]; subsidiaryId: string | null }) => Promise<void>;
+    };
+    await formation.holdGroup(up.id, tenant.users.superAdmin.id, 'fuel_out_of_scope', { rowIds: ids, subsidiaryId: S() });
+    expect((await owner.fuelRow.findUniqueOrThrow({ where: { id: row.id } })).holdReason).toBe('fuel_out_of_scope');
   });
 
   it('holds only the rows its refusal judged: a mapping changed meanwhile keeps its rows ready (fourth review of the branch, P2)', async () => {

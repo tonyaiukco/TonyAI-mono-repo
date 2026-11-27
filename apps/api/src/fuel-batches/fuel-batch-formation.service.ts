@@ -136,7 +136,7 @@ export class FuelBatchFormationService {
         if (outcome === 'formed') formedBatches += 1;
         if (outcome === 'joined') joinedBatches += 1;
       } catch (error) {
-        await this.holdGroup(upload.id, user.id, key, holdReasonOf(error), judged);
+        await this.holdGroup(upload.id, user.id, holdReasonOf(error), judged);
       }
     }
 
@@ -168,23 +168,20 @@ export class FuelBatchFormationService {
   }
 
   /** The group's rows held with the reason, in a small transaction of their own (D8). */
-  private async holdGroup(importId: string, holderId: string, key: GroupKey, reason: FuelHoldReason, judged: JudgedGroup): Promise<void> {
-    await this.prisma.fuelRow.updateMany({
-      where: {
-        importBatchId: importId,
-        holderId,
-        fuelAccountId: key.accountId,
-        invoiceRef: key.invoiceRef,
-        usage: key.usage,
-        state: 'ready',
-        // Only the rows the refused transaction judged, and only while still
-        // under the company it judged them under: a mapping changed since
-        // re-stated them itself and they are not this refusal's to hold
-        // (fourth review of the branch, P2).
-        ...(judged.rowIds ? { id: { in: judged.rowIds }, subsidiaryId: judged.subsidiaryId ?? null } : {}),
-      },
-      data: { state: 'held', holdReason: reason },
-    });
+  private async holdGroup(importId: string, holderId: string, reason: FuelHoldReason, judged: JudgedGroup): Promise<void> {
+    // A refusal before any row was read (a lock or connection timed out) judged
+    // nothing: the rows stay ready for the next step (fifth review, P2).
+    if (!judged.rowIds || judged.rowIds.length === 0) return;
+    // Only the rows the refused transaction judged, and only while still ready
+    // under the company it judged them under: a mapping changed since
+    // re-stated them itself and they are not this refusal's to hold (fourth
+    // review). One uuid[] parameter, so an invoice of any size is one statement
+    // (fifth review: 44,902 ids as one parameter each passed PostgreSQL's
+    // 32,767-parameter limit).
+    await this.prisma.$executeRaw`
+      UPDATE fuel_rows SET state = 'held', hold_reason = ${reason}, updated_at = now()
+       WHERE id = ANY(${judged.rowIds}::uuid[]) AND import_batch_id = ${importId}::uuid AND holder_id = ${holderId}::uuid
+         AND state = 'ready' AND subsidiary_id IS NOT DISTINCT FROM ${judged.subsidiaryId ?? null}::uuid`;
   }
 
   /** One group, whole or not at all; `judged` names the rows it judged and their company. */

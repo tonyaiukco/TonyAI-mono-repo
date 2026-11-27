@@ -109,29 +109,35 @@ export function UploadTab({ onApplied }: { onApplied: () => void }) {
         declarations: isFuelCardSource(source) ? undefined : declarationsOf(preview, choices)!,
       });
       toast.success(t("upload.applied", { rows: formatNumber(upload.rowsRead - upload.rowsRefused - upload.rowsDuplicate, locale) }));
-      if (!formsAfterApply(upload)) {
-        // Nothing to form now: every row already stored, waiting or excluded.
-        toast.info(t("upload.nothingToForm"));
-        setPreview(null);
-        setFile(null);
-        if (input.current) input.current.value = "";
-        onApplied();
-        return;
-      }
-      setBusy("forming");
-      setFormed({ formed: 0, joined: 0 });
-      const out = await formUntilDone(
-        () => api.formFuelBatches(upload.id),
-        (step) => {
-          setResult(step);
-          setFormed((f) => ({ formed: f.formed + step.formedBatches, joined: f.joined + step.joinedBatches }));
-        },
-      );
-      toast.success(t("upload.formed", { formed: formatNumber(out.formed, locale), joined: formatNumber(out.joined, locale) }));
+      // The upload is stored: the file goes, so nothing can apply it twice — a
+      // forming failure below is continued from the Uploads tab, on this upload
+      // (fifth review of the branch, P2).
       setPreview(null);
       setFile(null);
       if (input.current) input.current.value = "";
       onApplied();
+      if (!formsAfterApply(upload)) {
+        // Nothing to form now: every row already stored, waiting or excluded.
+        toast.info(t("upload.nothingToForm"));
+        return;
+      }
+      setBusy("forming");
+      setFormed({ formed: 0, joined: 0 });
+      try {
+        const out = await formUntilDone(
+          () => api.formFuelBatches(upload.id),
+          (step) => {
+            setResult(step);
+            setFormed((f) => ({ formed: f.formed + step.formedBatches, joined: f.joined + step.joinedBatches }));
+          },
+        );
+        toast.success(t("upload.formed", { formed: formatNumber(out.formed, locale), joined: formatNumber(out.joined, locale) }));
+      } catch (error) {
+        showError(error);
+        toast.info(t("upload.formFromUploads"));
+      } finally {
+        onApplied();
+      }
     } catch (error) {
       showError(error);
     } finally {

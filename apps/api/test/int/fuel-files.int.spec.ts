@@ -274,6 +274,16 @@ describe('applying a fuel file (task 5.1)', () => {
     expect(await owner.fuelAccount.count({ where: { organisationId: tenant.organisationId, code: 'INT-LATE' } })).toBe(0);
   });
 
+  it('answers an apply with the caller’s scope as it stands after the write: a grant withdrawn meanwhile counts none of its rows (fifth review, P2)', async () => {
+    await confirmedAccount('INT-GONE', tenant.subsidiaryId);
+    const superAdmin = tenant.users.superAdmin;
+    // The request still names the company; the grant is gone before the answer is read.
+    await owner.userSubsidiaryAccess.deleteMany({ where: { userId: superAdmin.id } });
+    const answer = await apply(superAdmin, salesList('INT-GONE', 3));
+    expect(await rowsOf()).toHaveLength(3);
+    expect(Object.values(answer.rows).reduce((n, c) => n + c.rows, 0)).toBe(0);
+  });
+
   it('refuses an auditor and stores nothing', async () => {
     const file = salesList('INT-E', 1);
     const error = await apply(tenant.users.auditor, file).catch((e: unknown) => e);

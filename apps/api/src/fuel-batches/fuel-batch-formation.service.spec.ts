@@ -81,6 +81,16 @@ function harness(source: string, groups: Group[], options: { refuse?: Error; ope
       }),
     },
     $queryRaw: vi.fn(async () => groups.map(({ account_id, invoice_ref, usage }) => ({ account_id, invoice_ref, usage }))),
+    // The hold after a refusal: one statement, the judged ids as one array.
+    $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      if (sqlOf(strings).includes("state = 'held'")) {
+        holds.push({
+          where: { id: values[1], importBatchId: values[2], holderId: values[3], subsidiaryId: values[4] },
+          data: { state: 'held', holdReason: values[0] },
+        });
+      }
+      return 1;
+    }),
     $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => {
       current = groups[(prisma.$transaction.mock.calls.length - 1) % groups.length]!;
       return fn(tx);
@@ -180,7 +190,7 @@ describe('FuelBatchFormationService — one group, one batch (task 6.3)', () => 
     expect(h.holds).toEqual([
       {
         // Only the rows the refused transaction judged, under the company it judged them under (fourth review, P2).
-        where: { importBatchId: UPLOAD, holderId: holder.id, fuelAccountId: 'acc-a', invoiceRef: 'OZK-3', usage: 'on_road', state: 'ready', id: { in: ['1'] }, subsidiaryId: A },
+        where: { id: ['1'], importBatchId: UPLOAD, holderId: holder.id, subsidiaryId: A },
         data: { state: 'held', holdReason: 'period_locked' },
       },
     ]);
@@ -227,5 +237,15 @@ describe('holdReasonOf — a record refusal as the rows’ hold reason (D8 row 6
     [new Error('boom'), 'unexpected'],
   ])('%#: answers %s', (error, reason) => {
     expect(holdReasonOf(error)).toBe(reason);
+  });
+});
+
+describe('FuelBatchFormationService — a refusal before any row was read (fifth review of the branch, P2)', () => {
+  it('holds nothing when the group failed before judging a row, so its rows stay ready', async () => {
+    const h = harness('petrol_ofisi', [{ account_id: 'acc-a', invoice_ref: 'OZK-T', usage: 'on_road', company: A, rows: [row('1', 'diesel', 3, '10.00')] }]);
+    // The advisory lock times out: nothing was read.
+    h.tx.$executeRaw.mockRejectedValueOnce(new Error('lock timeout'));
+    await h.service.formBatches(holder, UPLOAD);
+    expect(h.holds).toEqual([]);
   });
 });

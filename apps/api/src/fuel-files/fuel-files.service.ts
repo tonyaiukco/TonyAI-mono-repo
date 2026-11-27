@@ -233,7 +233,12 @@ export class FuelFilesService {
       return batch.id;
     }, APPLY_TX);
 
-    return this.uploads.detail(user, importId);
+    // The stored upload as the caller reads it now, after a long apply: a company
+    // withdrawn meanwhile is not counted in its answer (fifth review, P2). The
+    // upload is stored either way, so a caller whose standing changed is answered
+    // with no company's rows rather than refused — never retried as a new upload.
+    const reader = await this.currentReader(user).catch(() => ({ ...user, accessibleSubsidiaryIds: [], categoryGrants: {} }));
+    return this.uploads.detail(reader, importId);
   }
 
   /**

@@ -157,6 +157,9 @@ export function createPrismaMock() {
       client.inventoryBoundarySite,
       client.subsidiary,
       client.userSubsidiaryAccess,
+      client.fuelRow,
+      client.fuelBatch,
+      client.fuelAccount,
     ]) {
       model.count.mockResolvedValue(0);
     }

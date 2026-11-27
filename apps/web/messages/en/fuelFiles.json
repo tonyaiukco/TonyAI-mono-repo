@@ -102,7 +102,8 @@
     "held": "Held rows, by reason",
     "waiting": "Waiting rows",
     "nothingToForm": "Nothing new to form: the file's rows are already stored, wait in Unmatched or are excluded.",
-    "showMoreIssues": "Show more"
+    "showMoreIssues": "Show more",
+    "formFromUploads": "The file is stored. Form its batches from the Uploads tab (“Form batches”); do not upload it again."
   },
   "uploads": {
     "title": "Uploads",
