@@ -10,6 +10,8 @@ import enUnits from '../apps/web/messages/en/units.json';
 import enEvidence from '../apps/web/messages/en/evidence.json';
 import enErrors from '../apps/web/messages/en/errors.json';
 import enReview from '../apps/web/messages/en/review.json';
+import enFuel from '../apps/web/messages/en/fuelFiles.json';
+import trFuel from '../apps/web/messages/tr/fuelFiles.json';
 import {
   API_BASE,
   E2E_TR_INPUTS,
@@ -31,7 +33,7 @@ import {
 
 /**
  * LP4-02 PR4: the Data Entry forms of the TR rules, one flow each — natural gas
- * with a billed GCV, a refrigerant on its alternative leak rate, a vehicle mode,
+ * with a billed GCV, a refrigerant on its alternative leak rate, a fuel and usage,
  * marine gas oil by mass (UAT2 BUG-R2-11) and gas-network leakage — priced from
  * a fixture release (`seedTrInputsFixture`),
  * never the TR package.
@@ -55,6 +57,23 @@ async function openForm(page: Page, category: keyof typeof enCategories): Promis
   await pickByFieldLabel(page, en.category, enCategories[category]);
   await pickByFieldLabel(page, en.reportingYear, String(E2E_TR_INPUTS_YEAR));
 }
+
+/**
+ * A TR Mobile Combustion record is chosen as a fuel and a usage (inc28-fuel-bulk
+ * D6), never one "vehicle mode" select: the fixture's on-road diesel is Diesel
+ * + On-road, and marine gas oil takes its one usage by itself.
+ */
+async function pickFuel(page: Page, fuel: string, usage?: string): Promise<void> {
+  await page.getByTestId('fuel-pair-fuel').click();
+  await page.getByRole('option', { name: fuel, exact: true }).click();
+  await expect(page.getByRole('option', { name: fuel, exact: true })).toBeHidden();
+  if (usage === undefined) return;
+  await page.getByTestId('fuel-pair-usage').click();
+  await page.getByRole('option', { name: usage, exact: true }).click();
+  await expect(page.getByRole('option', { name: usage, exact: true })).toBeHidden();
+}
+const onRoadDiesel = (page: Page) => pickFuel(page, enFuel.fuels.diesel, enFuel.usages.on_road);
+const marineGasOil = (page: Page) => pickFuel(page, enFuel.fuels.marine_gas_oil);
 
 /** The draft the flow saved, read back through the API, then deleted. */
 async function readAndDelete(
@@ -165,11 +184,11 @@ for (const rate of ['default', 'alternative'] as const) {
   });
 }
 
-test('mobile combustion: a TR record names its vehicle mode, in litres', async ({ page, request }) => {
+test('mobile combustion: a TR record names its fuel and usage, in litres', async ({ page, request }) => {
   await openForm(page, 'Mobile Combustion');
   await pickByFieldLabel(page, en.period, enPeriods.granularity.quarterly);
   await pickByFieldLabel(page, en.periodValue, enPeriods.values.Q3);
-  await pickByFieldLabel(page, en.vehicleMode, en.activityTypes[E2E_TR_INPUTS.mode]);
+  await onRoadDiesel(page);
   await page.getByPlaceholder(en.activityValuePlaceholder).fill('100');
   // 100 L × 3 = 300 kg.
   await expect(page.getByTestId('preview-tco2e')).toHaveText('0.3');
@@ -186,7 +205,8 @@ test('mobile combustion: TR marine gas oil is entered by mass, with its Scope 1 
   await openForm(page, 'Mobile Combustion');
   await pickByFieldLabel(page, en.period, enPeriods.granularity.quarterly);
   await pickByFieldLabel(page, en.periodValue, enPeriods.values.Q4);
-  await pickByFieldLabel(page, en.vehicleMode, en.activityTypes[E2E_TR_INPUTS.marineGasOil]);
+  await marineGasOil(page);
+  await expect(page.getByTestId('fuel-pair-marine')).toHaveText(enFuel.usages.marine);
   await expect(page.getByText(en.inputs.marineGasOilScope)).toBeVisible();
   // The unit follows the type: kg first, then tonnes; never litres.
   const unit = page.getByRole('combobox', { name: en.unit, exact: true });
@@ -207,64 +227,77 @@ test('mobile combustion: TR marine gas oil is entered by mass, with its Scope 1 
   });
 });
 
-test('mobile combustion: switching MGO to a vehicle mode clears the typed mass, never re-reads it as litres (UAT2 BUG-R2-11)', async ({ page }) => {
+test('mobile combustion: switching MGO to on-road diesel clears the typed mass, never re-reads it as litres (UAT2 BUG-R2-11)', async ({ page }) => {
   await openForm(page, 'Mobile Combustion');
-  await pickByFieldLabel(page, en.vehicleMode, en.activityTypes[E2E_TR_INPUTS.marineGasOil]);
+  await marineGasOil(page);
   const unit = page.getByRole('combobox', { name: en.unit, exact: true });
   const quantity = page.getByPlaceholder(en.activityValuePlaceholder);
   await expect(unit).toHaveText(enUnits.label.kg);
   await quantity.fill('1.5');
-  await pickByFieldLabel(page, en.vehicleMode, en.activityTypes[E2E_TR_INPUTS.mode]);
+  await onRoadDiesel(page);
   await expect(unit).toHaveText(enUnits.label.litres);
   await expect(quantity).toHaveValue('');
   await expect(page.getByText(en.inputs.marineGasOilScope)).toHaveCount(0);
 });
 
-test('mobile combustion: an opened draft keeps its own unit until its type changes, then narrows both ways (UAT2 BUG-R2-11)', async ({ page, request }) => {
+/** A Mobile Combustion draft of the entry user in the lane, through the API; answers its id. */
+async function mobileDraft(request: APIRequestContext, periodValue: string, activityType: string, activityValue: number, activityUnit: string): Promise<string> {
   const token = await getAccessToken(request, ENTRY_EMAIL);
-  const draft = async (periodValue: string, activityType: string, activityValue: number, activityUnit: string) => {
-    const res = await request.post(`${API_BASE}/activity-records`, {
-      headers: bearer(token),
-      data: {
-        subsidiaryId: SUB.logistics, locationId: null, reportingYear: E2E_TR_INPUTS_YEAR, reportingPeriod: 'quarterly',
-        periodValue, category: 'Mobile Combustion', activityType, activityValue, activityUnit, varianceReason: null, input: null,
-      },
-    });
-    expect(res.status()).toBe(201);
-    return (await res.json()).id as string;
-  };
-  const ids = [
-    await draft('Q1', E2E_TR_INPUTS.mode, 100, 'litres'),
-    await draft('Q2', E2E_TR_INPUTS.marineGasOil, 2, 'tonnes'),
-  ];
+  const res = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUB.logistics, locationId: null, reportingYear: E2E_TR_INPUTS_YEAR, reportingPeriod: 'quarterly',
+      periodValue, category: 'Mobile Combustion', activityType, activityValue, activityUnit, varianceReason: null, input: null,
+    },
+  });
+  expect(res.status()).toBe(201);
+  return (await res.json()).id as string;
+}
+
+async function openDraft(page: Page, periodValue: string): Promise<void> {
+  await page.goto(`/data-entry?subsidiaryId=${SUB.logistics}&category=Mobile%20Combustion&year=${E2E_TR_INPUTS_YEAR}`);
+  await page.getByRole('button', { name: new RegExp(`^${periodValue} ${E2E_TR_INPUTS_YEAR}`) }).click();
+  await expect(page.getByText(/Editing draft/)).toBeVisible();
+}
+
+async function deleteDraft(request: APIRequestContext, id: string): Promise<void> {
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const removed = await request.delete(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
+  expect(removed.ok()).toBe(true);
+}
+
+test('mobile combustion: an opened MGO draft keeps its own tonnes until its fuel changes; on-road diesel then takes litres and drops the mass (UAT2 BUG-R2-11)', async ({ page, request }) => {
+  const id = await mobileDraft(request, 'Q2', E2E_TR_INPUTS.marineGasOil, 2, 'tonnes');
   try {
     await login(page, ENTRY_EMAIL);
     const unit = page.getByRole('combobox', { name: en.unit, exact: true });
-    const quantity = page.getByPlaceholder(en.activityValuePlaceholder);
-    const open = async (periodValue: string) => {
-      await page.goto(`/data-entry?subsidiaryId=${SUB.logistics}&category=Mobile%20Combustion&year=${E2E_TR_INPUTS_YEAR}`);
-      await page.getByRole('button', { name: new RegExp(`^${periodValue} ${E2E_TR_INPUTS_YEAR}`) }).click();
-      await expect(page.getByText(/Editing draft/)).toBeVisible();
-    };
-
-    // A vehicle-mode draft opens on its own litres; MGO then takes kg and drops the litres.
-    await open('Q1');
-    await expect(unit).toHaveText(enUnits.label.litres);
-    await pickByFieldLabel(page, en.vehicleMode, en.activityTypes[E2E_TR_INPUTS.marineGasOil]);
-    await expect(unit).toHaveText(enUnits.label.kg);
-    await expect(quantity).toHaveValue('');
-
-    // An MGO draft opens on its own tonnes; a vehicle mode then takes litres and drops the mass.
-    await open('Q2');
+    await openDraft(page, 'Q2');
     await expect(unit).toHaveText(enUnits.label.tonnes);
-    await pickByFieldLabel(page, en.vehicleMode, en.activityTypes[E2E_TR_INPUTS.mode]);
+    await expect(page.getByTestId('fuel-pair-marine')).toHaveText(enFuel.usages.marine);
+    await onRoadDiesel(page);
     await expect(unit).toHaveText(enUnits.label.litres);
-    await expect(quantity).toHaveValue('');
+    await expect(page.getByPlaceholder(en.activityValuePlaceholder)).toHaveValue('');
   } finally {
-    for (const id of ids) {
-      const removed = await request.delete(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
-      expect(removed.ok()).toBe(true);
-    }
+    await deleteDraft(request, id);
+  }
+});
+
+// Regression guard (UAT2 BUG-R2-11, met again by inc28-fuel-bulk's fuel and usage controls and
+// fixed in `choosePair`): marine gas oil over a litres figure drops the figure, never re-reads it as kg.
+test('mobile combustion: an opened on-road diesel draft keeps its own litres; marine gas oil then takes kg and drops the litres (UAT2 BUG-R2-11)', async ({ page, request }) => {
+  const id = await mobileDraft(request, 'Q1', E2E_TR_INPUTS.mode, 100, 'litres');
+  try {
+    await login(page, ENTRY_EMAIL);
+    const unit = page.getByRole('combobox', { name: en.unit, exact: true });
+    await openDraft(page, 'Q1');
+    await expect(unit).toHaveText(enUnits.label.litres);
+    await expect(page.getByTestId('fuel-pair-fuel')).toHaveText(enFuel.fuels.diesel);
+    await expect(page.getByTestId('fuel-pair-usage')).toHaveText(enFuel.usages.on_road);
+    await marineGasOil(page);
+    await expect(unit).toHaveText(enUnits.label.kg);
+    await expect(page.getByPlaceholder(en.activityValuePlaceholder)).toHaveValue('');
+  } finally {
+    await deleteDraft(request, id);
   }
 });
 
@@ -287,7 +320,8 @@ test('mobile combustion: a Turkish profile reads marine gas oil and its boundary
     await page.goto('/data-entry');
     await pickByFieldLabel(page, tr.subsidiary, SUBSIDIARY);
     await pickByFieldLabel(page, tr.category, trCategories['Mobile Combustion']);
-    await pickByFieldLabel(page, tr.vehicleMode, tr.activityTypes.marine_gas_oil);
+    await pickFuel(page, trFuel.fuels.marine_gas_oil);
+    await expect(page.getByTestId('fuel-pair-marine')).toHaveText(trFuel.usages.marine);
     await expect(page.getByText(tr.inputs.marineGasOilScope)).toBeVisible();
   } finally {
     await setLanguage('en');
@@ -315,7 +349,7 @@ test('evidence: a new mobile record submitted without a file stays open on its d
   await openForm(page, 'Mobile Combustion');
   await pickByFieldLabel(page, en.period, enPeriods.granularity.quarterly);
   await pickByFieldLabel(page, en.periodValue, enPeriods.values.Q1);
-  await pickByFieldLabel(page, en.vehicleMode, en.activityTypes[E2E_TR_INPUTS.mode]);
+  await onRoadDiesel(page);
   await page.getByPlaceholder(en.activityValuePlaceholder).fill('100');
   await expect(page.getByTestId('preview-tco2e')).toHaveText('0.3');
 

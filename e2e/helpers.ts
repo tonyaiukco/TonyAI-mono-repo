@@ -1813,3 +1813,193 @@ export async function deleteCompanyWithFacilities(
   }
   return (await request.delete(`${API_BASE}/subsidiaries/${subsidiaryId}`, { headers: bearer(token) })).status();
 }
+
+// --- Fuel bulk (inc28-fuel-bulk) --------------------------------------------
+
+/**
+ * The provider fuel files the API's own tests generate
+ * (`apps/api/test/fixtures/fuel/generate.ts` documents what each holds),
+ * referenced by path rather than copied. The Petrol Ofisi list's 2025 March
+ * rows: `PO-0001` (seeded confirmed to TonyAI Logistics; 16 rows, 1,837.38 L
+ * over invoices `OZK0000000000001` and `…0002`), `PO-9001` (seeded confirmed
+ * to the associate; 4 rows, 80 L, excluded), `000456` (no account yet;
+ * 1 row, 19.63 L), one row repeated and one with no invoice number. The
+ * tanker file: five deliveries under a title row, and a `TOPLAM` row.
+ */
+export const FUEL_FIXTURES = {
+  petrolOfisi: resolve(__dirname, '../apps/api/test/fixtures/fuel/petrol-ofisi-satislistesi.xlsx'),
+  tanker: resolve(__dirname, '../apps/api/test/fixtures/fuel/tanker-alimlari.xlsx'),
+} as const;
+
+/** The seed's two fuel accounts (`packages/db/prisma/seed.ts`): kept by every fuel teardown. */
+export const SEED_FUEL_ACCOUNT_IDS = ['55555555-5555-5555-5555-5555555f0001', '55555555-5555-5555-5555-5555555f0002'] as const;
+
+/** A fuel batch as `GET /fuel-batches/:id` answers it (the fields the specs read). */
+export interface FuelBatchRead {
+  id: string;
+  subsidiaryId: string;
+  accountCode: string;
+  invoiceRef: string;
+  usage: string;
+  category: string;
+  status: string;
+  createdBy: string;
+  approver: string | null;
+  submittedAt: string | null;
+  submissionCount: number;
+  rowCount: number;
+  litres: string;
+  tCo2e: number | null;
+  evidenceCount: number;
+  records?: Array<{ id: string; reportingYear: number; month: number; activityType: string; status: string; litres: string; tCo2e: number | null }>;
+  evidence?: Array<{ id: string; fileName: string }>;
+}
+
+/** The fuel batches `token`'s user reads, under the list's filters. */
+export async function listFuelBatches(
+  request: APIRequestContext,
+  token: string,
+  filters: Record<string, string> = {},
+): Promise<FuelBatchRead[]> {
+  const res = await request.get(`${API_BASE}/fuel-batches?${new URLSearchParams(filters)}`, { headers: bearer(token) });
+  if (!res.ok()) throw new Error(`list fuel batches: ${res.status()} ${await res.text()}`);
+  return res.json();
+}
+
+/** One fuel batch with its records and files. */
+export async function getFuelBatch(request: APIRequestContext, token: string, id: string): Promise<FuelBatchRead> {
+  const res = await request.get(`${API_BASE}/fuel-batches/${id}`, { headers: bearer(token) });
+  if (!res.ok()) throw new Error(`read fuel batch ${id}: ${res.status()} ${await res.text()}`);
+  return res.json();
+}
+
+/**
+ * Remove every fuel upload of the seed organisation and what it made, leaving
+ * the seed's two accounts as seeded: the batches' records (each inside a step
+ * that declares its batch for the transaction — TA029 refuses even the owner
+ * otherwise, as `apps/api/test/int/db.ts` does it), the rows (replacements
+ * before what they replace), the batches, the accounts first seen by an
+ * upload, and the fuel imports. The files the records held are read first and
+ * deleted once no record links them. Owner and service role, local only.
+ */
+export async function cleanupFuelData(request: APIRequestContext): Promise<void> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const files = await evidenceFilesFor(
+    request,
+    'select=id,storage_path,activity_record_evidence!inner(activity_records!inner(id))' +
+      '&activity_record_evidence.activity_records.fuel_batch_id=not.is.null',
+  );
+  await withOwner(async (owner) => {
+    const [org] = await owner.$queryRawUnsafe<Array<{ id: string }>>(
+      'SELECT organisation_id::text AS id FROM subsidiaries WHERE id = $1::uuid',
+      SUB.energy,
+    );
+    if (!org) throw new Error('cleanupFuelData: the seed organisation is missing');
+    const batches = await owner.$queryRawUnsafe<Array<{ id: string }>>(
+      'SELECT id::text AS id FROM fuel_batches WHERE organisation_id = $1::uuid',
+      org.id,
+    );
+    for (const { id } of batches) {
+      await owner.$transaction(async (tx) => {
+        await tx.$queryRawUnsafe(
+          `SELECT set_config('tonyai.fuel_batch_step', $1::text || ':' || pg_current_xact_id()::text, true)`,
+          id,
+        );
+        await tx.$executeRawUnsafe('DELETE FROM activity_records WHERE fuel_batch_id = $1::uuid', id);
+      });
+    }
+    for (;;) {
+      const removed = await owner.$executeRawUnsafe(
+        `DELETE FROM fuel_rows r WHERE r.organisation_id = $1::uuid
+           AND NOT EXISTS (SELECT 1 FROM fuel_rows x WHERE x.replaces_id = r.id)`,
+        org.id,
+      );
+      if (removed === 0) break;
+    }
+    await owner.$executeRawUnsafe('DELETE FROM fuel_batches WHERE organisation_id = $1::uuid', org.id);
+    await owner.$executeRawUnsafe(
+      'DELETE FROM fuel_accounts WHERE organisation_id = $1::uuid AND NOT (id = ANY($2::uuid[]))',
+      org.id,
+      [...SEED_FUEL_ACCOUNT_IDS],
+    );
+    await owner.$executeRawUnsafe(
+      `DELETE FROM import_batches WHERE organisation_id = $1::uuid AND source IN ('shell', 'petrol_ofisi', 'tanker')`,
+      org.id,
+    );
+  });
+  reportCleanup(await removeUnlinkedEvidence(request, files));
+}
+
+/**
+ * A TR fixture release pricing the fuel-and-usage pairs (inc28-fuel-bulk D6)
+ * in 2025 — the provider files' year — and in `E2E_YEAR`, the Data Entry
+ * lane. CI's database holds no Türkiye release, so without it every fuel row
+ * would be held `no_factor`; a local database holding the authoritative TR
+ * release prices from that one instead, since a fixture ranks below every
+ * other status. The specs therefore read each figure back from the API and
+ * never assert a factor.
+ *
+ * **None of these numbers is an emission factor**: round values, labelled a
+ * test fixture in every field, removed by `cleanupFuelFactorFixture`.
+ */
+export const E2E_FUEL_FACTOR_EDITION = '0000-E2E-FUEL-BULK';
+const FUEL_FIXTURE_SOURCE = 'E2E FIXTURE — not a real emission factor, not for reporting';
+
+export async function seedFuelFactorFixture(): Promise<void> {
+  await cleanupFuelFactorFixture();
+  const rows = [
+    ['Mobile Combustion', 'on_road_diesel', 3, 'kgCO2e/litre', 'litres'],
+    ['Mobile Combustion', 'off_road_diesel', 4, 'kgCO2e/litre', 'litres'],
+    ['Mobile Combustion', 'on_road_petrol', 2, 'kgCO2e/litre', 'litres'],
+    ['Mobile Combustion', 'off_road_petrol', 5, 'kgCO2e/litre', 'litres'],
+    ['Mobile Combustion', 'on_road_lpg', 1.5, 'kgCO2e/litre', 'litres'],
+    ['Mobile Combustion', 'marine_gas_oil', 3, 'kgCO2e/kg', 'kg'],
+    ['Fuel', 'diesel', 3, 'kgCO2e/litre', 'litres'],
+    ['Fuel', 'petrol', 2, 'kgCO2e/litre', 'litres'],
+    ['Fuel', 'lpg', 3, 'kgCO2e/kg', 'kg'],
+  ] as const;
+  await withOwner((owner) =>
+    owner.$transaction(async (tx) => {
+      const id = randomUUID();
+      await tx.$executeRawUnsafe(
+        `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, notes)
+         SELECT $1::uuid, $2, 'End-to-end test fixture: TR fuel and usage pairs', $3, COALESCE(max(ordinal), 0) + 1, 'fixture',
+                'Written by the e2e suite and deleted by its teardown. Not a source.'
+           FROM factor_releases WHERE publisher = $2`,
+        id,
+        E2E_FIXTURE_PUBLISHER,
+        E2E_FUEL_FACTOR_EDITION,
+      );
+      for (const year of [2025, E2E_YEAR]) {
+        for (const [category, activityType, value, factorUnit, normalizedUnit] of rows) {
+          await tx.$executeRawUnsafe(
+            `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year,
+               data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+             VALUES (gen_random_uuid(), $1::uuid, $2, $3, 'CO2e', 'all_ghg', 'TR', $4, $4, 1, 'not_applicable', 'not_applicable', $5, $6, $7,
+                     'E2E fixture — not a methodology', $8, $9, now())`,
+            id, category, activityType, year, value, factorUnit, normalizedUnit, FUEL_FIXTURE_SOURCE, E2E_FUEL_FACTOR_EDITION,
+          );
+        }
+      }
+      await tx.$executeRawUnsafe('UPDATE factor_releases SET sealed_at = now() WHERE id = $1::uuid', id);
+    }),
+  );
+}
+
+/** Remove the fuel fixture release, its factors first (the release key RESTRICTs). */
+export async function cleanupFuelFactorFixture(): Promise<void> {
+  await withOwner((owner) =>
+    owner.$transaction(async (tx) => {
+      const releases = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT id::text FROM factor_releases WHERE status = 'fixture' AND publisher = $1 AND edition = $2`,
+        E2E_FIXTURE_PUBLISHER,
+        E2E_FUEL_FACTOR_EDITION,
+      );
+      for (const { id } of releases) {
+        await tx.$executeRawUnsafe('DELETE FROM emission_factors WHERE release_id = $1::uuid', id);
+        await tx.$executeRawUnsafe('DELETE FROM factor_releases WHERE id = $1::uuid', id);
+      }
+    }),
+  );
+}

@@ -1,5 +1,7 @@
 import { request as playwrightRequest } from '@playwright/test';
 import {
+  cleanupFuelData,
+  cleanupFuelFactorFixture,
   cleanupQuarterly,
   cleanupE2ELocations,
   cleanupE2ESubsidiaries,
@@ -18,6 +20,10 @@ import {
 export default async function globalSetup(): Promise<void> {
   const ctx = await playwrightRequest.newContext();
   try {
+    // Fuel uploads first (inc28-fuel-bulk): a killed fuel spec leaves rows,
+    // batches and their records, which the quarterly sweep does not reach.
+    await cleanupFuelData(ctx);
+    await cleanupFuelFactorFixture();
     await cleanupQuarterly(ctx);
     await cleanupE2ETargets(ctx);
     await cleanupE2ESubsidiaries(ctx);
