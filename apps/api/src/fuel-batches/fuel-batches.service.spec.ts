@@ -1,0 +1,187 @@
+import { ForbiddenException } from '@nestjs/common';
+import { describe, expect, it, vi } from 'vitest';
+import type { FuelBatch } from '@tonyai/db';
+import type { RequestUser } from '../auth/auth.types';
+import type { AuditService } from '../audit/audit.service';
+import type { ApiErrorCode } from '@tonyai/shared-types';
+import { errorBody, errorCodeOf } from '../common/api-error';
+import type { ActivityRecordsService } from '../activity-records/activity-records.service';
+import type { EvidenceService } from '../evidence/evidence.service';
+import type { PrismaService } from '../prisma/prisma.service';
+import { FuelBatchesService } from './fuel-batches.service';
+
+/**
+ * DB-free: the refusals the batch step owns (inc28-fuel-bulk D9; task 7.1) —
+ * a batch no longer open, a submitter who is not its author, a decision
+ * without the capability, a stale or missing submission, an empty return
+ * reason, a batch or its record set changed since the read — and that a
+ * refusal raised by a record's own core stops the step before the batch row
+ * or its audit row is written. The record cores' own refusals (evidence,
+ * variance reason, approver) are proven against the database in
+ * `test/int/fuel-batch-lifecycle.int.spec.ts`.
+ */
+
+const ORG = '00000000-0000-4000-8000-0000000000aa';
+const COMPANY = '00000000-0000-4000-8000-000000000001';
+const BATCH = '00000000-0000-4000-8000-0000000000b1';
+const AUTHOR = '00000000-0000-4000-8000-0000000000f1';
+const SUBMITTED_AT = new Date('2026-11-20T10:00:00.000Z');
+
+const user = (role: RequestUser['role'], id = AUTHOR): RequestUser => ({
+  id,
+  email: 'x@tonyai.test',
+  fullName: 'X',
+  role,
+  organisationId: ORG,
+  accessibleSubsidiaryIds: [COMPANY],
+  categoryGrants: {},
+});
+
+const batchOf = (over: Partial<FuelBatch> = {}): FuelBatch =>
+  ({
+    id: BATCH,
+    organisationId: ORG,
+    subsidiaryId: COMPANY,
+    status: 'draft',
+    createdBy: AUTHOR,
+    submittedAt: null,
+    submissionCount: 0,
+    reviewNote: null,
+    ...over,
+  }) as FuelBatch;
+
+const record = (id: string) => ({
+  id,
+  subsidiaryId: COMPANY,
+  reportingYear: 2025,
+  reportingPeriod: 'monthly',
+  periodValue: 'March',
+  status: 'submitted',
+  submittedAt: SUBMITTED_AT,
+});
+
+function harness(seen: FuelBatch, options: { locked?: FuelBatch; recordsNow?: string[]; recordRefusal?: Error } = {}) {
+  const seenRecords = [record('r1'), record('r2')];
+  const tx = {
+    $queryRaw: vi.fn(async () => [{ id: BATCH }]),
+    $executeRaw: vi.fn(async () => 1),
+    fuelBatch: {
+      findUniqueOrThrow: vi.fn(async () => options.locked ?? seen),
+      update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...seen, ...data })),
+    },
+    activityRecord: {
+      findMany: vi.fn(async () => (options.recordsNow ?? seenRecords.map((r) => r.id)).map((id) => ({ id }))),
+    },
+  };
+  const prisma = {
+    fuelBatch: { findFirst: vi.fn(async () => seen) },
+    activityRecord: { findMany: vi.fn(async () => seenRecords) },
+    $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+  };
+  const refuse = async () => {
+    if (options.recordRefusal) throw options.recordRefusal;
+  };
+  const records = {
+    lockSeenRecord: vi.fn(async (_tx: unknown, r: { id: string }) => ({ ...r, location: null })),
+    recomputeFor: vi.fn(async () => ({})),
+    submitLocked: vi.fn(refuse),
+    recallLocked: vi.fn(refuse),
+    startReviewLocked: vi.fn(refuse),
+    approveLocked: vi.fn(refuse),
+    rejectLocked: vi.fn(refuse),
+  };
+  const audit = { record: vi.fn(async () => undefined) };
+  const service = new FuelBatchesService(
+    prisma as unknown as PrismaService,
+    audit as unknown as AuditService,
+    records as unknown as ActivityRecordsService,
+    {} as EvidenceService,
+  );
+  vi.spyOn(service, 'detail').mockResolvedValue({ id: BATCH } as never);
+  return { service, tx, prisma, records, audit };
+}
+
+const codeOf = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => errorCodeOf(e) ?? (e as { getStatus?: () => number }).getStatus?.());
+
+describe('FuelBatchesService — the step’s own refusals (task 7.1)', () => {
+  it.each(['submitted', 'under_review', 'approved', 'withdrawn'])('refuses to submit a %s batch and writes nothing', async (status) => {
+    const h = harness(batchOf({ status }));
+    expect(await codeOf(h.service.submit(user('masterkey'), BATCH))).toBe('fuel_batch_not_open');
+    expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
+    expect(h.audit.record).not.toHaveBeenCalled();
+    expect(h.records.submitLocked).not.toHaveBeenCalled();
+  });
+
+  it('refuses a submit by anyone but the batch’s author, a masterkey included', async () => {
+    const h = harness(batchOf());
+    expect(await codeOf(h.service.submit(user('masterkey', '00000000-0000-4000-8000-0000000000f9'), BATCH))).toBe('record_submit_forbidden');
+    expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['standard_user', 'auditor'] as const)('refuses a %s any decision before reading the batch', async (role) => {
+    const h = harness(batchOf({ status: 'submitted', submittedAt: SUBMITTED_AT }));
+    for (const step of [
+      h.service.startReview(user(role, 'f'), BATCH),
+      h.service.approve(user(role, 'f'), BATCH, SUBMITTED_AT.toISOString()),
+      h.service.reject(user(role, 'f'), BATCH, 'reason', SUBMITTED_AT.toISOString()),
+    ]) {
+      expect(await step.catch((e: unknown) => e)).toBeInstanceOf(ForbiddenException);
+    }
+    expect(h.prisma.fuelBatch.findFirst).not.toHaveBeenCalled();
+  });
+
+  it.each(['', '   ', '\n'])('refuses a return with the reason %j before reading the batch', async (reason) => {
+    const h = harness(batchOf({ status: 'under_review', submittedAt: SUBMITTED_AT }));
+    expect(await codeOf(h.service.reject(user('super_admin', 'r'), BATCH, reason, SUBMITTED_AT.toISOString()))).toBe('validation_failed');
+    expect(h.prisma.fuelBatch.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('refuses an approval or a return naming another submission, or none', async () => {
+    const seen = batchOf({ status: 'under_review', submittedAt: SUBMITTED_AT, submissionCount: 1 });
+    for (const stale of ['2026-11-19T10:00:00.000Z', null, undefined]) {
+      const h = harness(seen);
+      expect(await codeOf(h.service.approve(user('super_admin', 'r'), BATCH, stale))).toBe('record_changed');
+      expect(await codeOf(h.service.reject(user('super_admin', 'r'), BATCH, 'why', stale))).toBe('record_changed');
+      expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
+      expect(h.records.approveLocked).not.toHaveBeenCalled();
+    }
+  });
+
+  it('refuses a step when the batch moved between the read and the lock (recalled and resubmitted)', async () => {
+    const seen = batchOf({ status: 'submitted', submittedAt: SUBMITTED_AT, submissionCount: 1 });
+    const h = harness(seen, { locked: batchOf({ status: 'submitted', submittedAt: new Date(), submissionCount: 2 }) });
+    expect(await codeOf(h.service.approve(user('super_admin', 'r'), BATCH, SUBMITTED_AT.toISOString()))).toBe('record_changed');
+    expect(h.records.approveLocked).not.toHaveBeenCalled();
+  });
+
+  it('refuses a step when a record was added to or removed from the batch since the read', async () => {
+    for (const now of [['r1'], ['r1', 'r2', 'r3']]) {
+      const h = harness(batchOf(), { recordsNow: now });
+      expect(await codeOf(h.service.submit(user('masterkey'), BATCH))).toBe('record_changed');
+      expect(h.records.submitLocked).not.toHaveBeenCalled();
+      expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each<[ApiErrorCode, number]>([
+    ['not_record_approver', 403],
+    ['evidence_required', 409],
+    ['variance_reason_required', 422],
+  ])('lets a record core’s %s stop the step before the batch row and its audit row', async (code, status) => {
+    const refusal = Object.assign(new Error(code), { getResponse: () => errorBody(code, code), getStatus: () => status });
+    const h = harness(batchOf({ status: 'submitted', submittedAt: SUBMITTED_AT, submissionCount: 1 }), { recordRefusal: refusal });
+    expect(await h.service.approve(user('masterkey', 'm'), BATCH, SUBMITTED_AT.toISOString()).catch((e: unknown) => e)).toBe(refusal);
+    expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
+    expect(h.audit.record).not.toHaveBeenCalled();
+  });
+
+  it('records a masterkey’s approval of a batch it formed as a self-approval, and another’s as an approval', async () => {
+    const pending = batchOf({ status: 'submitted', submittedAt: SUBMITTED_AT, submissionCount: 1 });
+    const own = harness(pending);
+    await own.service.approve(user('masterkey', AUTHOR), BATCH, SUBMITTED_AT.toISOString());
+    expect(own.audit.record).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'self_approve', entity: 'fuel_batch' }), own.tx);
+    const other = harness(pending);
+    await other.service.approve(user('super_admin', 'r'), BATCH, SUBMITTED_AT.toISOString());
+    expect(other.audit.record).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'approve' }), other.tx);
+  });
+});

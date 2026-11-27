@@ -200,6 +200,47 @@ describe('the batch lifecycle (task 7.1)', () => {
     const last = records.find((r) => r.periodValue === 'April')!;
     expect(last.anomalyBaselinePriorCount).toBe(3);
   });
+
+  it('refuses a flagged batch submitted without a variance reason and moves nothing; with one it submits', async () => {
+    const user = await masterkey();
+    for (const [i, day] of ['03.01.2025', '03.02.2025', '03.03.2025'].entries()) {
+      const id = await formedBatch(user, [day], `OZK-AN-${i}`);
+      await withEvidence(id);
+      await services().batches.submit(user, id);
+    }
+    // Ten fills of 100 L against a history of one: a spike.
+    const spike = await formedBatch(user, Array.from({ length: 10 }, () => '03.04.2025').map((d, i) => `${String(i + 1).padStart(2, '0')}${d.slice(2)}`), 'OZK-AN-3');
+    await withEvidence(spike);
+    const refused = await services().batches.submit(user, spike).catch((e: unknown) => errorCodeOf(e));
+    expect(refused).toBe('variance_reason_required');
+    expect(await statuses(spike)).toEqual(['draft']);
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id: spike } })).status).toBe('draft');
+    expect((await services().batches.submit(user, spike, 'A second vehicle joined the fleet')).varianceReason).toBe('A second vehicle joined the fleet');
+  });
+
+  it('routes a standard user’s batch to the company’s active super_admin, and to a masterkey when it has none', async () => {
+    const { standardUser: author, superAdmin } = tenant.users;
+    const mk = await masterkey();
+    const s = services();
+    const id = await formedBatch(author, ['03.03.2025'], 'OZK-RT');
+    await withEvidence(id);
+    const submitted = await s.batches.submit(author, id);
+    expect(submitted.approver).toBe('super_admin');
+    // A masterkey is not this batch's approver while the company has an active super_admin.
+    expect(await s.batches.approve(mk, id, submitted.submittedAt).catch((e: unknown) => errorCodeOf(e))).toBe('not_record_approver');
+    expect(await statuses(id)).toEqual(['submitted']);
+    expect((await s.batches.approve(superAdmin, id, submitted.submittedAt)).status).toBe('approved');
+    expect(await statuses(id)).toEqual(['approved']);
+    expect(await owner.auditLog.count({ where: { entity: 'fuel_batch', entityId: id, action: 'approve', userId: superAdmin.id } })).toBe(1);
+
+    // The company's only super_admin disabled: the next batch is a masterkey's to decide.
+    await owner.profile.update({ where: { id: superAdmin.id }, data: { disabledAt: new Date() } });
+    const next = await formedBatch(author, ['04.03.2025'], 'OZK-RT2');
+    await withEvidence(next);
+    const pending = await s.batches.submit(author, next);
+    expect(pending.approver).toBe('masterkey');
+    expect((await s.batches.approve(mk, next, pending.submittedAt)).status).toBe('approved');
+  });
 });
 
 describe('a batch’s record is not acted on singly (task 7.2)', () => {
