@@ -9,6 +9,7 @@ import {
   type FuelSource,
   type FuelTankerDeclaration,
   type FuelUsage,
+  FUEL_USAGES,
 } from '@tonyai/shared-types';
 import type { FuelDraftRow } from './adapters/adapter';
 import type { KeyedFuelReading } from './read-fuel-file';
@@ -52,6 +53,8 @@ export interface PlannedRow extends FuelDraftRow {
   month: number;
   state: FuelRowState;
   subsidiaryId: string | null;
+  /** False for a tanker delivery previewed before its declaration: its usage is a placeholder. */
+  usageDeclared: boolean;
 }
 
 export interface StagingPlan {
@@ -134,7 +137,8 @@ export function planStaging(input: StagingInput): StagingPlan {
       fuel,
       holdReason: null,
     });
-    plan.rows.push({ ...draft, fuel, usage, year, month, state, subsidiaryId: mapping.subsidiaryId });
+    const usageDeclared = input.source !== 'tanker' || input.declarations?.get(draft.invoiceRef) !== undefined;
+    plan.rows.push({ ...draft, fuel, usage, year, month, state, subsidiaryId: mapping.subsidiaryId, usageDeclared });
   }
   plan.duplicates = duplicates.sort((a, b) => a.row - b.row);
   return plan;
@@ -156,6 +160,13 @@ export function previewOutcome(row: PlannedRow, forms: (subsidiaryId: string, us
     case 'waiting_fuel':
       return 'waiting_fuel';
     default:
-      return row.subsidiaryId !== null && forms(row.subsidiaryId, row.usage) ? 'batches' : 'outside_scope';
+      if (row.subsidiaryId === null) return 'outside_scope';
+      if (row.usageDeclared) return forms(row.subsidiaryId, row.usage) ? 'batches' : 'outside_scope';
+      {
+        // Not yet declared: say "batches" or "outside" only when every usage agrees (fourth review, P2).
+        const subsidiaryId = row.subsidiaryId;
+        const takes = FUEL_USAGES.filter((usage) => forms(subsidiaryId, usage)).length;
+        return takes === FUEL_USAGES.length ? 'batches' : takes === 0 ? 'outside_scope' : 'depends_on_usage';
+      }
   }
 }

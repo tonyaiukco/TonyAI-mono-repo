@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
 import { CopyCheck, FileSpreadsheet, Loader2, Upload } from "lucide-react";
@@ -41,7 +41,9 @@ import {
 } from "@/lib/fuel-upload-view";
 import { HeldRows, RowCount } from "./common";
 
+/** Row issues shown at first, and how many more each "Show more" adds — every one can be reached (fourth review, P2). */
 const MAX_SHOWN_ISSUES = 20;
+const MORE_ISSUES = 200;
 
 /**
  * Upload (D3, D16): a file is read first and nothing is stored; the apply
@@ -60,6 +62,9 @@ export function UploadTab({ onApplied }: { onApplied: () => void }) {
   const [usage, setUsage] = useState<FuelUsage | null>(initialUsage("petrol_ofisi"));
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<FuelFilePreviewDTO | null>(null);
+  const [shownIssues, setShownIssues] = useState(MAX_SHOWN_ISSUES);
+  // A new preview starts from the first issues again.
+  useEffect(() => setShownIssues(MAX_SHOWN_ISSUES), [preview]);
   const [choices, setChoices] = useState<Record<string, DeliveryChoice>>({});
   const [busy, setBusy] = useState<"reading" | "applying" | "forming" | null>(null);
   const [result, setResult] = useState<FormFuelBatchesResultDTO | null>(null);
@@ -270,16 +275,19 @@ export function UploadTab({ onApplied }: { onApplied: () => void }) {
               <div className="text-sm">
                 <div className="font-medium">{t("upload.rowIssues")}</div>
                 <ul className="mt-1 max-h-48 space-y-0.5 overflow-auto text-muted-foreground">
-                  {[...preview.refused, ...preview.duplicates].slice(0, MAX_SHOWN_ISSUES).map((issue, i) => (
+                  {[...preview.refused, ...preview.duplicates].sort((a, b) => a.row - b.row).slice(0, shownIssues).map((issue, i) => (
                     <li key={`${issue.row}-${issue.code}-${i}`}>
                       {t("upload.rowIssue", { row: formatNumber(issue.row, locale), reason: tIssues(issue.code as never) })}
                     </li>
                   ))}
                 </ul>
-                {preview.refused.length + preview.duplicates.length > MAX_SHOWN_ISSUES && (
-                  <p className="text-xs text-muted-foreground">
-                    {t("upload.moreIssues", { count: formatNumber(preview.refused.length + preview.duplicates.length - MAX_SHOWN_ISSUES, locale) })}
-                  </p>
+                {preview.refused.length + preview.duplicates.length > shownIssues && (
+                  <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>{t("upload.moreIssues", { count: formatNumber(preview.refused.length + preview.duplicates.length - shownIssues, locale) })}</span>
+                    <Button size="sm" variant="link" className="h-auto p-0 text-xs" onClick={() => setShownIssues((n) => n + MORE_ISSUES)} data-testid="preview-more-issues">
+                      {t("upload.showMoreIssues")}
+                    </Button>
+                  </div>
                 )}
               </div>
             )}

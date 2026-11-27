@@ -30,6 +30,7 @@ import {
 import { SingleEntryPeriodConflictError } from '../central-reporting/central-reporting-errors';
 import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { sumDecimals } from '../fuel-files/decimal';
+import { keepReportingCompany } from './batch-reporting';
 import { usageCategory } from '../fuel-files/fuel-scope';
 import { FuelUploadsService } from '../fuel-files/fuel-uploads.service';
 
@@ -88,6 +89,12 @@ export function holdReasonOf(error: unknown): FuelHoldReason {
   return 'unexpected';
 }
 
+/** What a group's transaction judged: its rows and their company, for a refusal's hold. */
+interface JudgedGroup {
+  rowIds?: string[];
+  subsidiaryId?: string | null;
+}
+
 @Injectable()
 export class FuelBatchFormationService {
   constructor(
@@ -123,12 +130,13 @@ export class FuelBatchFormationService {
     for (const group of groups) {
       if (deadline.expired) break;
       const key: GroupKey = { accountId: group.account_id, invoiceRef: group.invoice_ref, usage: group.usage as FuelUsage };
+      const judged: JudgedGroup = {};
       try {
-        const outcome = await this.formGroup(user, upload.id, upload.source as FuelSource, key);
+        const outcome = await this.formGroup(user, upload.id, upload.source as FuelSource, key, judged);
         if (outcome === 'formed') formedBatches += 1;
         if (outcome === 'joined') joinedBatches += 1;
       } catch (error) {
-        await this.holdGroup(upload.id, user.id, key, holdReasonOf(error));
+        await this.holdGroup(upload.id, user.id, key, holdReasonOf(error), judged);
       }
     }
 
@@ -160,7 +168,7 @@ export class FuelBatchFormationService {
   }
 
   /** The group's rows held with the reason, in a small transaction of their own (D8). */
-  private async holdGroup(importId: string, holderId: string, key: GroupKey, reason: FuelHoldReason): Promise<void> {
+  private async holdGroup(importId: string, holderId: string, key: GroupKey, reason: FuelHoldReason, judged: JudgedGroup): Promise<void> {
     await this.prisma.fuelRow.updateMany({
       where: {
         importBatchId: importId,
@@ -169,13 +177,24 @@ export class FuelBatchFormationService {
         invoiceRef: key.invoiceRef,
         usage: key.usage,
         state: 'ready',
+        // Only the rows the refused transaction judged, and only while still
+        // under the company it judged them under: a mapping changed since
+        // re-stated them itself and they are not this refusal's to hold
+        // (fourth review of the branch, P2).
+        ...(judged.rowIds ? { id: { in: judged.rowIds }, subsidiaryId: judged.subsidiaryId ?? null } : {}),
       },
       data: { state: 'held', holdReason: reason },
     });
   }
 
-  /** One group, whole or not at all. */
-  private async formGroup(user: RequestUser, importId: string, source: FuelSource, key: GroupKey): Promise<'formed' | 'joined' | 'none'> {
+  /** One group, whole or not at all; `judged` names the rows it judged and their company. */
+  private async formGroup(
+    user: RequestUser,
+    importId: string,
+    source: FuelSource,
+    key: GroupKey,
+    judged: JudgedGroup,
+  ): Promise<'formed' | 'joined' | 'none'> {
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${INVOICE_LOCK_NAMESPACE}::int4, hashtext(${key.accountId} || '|' || ${key.invoiceRef}))`;
       const [account] = await tx.$queryRaw<Array<{ state: string; subsidiary_id: string | null }>>`
@@ -187,6 +206,8 @@ export class FuelBatchFormationService {
         ORDER BY id FOR UPDATE`;
       if (rows.length === 0) return 'none';
       const subsidiaryId = rows[0]!.subsidiary_id;
+      judged.rowIds = rows.map((r) => r.id);
+      judged.subsidiaryId = subsidiaryId;
       // A mapping changed since the rows were stated re-stated them itself (D7); never form under an old company.
       if (account?.state !== 'confirmed' || rows.some((r) => r.subsidiary_id !== account.subsidiary_id)) return 'none';
       // B4: a company outside the holder's current scope is held, never tried.
@@ -301,6 +322,7 @@ export class FuelBatchFormationService {
         }
       }
 
+      await keepReportingCompany(tx, batchId);
       await tx.$executeRaw`
         UPDATE fuel_rows SET fuel_batch_id = ${batchId}::uuid, state = 'assigned', updated_at = now()
         WHERE id = ANY(${rows.map((r) => r.id)}::uuid[])`;

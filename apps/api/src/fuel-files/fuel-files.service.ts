@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { BadRequestException, ConflictException, Injectable, PayloadTooLargeException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, PayloadTooLargeException } from '@nestjs/common';
 import { Prisma } from '@tonyai/db';
 import {
   can,
@@ -21,6 +21,7 @@ import {
   type FuelUsage,
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
+import { readAccess } from '../auth/auth.guard';
 import { AuditService } from '../audit/audit.service';
 import { errorBody } from '../common/api-error';
 import { withParserDeadlineMs } from '../common/work-deadline';
@@ -93,6 +94,10 @@ export class FuelFilesService {
   ): Promise<FuelFilePreviewDTO> {
     const upload = await this.parse(user, file, fields);
     const organisationId = user.organisationId!;
+    // The reader as it stands after the (possibly long) read: a company or
+    // category withdrawn meanwhile is neither named nor counted as its batches
+    // (fourth review of the branch, P2).
+    const reader = await this.currentReader(user);
     const companies = await this.companies(this.prisma, organisationId);
     const codes = accountNames(upload.reading);
     const stored = await this.storedDuplicates(this.prisma, organisationId, upload);
@@ -140,7 +145,7 @@ export class FuelFilesService {
       rowsRead: upload.reading.rowsRead,
       refused: upload.reading.refused,
       duplicates: plan.duplicates,
-      accounts: previewAccounts(user, plan, codes, accounts, companies),
+      accounts: previewAccounts(reader, plan, codes, accounts, companies),
       unrecognisedNames: unrecognisedNames(plan),
       deliveries: upload.source === 'tanker' ? deliveries(upload.reading, stored) : [],
     };
@@ -229,6 +234,18 @@ export class FuelFilesService {
     }, APPLY_TX);
 
     return this.uploads.detail(user, importId);
+  }
+
+  /**
+   * The caller re-read: the same role, organisation and an enabled account
+   * (403 otherwise, as `lockActor`), and its scope as the guard builds it now.
+   */
+  private async currentReader(user: RequestUser): Promise<RequestUser> {
+    const profile = await this.prisma.profile.findUnique({ where: { id: user.id }, include: { subsidiaryAccess: true } });
+    if (!profile || profile.disabledAt || profile.role !== user.role || profile.organisationId !== user.organisationId) {
+      throw new ForbiddenException();
+    }
+    return { ...user, ...(await readAccess(this.prisma, profile)) };
   }
 
   /** The checks every fuel upload passes before its file is read, then the read. */

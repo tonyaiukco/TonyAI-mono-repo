@@ -47,7 +47,8 @@
     "excluded": "Excluded (associate)",
     "waiting_account": "Waits for an account",
     "waiting_fuel": "Waits for a fuel name",
-    "outside_scope": "Outside your scope (company or category)"
+    "outside_scope": "Outside your scope (company or category)",
+    "depends_on_usage": "Depends on the usage you declare"
   },
   "accountStates": {
     "unmatched": "Unmatched",
@@ -100,7 +101,8 @@
     "stillProcessable": "{rows} rows can still be processed. Open Uploads to continue.",
     "held": "Held rows, by reason",
     "waiting": "Waiting rows",
-    "nothingToForm": "Nothing new to form: the file's rows are already stored, wait in Unmatched or are excluded."
+    "nothingToForm": "Nothing new to form: the file's rows are already stored, wait in Unmatched or are excluded.",
+    "showMoreIssues": "Show more"
   },
   "uploads": {
     "title": "Uploads",
@@ -208,7 +210,8 @@
     },
     "loadMore": "Load more",
     "shownOf": "Showing {shown} of {total} batches",
-    "bulkUnknown": "The answer for {count} batches was lost, so whether they were submitted is not known; the list now shows their status as it is."
+    "bulkUnknown": "The answer for {count} batches was lost, so whether they were submitted is not known; the list now shows their status as it is.",
+    "fuel": "Fuel"
   },
   "review": {
     "recordsTab": "Records ({count})",

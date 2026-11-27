@@ -35,6 +35,7 @@ export function ReviewBatches({
   const showError = useStableErrorToast();
   const [paged, setPaged] = useState<PagedBatches | null>(null);
   const [more, setMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const seq = useRef(0);
   const viewer = { id: user.id, role: user.role };
@@ -42,6 +43,7 @@ export function ReviewBatches({
   const filters = useMemo(() => reviewBatchFilters({ subsidiaryId, showAll }), [subsidiaryId, showAll]);
   const load = useCallback(async () => {
     const mine = ++seq.current;
+    setRefreshing(true);
     try {
       const [lists, totals] = await Promise.all([
         Promise.all(filters.map((f) => api.listFuelBatches(f))),
@@ -53,20 +55,24 @@ export function ReviewBatches({
       if (mine !== seq.current) return;
       setPaged({ lists: filters.map(() => []), totals: filters.map(() => 0) });
       showError(error);
+    } finally {
+      if (mine === seq.current) setRefreshing(false);
     }
   }, [filters, showError]);
   useEffect(() => void load(), [load, refreshKey]);
 
   /** The next page of each list that has more (WP9 PR B review, P2). */
   async function loadMore() {
-    if (!paged) return;
+    const base = paged;
+    if (!base || refreshing) return;
     const mine = seq.current;
     setMore(true);
     try {
-      const cursors = nextCursors(paged);
+      const cursors = nextCursors(base);
       const pages = await Promise.all(filters.map((f, i) => (cursors[i] === null ? Promise.resolve(null) : api.listFuelBatches({ ...f, after: cursors[i]! }))));
       if (mine !== seq.current) return;
-      setPaged((now) => pages.reduce((acc, page, i) => (acc && page ? withPage(acc, i, page, FUEL_BATCH_PAGE) : acc), now));
+      // Appended only to the lists their cursors came from (fourth review of the branch, P2).
+      setPaged((now) => (now === base ? pages.reduce((acc, page, i) => (acc && page ? withPage(acc, i, page, FUEL_BATCH_PAGE) : acc), now) : now));
     } catch (error) {
       showError(error);
     } finally {
@@ -125,7 +131,7 @@ export function ReviewBatches({
         {paged && hasMoreBatches(paged) && (
           <div className="flex items-center justify-between gap-2 border-t p-3 text-sm text-muted-foreground">
             <span>{t("batches.shownOf", { shown: formatNumber(shownOf(paged).shown, locale), total: formatNumber(shownOf(paged).total, locale) })}</span>
-            <Button size="sm" variant="outline" disabled={more} onClick={() => void loadMore()} data-testid="review-batches-more">
+            <Button size="sm" variant="outline" disabled={more || refreshing} onClick={() => void loadMore()} data-testid="review-batches-more">
               {more && <Loader2 className="h-4 w-4 animate-spin" />}{t("batches.loadMore")}
             </Button>
           </div>

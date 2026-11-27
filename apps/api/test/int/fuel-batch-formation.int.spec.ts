@@ -406,6 +406,12 @@ describe('later rows, the tray, the reporting company and the holder (task 6.3)'
     expect(reporterDto).toMatchObject({ reportingSubsidiaryId: T(), createdBy: reporter.id });
     expect(reporterDto.uploaders.map((u) => u.id)).toEqual([reporter.id]);
     expect(dtos.find((d) => d.id === byMasterkey!.id)!.reportingSubsidiaryId).toBeNull();
+
+    // Withdrawn — its records removed — the batch still names the company it reported for (fourth review, P2).
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id: byReporter!.id } })).reportedBySubsidiaryId).toBe(T());
+    await batchService().withdraw(reporter, byReporter!.id, 'entered twice');
+    expect(await recordsOf(byReporter!.id)).toEqual([]);
+    expect((await batchService().list(mk, {})).find((d) => d.id === byReporter!.id)).toMatchObject({ status: 'withdrawn', reportingSubsidiaryId: T() });
   });
 
   it('holds a central reporter’s rows for a month the company’s own user entered, with the single-entry conflict', async () => {
@@ -432,6 +438,28 @@ describe('later rows, the tray, the reporting company and the holder (task 6.3)'
       formedBatches: 0, held: [{ reason: 'fuel_out_of_scope', rows: 1 }],
     });
     expect(await batchesOf()).toEqual([]);
+  });
+
+  it('holds only the rows its refusal judged: a mapping changed meanwhile keeps its rows ready (fourth review of the branch, P2)', async () => {
+    await confirmed('RM', S());
+    const superAdmin = tenant.users.superAdmin;
+    const up = await upload(superAdmin, sales([['RM-1', 'RM', '03.03.2025', 'Motorin', 10, 'OZK-RM']]));
+    await owner.userSubsidiaryAccess.deleteMany({ where: { userId: superAdmin.id } });
+    const narrowed: RequestUser = { ...superAdmin, accessibleSubsidiaryIds: [] };
+    const formation = services().formation;
+    const internals = formation as unknown as { formGroup: (...args: unknown[]) => Promise<unknown> };
+    const original = internals.formGroup.bind(formation);
+    // The refusal is decided; before it is written as a hold, a masterkey re-maps the account and the row is ready under the new company.
+    internals.formGroup = async (...args: unknown[]) => {
+      try {
+        return await original(...args);
+      } finally {
+        await owner.fuelRow.updateMany({ where: { importBatchId: up.id }, data: { subsidiaryId: T(), state: 'ready', holdReason: null } });
+      }
+    };
+    await formation.formBatches(narrowed, up.id);
+    const row = await owner.fuelRow.findFirstOrThrow({ where: { importBatchId: up.id } });
+    expect([row.state, row.holdReason, row.subsidiaryId]).toEqual(['ready', null, T()]);
   });
 
   it('forms nothing of a disabled uploader’s ready rows until a masterkey takes them over; the uploader stays named', async () => {

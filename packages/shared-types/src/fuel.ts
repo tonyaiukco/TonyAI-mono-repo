@@ -431,7 +431,12 @@ export interface FuelRowIssueDTO {
  * batches, be excluded (an associate's), wait for an account, wait for a fuel
  * name no rule recognises, or be held as outside the caller's scope.
  */
-export const FUEL_PREVIEW_OUTCOMES = ['batches', 'excluded', 'waiting_account', 'waiting_fuel', 'outside_scope'] as const;
+/**
+ * What a previewed row will be. `depends_on_usage`: a tanker delivery not yet
+ * declared, whose company the reader's batches take for some usages and not
+ * others (its categories) — decided by the declaration (fourth review of WP9 PR B).
+ */
+export const FUEL_PREVIEW_OUTCOMES = ['batches', 'excluded', 'waiting_account', 'waiting_fuel', 'outside_scope', 'depends_on_usage'] as const;
 export type FuelPreviewOutcome = (typeof FUEL_PREVIEW_OUTCOMES)[number];
 
 /**

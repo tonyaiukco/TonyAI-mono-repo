@@ -103,3 +103,23 @@ describe('judgeFuelBatch — one invoice’s records summed in one order (third 
     expect(judgeFuelBatch(reversedSplit, priorsOf(parts)).x3).toEqual(judgeFuelBatch(split, priorsOf(parts)).x3);
   });
 });
+
+describe('judgeFuelBatch — an exactly 50% deviation is not flagged (fourth review of the branch, P2)', () => {
+  it('never lets a float sum’s noise carry the threshold, in any record order', () => {
+    const parts = [record('r1', 'on_road_diesel', 0.1), record('r2', 'on_road_diesel', 0.2), record('r3', 'on_road_diesel', 0.3)];
+    for (const order of [parts, [...parts].reverse(), [parts[2]!, parts[0]!, parts[1]!]]) {
+      const history = [
+        invoice('p1', 20250101, order),
+        invoice('p2', 20250115, [record('q', 'on_road_diesel', 0.6)]),
+        invoice('p3', 20250201, [record('s', 'on_road_diesel', 0.6)]),
+      ];
+      // Baseline 0.6; 0.3 and 0.9 are exactly 50% off it: not flagged.
+      for (const value of [0.3, 0.9]) {
+        const verdict = judgeFuelBatch(invoice('now', 20250301, [record('x', 'on_road_diesel', value)]), history).x;
+        expect(verdict).toMatchObject({ anomalous: false, priorCount: 3, baseline: 0.6 });
+      }
+      // Beyond it, flagged.
+      expect(judgeFuelBatch(invoice('now', 20250301, [record('x', 'on_road_diesel', 0.95)]), history).x).toMatchObject({ anomalous: true });
+    }
+  });
+});

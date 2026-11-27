@@ -275,6 +275,8 @@ export const RUNTIME_COLUMN_UPDATES = Object.freeze({
     'withdrawn_at',
     'withdrawn_reason',
     'updated_at',
+    // Set with the batch's first records, never cleared (fourth review of WP9 PR B).
+    'reported_by_subsidiary_id',
   ],
   fuel_rows: [
     'holder_id',

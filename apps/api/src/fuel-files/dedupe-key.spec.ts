@@ -16,6 +16,8 @@ const user = { id: '00000000-0000-4000-8000-0000000000ff', role: 'masterkey', or
 function store(initial: Uint8Array | null, { rows = false } = {}) {
   let secret = initial;
   const tx = {
+    // lockActor: the caller as it stands (same role, organisation, enabled).
+    $queryRaw: vi.fn(async () => [{ same: true }]),
     fuelRow: { findFirst: vi.fn(async () => (rows ? { id: 'row-1' } : null)) },
     fuelDedupeKey: {
       createMany: vi.fn(async ({ data }: { data: Array<{ secret: Uint8Array }> }) => {
@@ -99,5 +101,15 @@ describe('organisationDedupeKey', () => {
   it('refuses a key of the wrong length', async () => {
     const { prisma, audit } = store(Buffer.alloc(16, 1));
     await expect(organisationDedupeKey(prisma, audit, user)).rejects.toThrow(/malformed/);
+  });
+});
+
+describe('organisationDedupeKey — the caller re-read before the key is written (fourth review of the branch, P2)', () => {
+  it('creates no key and no audit row for a caller whose standing changed while its file was read', async () => {
+    const { prisma, audit, raw } = store(null);
+    raw.tx.$queryRaw.mockImplementationOnce(async () => [{ same: false }]);
+    await expect(organisationDedupeKey(prisma, audit, user)).rejects.toMatchObject({ status: 403 });
+    expect(raw.tx.fuelDedupeKey.createMany).not.toHaveBeenCalled();
+    expect(raw.audit.record).not.toHaveBeenCalled();
   });
 });

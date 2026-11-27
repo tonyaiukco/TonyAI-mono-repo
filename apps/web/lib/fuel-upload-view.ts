@@ -199,9 +199,10 @@ export function plainLitres(litres: string): { integer: string; fraction: string
  * shown, not 0 L (third review of the branch). `formatInteger` groups a whole
  * number; `decimalSeparator` is the locale's.
  */
-export function formatLitresText(litres: string, formatInteger: (value: number) => string, decimalSeparator: string): string {
+export function formatLitresText(litres: string, formatInteger: (value: bigint) => string, decimalSeparator: string): string {
   const parts = plainLitres(litres);
   if (!parts) return litres;
-  const whole = formatInteger(Number(parts.integer));
+  // A BigInt, never a float: 9007199254740993 stays itself (fourth review of the branch, P3).
+  const whole = formatInteger(BigInt(parts.integer));
   return parts.fraction ? `${whole}${decimalSeparator}${parts.fraction}` : whole;
 }

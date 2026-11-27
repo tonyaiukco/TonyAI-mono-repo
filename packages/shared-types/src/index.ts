@@ -5685,8 +5685,13 @@ export function computeAnomalyVerdict(
   if (baseline === 0) {
     return { anomalous: false, priorCount: priorValues.length, baseline };
   }
+  // The deviation at 12 decimals: a float subtraction's last-bit noise
+  // (0.9 − 0.6 = 0.30000000000000004) must not carry an exactly-50% figure
+  // over a rule that flags only what exceeds it. `anomaly:probe` compares the
+  // same way in SQL (fourth review of WP9 PR B, P2).
+  const deviation = Number((Math.abs(currentTCo2e - baseline) / baseline).toFixed(12));
   return {
-    anomalous: Math.abs(currentTCo2e - baseline) / baseline > ANOMALY_THRESHOLD,
+    anomalous: deviation > ANOMALY_THRESHOLD,
     priorCount: priorValues.length,
     baseline,
   };
@@ -6158,7 +6163,12 @@ export function judgeFuelBatch(
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       .map((r) => r.tCo2e)
       .filter((v): v is number => v !== null);
-    return figures.length === 0 ? null : figures.reduce((sum, v) => sum + v, 0);
+    if (figures.length === 0) return null;
+    // An invoice's figure at 12 significant digits: a float sum's last-bit
+    // noise (0.1 + 0.2 + 0.3 = 0.6000000000000001) must not carry an exactly
+    // 50% deviation over the threshold, which flags only what exceeds it
+    // (fourth review of the branch, P2). Far below any figure's precision.
+    return Number(figures.reduce((sum, v) => sum + v, 0).toPrecision(12));
   };
   const verdicts: Record<string, AnomalyVerdict> = {};
   const fuels = [...new Set(batch.records.map((r) => fuelOfBatchActivityType(r.activityType)))];

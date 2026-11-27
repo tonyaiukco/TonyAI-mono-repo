@@ -322,7 +322,9 @@ model Subsidiary {
   /// main company (`activity_records.reported_by_subsidiary_id`).
   reportedRecords     ActivityRecord[]              @relation("ActivityRecordReportedBy")
   fuelAccounts        FuelAccount[]
-  fuelBatches         FuelBatch[]
+  fuelBatches         FuelBatch[]                   @relation("FuelBatchSubsidiary")
+  /// Fuel batches whose records this company entered as a central reporter's main company.
+  fuelBatchesReportedBy FuelBatch[]                 @relation("FuelBatchReportedBy")
   fuelRows            FuelRow[]
   periodLocks         PeriodLock[]
   targets             Target[]
@@ -1309,7 +1311,13 @@ model FuelBatch {
   organisationId  String           @map("organisation_id") @db.Uuid
   organisation    Organisation     @relation(fields: [organisationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   subsidiaryId    String           @map("subsidiary_id") @db.Uuid
-  subsidiary      Subsidiary       @relation(fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  subsidiary      Subsidiary       @relation("FuelBatchSubsidiary", fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  // The reporting company its records were written for (TA025), kept on the
+  // batch so a withdrawn batch, whose records are gone, or one whose every
+  // record was voided still names it (fourth review of WP9 PR B). Null while
+  // the batch is its own company's; set with its first records, never cleared.
+  reportedBySubsidiaryId String?   @map("reported_by_subsidiary_id") @db.Uuid
+  reportedBySubsidiary Subsidiary? @relation("FuelBatchReportedBy", fields: [reportedBySubsidiaryId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
   fuelAccountId   String           @map("fuel_account_id") @db.Uuid
   fuelAccount     FuelAccount      @relation("FuelBatchAccount", fields: [fuelAccountId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
   source          String

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { RequestUser } from '../auth/auth.types';
 import type { AuditService } from '../audit/audit.service';
 import type { PrismaService } from '../prisma/prisma.service';
+import { lockActor } from './lock-actor';
 
 /**
  * An organisation's key for the fuel dedupe digest (inc28-fuel-bulk D5,
@@ -31,6 +32,9 @@ export async function organisationDedupeKey(
   let row = await prisma.fuelDedupeKey.findUnique({ where: { organisationId }, select: { secret: true } });
   if (!row) {
     await prisma.$transaction(async (tx) => {
+      // The caller as it stands, before the key or its audit row is written: one
+      // whose role dropped while its file was read creates nothing (fourth review, P2).
+      await lockActor(tx, user);
       // Two first uploads at once: the one inserted first wins (the other's
       // insert waits for it, then skips), and both read the winner's key.
       const created = await tx.fuelDedupeKey.createMany({

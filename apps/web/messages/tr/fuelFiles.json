@@ -47,7 +47,8 @@
     "excluded": "Hariç (iştirak)",
     "waiting_account": "Hesap bekler",
     "waiting_fuel": "Yakıt adı bekler",
-    "outside_scope": "Yetki kapsamınız dışında (şirket veya kategori)"
+    "outside_scope": "Yetki kapsamınız dışında (şirket veya kategori)",
+    "depends_on_usage": "Beyan edeceğiniz kullanıma bağlı"
   },
   "accountStates": {
     "unmatched": "Eşleşmedi",
@@ -100,7 +101,8 @@
     "stillProcessable": "{rows} satır hâlâ işlenebilir. Devam etmek için Yüklemeler'i açın.",
     "held": "Bekletilen satırlar, nedene göre",
     "waiting": "Bekleyen satırlar",
-    "nothingToForm": "Oluşturulacak yeni bir şey yok: dosyanın satırları zaten kayıtlı, Eşleşmeyenler'de bekliyor ya da hariç tutuldu."
+    "nothingToForm": "Oluşturulacak yeni bir şey yok: dosyanın satırları zaten kayıtlı, Eşleşmeyenler'de bekliyor ya da hariç tutuldu.",
+    "showMoreIssues": "Daha fazlasını göster"
   },
   "uploads": {
     "title": "Yüklemeler",
@@ -208,7 +210,8 @@
     },
     "loadMore": "Daha fazla yükle",
     "shownOf": "{total} paketin {shown} tanesi gösteriliyor",
-    "bulkUnknown": "{count} paket için yanıt alınamadı; gönderilip gönderilmedikleri bilinmiyor. Liste şimdi durumlarını olduğu gibi gösteriyor."
+    "bulkUnknown": "{count} paket için yanıt alınamadı; gönderilip gönderilmedikleri bilinmiyor. Liste şimdi durumlarını olduğu gibi gösteriyor.",
+    "fuel": "Yakıt"
   },
   "review": {
     "recordsTab": "Kayıtlar ({count})",

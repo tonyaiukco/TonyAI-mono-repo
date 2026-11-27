@@ -179,7 +179,8 @@ describe('FuelBatchFormationService — one group, one batch (task 6.3)', () => 
     expect(h.audits).toHaveLength(0);
     expect(h.holds).toEqual([
       {
-        where: { importBatchId: UPLOAD, holderId: holder.id, fuelAccountId: 'acc-a', invoiceRef: 'OZK-3', usage: 'on_road', state: 'ready' },
+        // Only the rows the refused transaction judged, under the company it judged them under (fourth review, P2).
+        where: { importBatchId: UPLOAD, holderId: holder.id, fuelAccountId: 'acc-a', invoiceRef: 'OZK-3', usage: 'on_road', state: 'ready', id: { in: ['1'] }, subsidiaryId: A },
         data: { state: 'held', holdReason: 'period_locked' },
       },
     ]);

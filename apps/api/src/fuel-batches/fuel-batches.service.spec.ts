@@ -339,3 +339,14 @@ describe('a decision holds its decider’s profile for the whole step (third rev
     expect(author.tx.$queryRaw.mock.calls.map((c) => sqlOf(c as unknown[])).some((sql) => /FROM profiles/.test(sql))).toBe(false);
   });
 });
+
+describe('a bulk submit takes its outcome from the step’s commit (fourth review of the branch, P2)', () => {
+  it('reports a committed batch as submitted even when reading it afterwards would fail, and never reads it', async () => {
+    const h = harness(batchOf());
+    const detail = vi.spyOn(h.service, 'detail').mockRejectedValue(new Error('read failed'));
+    const out = await h.service.bulkSubmit(user('standard_user'), [BATCH]);
+    expect(out).toEqual({ submitted: [BATCH], failed: [] });
+    expect(h.tx.fuelBatch.update).toHaveBeenCalled();
+    expect(detail).not.toHaveBeenCalled();
+  });
+});

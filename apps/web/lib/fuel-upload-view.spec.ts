@@ -140,14 +140,16 @@ describe("litres shown with every decimal they hold (WP9 PR B review, P2)", () =
 });
 
 describe("litres printed from their text, never a float (third review of the branch)", () => {
-  const en = (v: number) => new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(v);
-  const tr = (v: number) => new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 }).format(v);
+  const en = (v: bigint) => new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(v);
+  const tr = (v: bigint) => new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 }).format(v);
   it("keeps every decimal, groups the whole part, and writes out an exponent", () => {
     expect(formatLitresText("0.000000000000000000001", en, ".")).toBe("0.000000000000000000001");
     expect(formatLitresText("15973.750", en, ".")).toBe("15,973.75");
     expect(formatLitresText("15973.750", tr, ",")).toBe("15.973,75");
     expect(formatLitresText("1e-7", en, ".")).toBe("0.0000001");
     expect(formatLitresText("40", tr, ",")).toBe("40");
+    // A whole part past 2^53 keeps every digit.
+    expect(formatLitresText("9007199254740993.25", tr, ",")).toBe("9.007.199.254.740.993,25");
     expect(plainLitres("abc")).toBeNull();
   });
 });

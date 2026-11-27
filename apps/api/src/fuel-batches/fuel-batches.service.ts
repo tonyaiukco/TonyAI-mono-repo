@@ -32,6 +32,7 @@ import { lockAuthorAccess } from '../central-reporting/record-entities';
 import { approversFor, awaitingDecisionWhere, deciderFor } from '../activity-records/record-approver';
 import { sumDecimals } from '../fuel-files/decimal';
 import { fuelBatchVerdicts } from './fuel-batch-anomaly';
+import { keepReportingCompany } from './batch-reporting';
 import { EvidenceService } from '../evidence/evidence.service';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { usageCategory } from '../fuel-files/fuel-scope';
@@ -208,7 +209,9 @@ export class FuelBatchesService {
         WHERE a.fuel_batch_id = ANY(${ids}::uuid[]) GROUP BY a.fuel_batch_id`,
       approversFor(this.prisma, batches.map((b) => ({ id: b.id, status: b.status, createdBy: b.createdBy, subsidiaryId: b.subsidiaryId }))),
     ]);
-    const reporting = [...new Set(recordSums.map((r) => r.reportedBySubsidiaryId).filter((id): id is string => !!id))];
+    const reporting = [
+      ...new Set([...recordSums.map((r) => r.reportedBySubsidiaryId), ...batches.map((b) => b.reportedBySubsidiaryId)].filter((id): id is string => !!id)),
+    ];
     const reportingNames = reporting.length
       ? await this.prisma.subsidiary.findMany({ where: { id: { in: reporting }, organisationId: user.organisationId! }, select: { id: true, legalName: true, tradingName: true } })
       : [];
@@ -220,7 +223,11 @@ export class FuelBatchesService {
     return batches.map((b) => {
       const records = recordSums.filter((r) => r.fuelBatchId === b.id);
       const figures = records.map((r) => r.calculation as unknown as ActivityCalculationSnapshot | null).filter(isCalculated);
-      const reportedBy = records.find((r) => r.reportedBySubsidiaryId && r.reportedBySubsidiaryId !== b.subsidiaryId)?.reportedBySubsidiaryId ?? null;
+      // The batch's own record of it first (kept when its records are gone or voided), then its live records'.
+      const reportedBy =
+        b.reportedBySubsidiaryId ??
+        records.find((r) => r.reportedBySubsidiaryId && r.reportedBySubsidiaryId !== b.subsidiaryId)?.reportedBySubsidiaryId ??
+        null;
       const account = accounts.find((a) => a.id === b.fuelAccountId);
       const sums = rowSums.find((r) => r.id === b.id);
       return {
@@ -268,7 +275,10 @@ export class FuelBatchesService {
   /**
    * One step: the batch locked, its live records locked under their periods'
    * shared locks (sorted), `perRecord` run on each, the batch's own row and
-   * one audit row. Answers the batch as it is now.
+   * one audit row. Answers nothing: the step is done once it commits, and
+   * each caller reads the batch afterwards (a bulk submit does not — a read
+   * failing after the commit must never report a submitted batch as failed;
+   * fourth review of the branch, P2).
    */
   private async step(
     user: RequestUser,
@@ -278,7 +288,7 @@ export class FuelBatchesService {
     perRecord: (tx: Prisma.TransactionClient, seen: ActivityRecord, current: LiveRecord, batch: FuelBatch) => Promise<unknown>,
     after: (batch: FuelBatch) => Prisma.FuelBatchUpdateInput,
     prepare?: (records: ActivityRecord[]) => Promise<void>,
-  ): Promise<FuelBatchDetailDTO> {
+  ): Promise<void> {
     const seenBatch = await this.visible(user, id);
     const seenRecords = await this.prisma.activityRecord.findMany({ where: { fuelBatchId: id, status: { not: 'voided' } }, orderBy: { id: 'asc' } });
     if (prepare) await prepare(seenRecords);
@@ -337,7 +347,6 @@ export class FuelBatchesService {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') throw new RecordChangedError();
       throw error;
     }
-    return this.detail(user, id);
   }
 
   /** A review or a decision names the batch's submission its reviewer saw (D9). */
@@ -351,11 +360,17 @@ export class FuelBatchesService {
   }
 
   async submit(user: RequestUser, id: string, varianceReason?: string): Promise<FuelBatchDetailDTO> {
+    await this.submitStep(user, id, varianceReason);
+    return this.detail(user, id);
+  }
+
+  /** The submit itself; done once it commits. */
+  private async submitStep(user: RequestUser, id: string, varianceReason?: string): Promise<void> {
     // As a record's submit: a role that may not author records submits nothing, its own old batch included.
     if (!mayAuthorRecords(user)) throw new SubmitRoleRefusedError();
     const recomputed = new Map<string, Awaited<ReturnType<ActivityRecordsService['recomputeFor']>>>();
     let verdicts: Awaited<ReturnType<typeof fuelBatchVerdicts>> = {};
-    return this.step(
+    await this.step(
       user, id, 'submit',
       (batch) => {
         if (batch.status !== 'draft' && batch.status !== 'rejected') throw new FuelBatchNotOpenError();
@@ -380,7 +395,7 @@ export class FuelBatchesService {
 
   async recall(user: RequestUser, id: string): Promise<FuelBatchDetailDTO> {
     if (!mayAuthorRecords(user)) throw new ForbiddenException(ROLE_REFUSAL);
-    return this.step(
+    await this.step(
       user, id, 'recall',
       (batch) => {
         if (batch.status !== 'submitted') throw new ConflictException(errorBody('record_changed', 'Only a submitted batch nobody has opened can be recalled.'));
@@ -390,11 +405,12 @@ export class FuelBatchesService {
       (tx, seen, current) => this.records.recallLocked(tx, user, seen, current),
       () => ({ status: 'draft', submittedAt: null }),
     );
+    return this.detail(user, id);
   }
 
   async startReview(user: RequestUser, id: string, seenSubmittedAt?: string | null): Promise<FuelBatchDetailDTO> {
     if (!can(user.role, 'record.decide')) throw new ForbiddenException();
-    return this.step(
+    await this.step(
       user, id, 'review',
       (batch) => {
         // The batch's own status, as each record's: only a submitted batch is taken into review.
@@ -407,12 +423,13 @@ export class FuelBatchesService {
       (tx, seen, current) => this.records.startReviewLocked(tx, user, seen, current, current.submittedAt?.toISOString() ?? null),
       () => ({ status: 'under_review', reviewedBy: user.id, reviewedAt: new Date() }),
     );
+    return this.detail(user, id);
   }
 
   async approve(user: RequestUser, id: string, seenSubmittedAt?: string | null): Promise<FuelBatchDetailDTO> {
     if (!can(user.role, 'record.decide')) throw new ForbiddenException();
     const recomputed = new Map<string, Awaited<ReturnType<ActivityRecordsService['recomputeFor']>>>();
-    return this.step(
+    await this.step(
       user, id, 'approve',
       (batch) => {
         if (batch.status !== 'submitted' && batch.status !== 'under_review') throw new RecordChangedError();
@@ -425,6 +442,7 @@ export class FuelBatchesService {
         for (const r of records) recomputed.set(r.id, await this.records.recomputeFor(user, r));
       },
     );
+    return this.detail(user, id);
   }
 
   async reject(user: RequestUser, id: string, reason: string, seenSubmittedAt?: string | null): Promise<FuelBatchDetailDTO> {
@@ -432,7 +450,7 @@ export class FuelBatchesService {
     if (typeof reason !== 'string' || reason.trim() === '') {
       throw new BadRequestException(errorBody('validation_failed', 'A return needs a reason.'));
     }
-    return this.step(
+    await this.step(
       user, id, 'reject',
       (batch) => {
         if (batch.status !== 'submitted' && batch.status !== 'under_review') throw new RecordChangedError();
@@ -441,6 +459,7 @@ export class FuelBatchesService {
       (tx, seen, current) => this.records.rejectLocked(tx, user, seen, current, reason, current.submittedAt?.toISOString() ?? null),
       () => ({ status: 'rejected', reviewedBy: user.id, reviewedAt: new Date(), reviewNote: reason }),
     );
+    return this.detail(user, id);
   }
 
   /** `POST /fuel-batches/bulk-submit`: each batch its own step; each refusal named. */
@@ -449,7 +468,8 @@ export class FuelBatchesService {
     const failed: Array<{ batchId: string; code: string }> = [];
     for (const batchId of [...new Set(batchIds)]) {
       try {
-        await this.submit(user, batchId);
+        // Its outcome is the step's commit; the batch is not read again (fourth review, P2).
+        await this.submitStep(user, batchId);
         submitted.push(batchId);
       } catch (error) {
         const body = (error as { getResponse?: () => unknown }).getResponse?.() as { code?: string } | undefined;
@@ -508,6 +528,7 @@ export class FuelBatchesService {
           },
         });
         removed.push(...(await this.rebuild(tx, user, { ...batch, usage: change.usage })));
+        await keepReportingCompany(tx, id);
         // The author's standing at the write, after the rebuild's periods (the
         // record cores it ran re-read it per record too): a refusal rolls all back.
         await lockAuthorAccess(tx, user, batch.subsidiaryId, batch.category, 'edit');

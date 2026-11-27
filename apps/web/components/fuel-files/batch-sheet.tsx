@@ -173,7 +173,8 @@ export function BatchSheet({
               <SheetDescription>
                 {t("batches.line", {
                   company: batch.subsidiaryName,
-                  account: batch.accountCode,
+                  // The account's code and name (D10; fourth review of the branch).
+                  account: batch.accountName && batch.accountName !== batch.accountCode ? `${batch.accountCode} — ${batch.accountName}` : batch.accountCode,
                   source: t(`sources.${batch.source}`),
                   usage: t(`usages.${batch.usage}`),
                 })}
@@ -275,6 +276,7 @@ export function BatchSheet({
                   <TableHeader>
                     <TableRow>
                       <TableHead>{t("batches.when")}</TableHead>
+                      <TableHead>{t("batches.fuel")}</TableHead>
                       <TableHead>{t("tray.rawName")}</TableHead>
                       <TableHead className="text-right">{t("upload.quantity")}</TableHead>
                     </TableRow>
@@ -283,7 +285,9 @@ export function BatchSheet({
                     {rows.rows.map((r) => (
                       <TableRow key={r.id}>
                         <TableCell className="tabular-nums">{r.transactionAt?.replace("T", " ") ?? `${r.year}-${String(r.month).padStart(2, "0")}`}</TableCell>
-                        <TableCell>{r.rawFuel}</TableCell>
+                        {/* The fuel recognised (a card row) or declared (a tanker delivery, which has no raw name), D10. */}
+                        <TableCell>{r.fuel ? t(`fuels.${r.fuel}`) : "—"}</TableCell>
+                        <TableCell>{r.rawFuel ?? "—"}</TableCell>
                         <TableCell className="text-right tabular-nums">{t("litres", { litres: formatLitres(r.litres, locale) })}</TableCell>
                       </TableRow>
                     ))}

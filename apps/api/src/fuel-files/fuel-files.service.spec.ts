@@ -65,6 +65,8 @@ function harness() {
     audit as unknown as AuditService,
     uploads as unknown as FuelUploadsService,
   );
+  // The reader re-read after the parse: the request's user unless a test narrows it.
+  vi.spyOn(service as unknown as { currentReader: (u: RequestUser) => Promise<RequestUser> }, 'currentReader').mockImplementation(async (u) => u);
   return { prisma, audit, service };
 }
 
@@ -189,5 +191,18 @@ describe('FuelFilesService — a preview', () => {
       ['000105', 'declaration'],
     ]);
     expect(preview.refused).toEqual([{ row: 9, code: 'fuel_key_missing' }]);
+  });
+});
+
+describe('FuelFilesService — the preview reads the caller again after the file (fourth review of the branch, P2)', () => {
+  it('neither names nor batches a company whose grant went while the file was read', async () => {
+    const { service } = harness();
+    const file = fixture('petrol-ofisi-satislistesi.xlsx');
+    const masterkeyLike = user('super_admin', [LOGISTICS]);
+    vi.spyOn(service as unknown as { currentReader: (u: RequestUser) => Promise<RequestUser> }, 'currentReader').mockImplementation(async (u) => ({ ...u, accessibleSubsidiaryIds: [] }));
+    const preview = await service.preview(masterkeyLike, asFile(file), { source: 'petrol_ofisi', usage: 'on_road' });
+    const account = preview.accounts.find((a) => a.code === 'PO-0001')!;
+    expect(account).toMatchObject({ subsidiaryId: null, subsidiaryName: null });
+    expect(account.outcomes.map((o) => o.outcome)).toEqual(['outside_scope']);
   });
 });

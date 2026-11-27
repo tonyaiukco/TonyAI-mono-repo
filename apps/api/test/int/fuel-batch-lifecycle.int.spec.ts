@@ -13,7 +13,8 @@ import { ReportsService } from '../../src/reports/reports.service';
 import { PdfRenderer } from '../../src/common/pdf-renderer';
 import { batchVerdictsOf, rewriteVerdict, storedVerdict } from '../../../../packages/db/scripts/anomaly-recompute.lib.mjs';
 import { row as sheetRow, xlsx } from '../xlsx';
-import { attachEvidence, connect, connectOwner, createTenant, type Tenant } from './db';
+import { attachEvidence, connect, connectOwner, createRecord, createTenant, type Tenant } from './db';
+import { BASE_SQL, DRIFT_WHERE } from '../../../../packages/db/scripts/anomaly-probe.lib.mjs';
 import { lifecycleServices, pdfFile } from './services';
 import { loadTrReleases } from './tr-releases';
 
@@ -221,6 +222,29 @@ describe('the batch lifecycle (task 7.1)', () => {
     expect(await owner.auditLog.count({ where: { entity: 'activity_record', entityId: r.id, action: 'rescore' } })).toBe(1);
     // A record changed since the read is skipped, never clobbered.
     expect(await rewriteVerdict(runtime, r, storedVerdict(r), fresh)).toBe('it changed between the read and the write');
+  });
+
+  it('is checked by anomaly:probe as D12 judges it: a manual record never counts a batch record as its history (fourth review, P2)', async () => {
+    const user = await masterkey();
+    for (const [i, day] of ['03.01.2025', '03.02.2025', '03.03.2025'].entries()) {
+      const id = await formedBatch(user, [day], `OZK-PR-${i}`);
+      await withEvidence(id);
+      await services().batches.submit(user, id, 'checked');
+    }
+    // A manual April record of the same company, category and fuel, stored as the API stores it: no history.
+    const april = await createRecord(owner, tenant, {
+      category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres', reportingYear: 2025, periodValue: 'April',
+      status: 'approved', calculation: { tCo2e: 5, factorId: 'int-test-placeholder' },
+      anomalyFlag: false, anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null,
+    });
+    const rows = await owner.$queryRawUnsafe<Array<{ id: string; priors: number }>>(
+      `${BASE_SQL}\nSELECT id, priors FROM verdict WHERE subsidiary_id = $1::uuid`,
+      tenant.subsidiaryId,
+    );
+    // The batch records are not in the manual check at all, and April sees none of them.
+    expect(rows.map((r) => [r.id, r.priors])).toEqual([[april.id, 0]]);
+    const drift = await owner.$queryRawUnsafe<Array<{ id: string }>>(`${BASE_SQL}\nSELECT id FROM verdict WHERE ${DRIFT_WHERE} AND subsidiary_id = $1::uuid`, tenant.subsidiaryId);
+    expect(drift).toEqual([]);
   });
 
   it('refuses a flagged batch submitted without a variance reason and moves nothing; with one it submits', async () => {

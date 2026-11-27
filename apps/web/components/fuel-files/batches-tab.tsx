@@ -29,6 +29,7 @@ export function BatchesTab({ user, refreshKey, initialOpen = null }: { user: Aut
   const [status, setStatus] = useState<FuelBatchStatus | typeof ALL>(ALL);
   const [paged, setPaged] = useState<PagedBatches | null>(null);
   const [more, setMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const batches = paged ? paged.lists[0]! : null;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<string | null>(initialOpen);
@@ -44,6 +45,8 @@ export function BatchesTab({ user, refreshKey, initialOpen = null }: { user: Aut
   const seq = useRef(0);
   const load = useCallback(async () => {
     const mine = ++seq.current;
+    // While the first page of a (new) filter is read, no further page is asked for: its cursor would be the old list's.
+    setRefreshing(true);
     try {
       const [list, meta] = await Promise.all([api.listFuelBatches(filter), api.fuelBatchMetadata(filter)]);
       if (mine !== seq.current) return;
@@ -52,18 +55,22 @@ export function BatchesTab({ user, refreshKey, initialOpen = null }: { user: Aut
       if (mine !== seq.current) return;
       setPaged({ lists: [[]], totals: [0] });
       showError(error);
+    } finally {
+      if (mine === seq.current) setRefreshing(false);
     }
   }, [filter, showError]);
   /** The next page, after the last batch shown (WP9 PR B review, P2: one upload can form hundreds of batches). */
   async function loadMore() {
-    const after = paged ? nextCursors(paged)[0] : null;
-    if (!paged || !after) return;
+    const base = paged;
+    const after = base ? nextCursors(base)[0] : null;
+    if (!base || !after || refreshing) return;
     const mine = seq.current;
     setMore(true);
     try {
       const page = await api.listFuelBatches({ ...filter, after });
       if (mine !== seq.current) return;
-      setPaged((now) => (now ? withPage(now, 0, page, FUEL_BATCH_PAGE) : now));
+      // Appended only to the list its cursor came from (fourth review of the branch, P2).
+      setPaged((now) => (now === base ? withPage(now, 0, page, FUEL_BATCH_PAGE) : now));
     } catch (error) {
       showError(error);
     } finally {
@@ -189,7 +196,7 @@ export function BatchesTab({ user, refreshKey, initialOpen = null }: { user: Aut
         {paged && hasMoreBatches(paged) && (
           <div className="flex items-center justify-between gap-2 border-t p-3 text-sm text-muted-foreground">
             <span>{t("batches.shownOf", { shown: formatNumber(shownOf(paged).shown, locale), total: formatNumber(shownOf(paged).total, locale) })}</span>
-            <Button size="sm" variant="outline" disabled={more} onClick={() => void loadMore()} data-testid="batches-more">
+            <Button size="sm" variant="outline" disabled={more || refreshing} onClick={() => void loadMore()} data-testid="batches-more">
               {more && <Loader2 className="h-4 w-4 animate-spin" />}{t("batches.loadMore")}
             </Button>
           </div>

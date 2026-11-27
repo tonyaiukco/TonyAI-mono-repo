@@ -144,7 +144,7 @@ export const CEILING_ABOVE_SQL = (() => {
 export const BASE_SQL = `
 WITH r AS (
   SELECT id, subsidiary_id, location_id, category, activity_type, reporting_period,
-         reporting_year, period_value, status, anomaly_flag,
+         reporting_year, period_value, status, anomaly_flag, fuel_batch_id,
          ${CEILING_ABOVE_SQL} AS above_ceiling,
          anomaly_baseline_prior_count AS stored_priors,
          anomaly_baseline_tco2e AS stored_baseline,
@@ -167,7 +167,11 @@ WITH r AS (
   FROM activity_records
 ),
 counted AS (
+  -- A fuel batch's record is judged per invoice (D12), never in a manual
+  -- record's pool, nor judged by one: the API keeps it out of both (the
+  -- probe's batch check covers it; fourth review of WP9 PR B, P2).
   SELECT * FROM r WHERE status = ANY(ARRAY[${BASELINE_STATUSES.map((s) => `'${s}'`).join(',')}]::"ActivityRecordStatus"[])
+    AND fuel_batch_id IS NULL
 ),
 scored AS (
   SELECT c.*, s.legal_name AS sub, l.name AS loc, p.slots, p.priors, p.baseline
@@ -198,7 +202,8 @@ verdict AS (
     WHEN priors = 0 THEN COALESCE(above_ceiling, false)
     WHEN priors >= ${BASELINE_MIN_PERIODS} AND baseline = 0 THEN COALESCE(above_ceiling, false)
     WHEN priors < ${BASELINE_MIN_PERIODS} OR baseline IS NULL THEN false
-    ELSE abs(tco2e - baseline) / baseline > ${ANOMALY_THRESHOLD} END AS computed,
+    -- At 12 decimals, as \`computeAnomalyVerdict\` compares.
+    ELSE round((abs(tco2e - baseline) / baseline)::numeric, 12) > ${ANOMALY_THRESHOLD} END AS computed,
     -- What the rule STORES beside the flag: no count for a record with no
     -- figure of its own, and an average once the window holds a figure.
     CASE WHEN tco2e IS NULL THEN NULL ELSE priors END AS expected_priors,
