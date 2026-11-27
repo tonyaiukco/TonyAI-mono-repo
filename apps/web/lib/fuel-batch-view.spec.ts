@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fuelBatchCursor, type FuelBatchDTO } from "@/lib/types";
-import { BULK_OUTCOME_UNKNOWN, appendPage, batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, reviewKey, shownOf, submitInParts, submittableIds, takesIntoReview, withPage } from "./fuel-batch-view";
+import { BULK_OUTCOME_UNKNOWN, appendPage, batchActions, periodsLabel, batchTitle, hasMoreBatches, isRevised, nextCursors, reviewKey, shownOf, submitInParts, submittableIds, takesIntoReview, withPage } from "./fuel-batch-view";
 
 const AUTHOR = { id: "u-author", role: "standard_user" };
 const MASTERKEY = { id: "u-mk", role: "masterkey" };
@@ -152,4 +152,14 @@ describe("a bulk submit past one part (the second review of the branch, P2)", ()
     expect(out.failed).toEqual([{ batchId: "b1", code: BULK_OUTCOME_UNKNOWN }, { batchId: "b2", code: BULK_OUTCOME_UNKNOWN }]);
     expect(out.submitted).toEqual([]);
   });
+});
+
+describe("the review queue's row, without opening the batch (D10; sixth review of the branch, P2)", () => {
+  it("names the months covered, oldest first, in the reader's locale", () => {
+    const periods = [{ year: 2025, month: 3 }, { year: 2025, month: 4 }];
+    expect(periodsLabel(periods, "en-GB")).toBe("Mar 2025, Apr 2025");
+    expect(periodsLabel(periods, "tr-TR")).toBe("Mar 2025, Nis 2025");
+    expect(periodsLabel([], "en-GB")).toBe("");
+  });
+
 });

@@ -1,4 +1,7 @@
 import type { Prisma } from '@tonyai/db';
+import { can } from '@tonyai/shared-types';
+import type { RequestUser } from '../auth/auth.types';
+import { accessRowsOf, reportingEntityOf } from '../central-reporting/record-entities';
 
 /**
  * Keep on the batch the reporting company its records were written for
@@ -21,4 +24,17 @@ export async function keepReportingCompany(tx: Pick<Prisma.TransactionClient, '$
      WHERE b.id = ${batchId}::uuid
        AND b.reported_by_subsidiary_id IS DISTINCT FROM
            (CASE WHEN r.reported_by_subsidiary_id = b.subsidiary_id THEN NULL ELSE r.reported_by_subsidiary_id END)`;
+}
+
+/**
+ * The reporting company a record the caller writes for `subsidiaryId` now
+ * would carry, as the batch header keeps it (null: the company itself): a
+ * standard user's by its grants (`reportingEntityOf`, as the create core);
+ * any other role writes for the company itself. A batch's live records all
+ * carry one — a group joins an open batch, and a declaration change rebuilds
+ * one, only when this equals the batch's (sixth review of WP9 PR B).
+ */
+export function reportingHeaderFor(user: RequestUser, subsidiaryId: string): string | null {
+  const entity = can(user.role, 'scope.categories') ? reportingEntityOf(accessRowsOf(user), subsidiaryId) : subsidiaryId;
+  return entity === subsidiaryId ? null : entity;
 }

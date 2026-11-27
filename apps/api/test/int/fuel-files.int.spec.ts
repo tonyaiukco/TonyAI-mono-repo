@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UserRole } from '@tonyai/db';
 import { fuelUploadCursor } from '@tonyai/shared-types';
 import type { RequestUser } from '../../src/auth/auth.types';
@@ -281,6 +281,18 @@ describe('applying a fuel file (task 5.1)', () => {
     await owner.userSubsidiaryAccess.deleteMany({ where: { userId: superAdmin.id } });
     const answer = await apply(superAdmin, salesList('INT-GONE', 3));
     expect(await rowsOf()).toHaveLength(3);
+    expect(Object.values(answer.rows).reduce((n, c) => n + c.rows, 0)).toBe(0);
+  });
+
+  it('answers a stored upload with file-level counts only when its caller cannot be re-read (sixth review of the branch, P2)', async () => {
+    const user = await masterkey();
+    const files = services();
+    // The caller's standing changes between the write and the answer (re-read refused).
+    vi.spyOn(files.files as unknown as { currentReader: () => Promise<unknown> }, 'currentReader').mockRejectedValueOnce(new Error('changed'));
+    const file = salesList('INT-NOSCOPE', 3);
+    const answer = await files.files.apply(user, asFile(file), { source: 'petrol_ofisi', usage: 'on_road', fileSha256: sha(file) });
+    expect(await rowsOf()).toHaveLength(3);
+    expect(answer).toMatchObject({ rowsRead: 3, rowsRefused: 0, processableRows: 0, readerIsHolder: false, held: [] });
     expect(Object.values(answer.rows).reduce((n, c) => n + c.rows, 0)).toBe(0);
   });
 

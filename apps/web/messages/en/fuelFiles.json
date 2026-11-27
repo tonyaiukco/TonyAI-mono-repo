@@ -218,7 +218,8 @@
     "recordsTab": "Records ({count})",
     "batchesTab": "Fuel batches ({count})",
     "empty": "No fuel batch awaits a decision.",
-    "notYours": "Not yours to decide"
+    "notYours": "Not yours to decide",
+    "periods": "Months"
   },
   "entry": {
     "fuel": "Fuel",

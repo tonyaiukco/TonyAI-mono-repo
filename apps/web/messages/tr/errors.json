@@ -200,6 +200,7 @@
     "fuel_account_not_found": "Yakıt hesabı bulunamadı",
     "fuel_file_not_found": "Yakıt yüklemesi bulunamadı",
     "fuel_batch_not_open": "Bu paket artık taslak ya da iade edilmiş değil, bu yüzden değiştirilemez.",
+    "fuel_batch_reporting_changed": "Bu paket, ana şirketiniz başka bir şirketken yazıldı. Paketi geri çekip satırlarından yeniden oluşturun; şimdiki ana şirketiniz adına yazılacaklar.",
     "fuel_account_in_use": "Bu hesabın {rows} satırı paketlerde ya da hariç tutulmuş, bu yüzden şirketi değiştirilemez. Hiçbir şey değiştirilmedi.",
     "fuel_account_exists": "Bu kaynak ve kodla bir hesap zaten var.",
     "fuel_account_target_forbidden": "Bu hesabı o şirkete eşleyemezsiniz.",

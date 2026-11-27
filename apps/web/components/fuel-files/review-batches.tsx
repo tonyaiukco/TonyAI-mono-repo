@@ -10,9 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api } from "@/lib/api";
 import { useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatComputedAmount, formatNumber } from "@/lib/i18n/number";
-import { batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, shownOf, withPage, type PagedBatches } from "@/lib/fuel-batch-view";
-import { reviewBatchFilters } from "@/lib/review-view";
-import { FUEL_BATCH_PAGE, type AuthUser, type Locale } from "@/lib/types";
+import { batchActions, batchTitle, hasMoreBatches, isRevised, nextCursors, periodsLabel, shownOf, withPage, type PagedBatches } from "@/lib/fuel-batch-view";
+import { reviewBatchFilters, waitingLabel } from "@/lib/review-view";
+import { FUEL_BATCH_PAGE, LOCALE_FORMAT_TAGS, type AuthUser, type Locale } from "@/lib/types";
 import { BatchSheet } from "./batch-sheet";
 import { RowCount } from "./common";
 
@@ -31,6 +31,7 @@ export function ReviewBatches({
   onChanged: () => void;
 }) {
   const t = useTranslations("fuelFiles");
+  const tReview = useTranslations("review");
   const locale = useLocale() as Locale;
   const showError = useStableErrorToast();
   const [paged, setPaged] = useState<PagedBatches | null>(null);
@@ -96,6 +97,7 @@ export function ReviewBatches({
             <TableHeader>
               <TableRow>
                 <TableHead>{t("batches.invoice")}</TableHead>
+                <TableHead>{t("review.periods")}</TableHead>
                 <TableHead>{t("upload.company")}</TableHead>
                 <TableHead>{t("batches.status")}</TableHead>
                 <TableHead>{t("uploads.rows")}</TableHead>
@@ -109,7 +111,13 @@ export function ReviewBatches({
                 <TableRow key={b.id} className="cursor-pointer" data-testid="review-batch-row" onClick={() => setOpen(b.id)}>
                   <TableCell>
                     <div className="font-mono text-xs">{batchTitle(b)}</div>
-                    <div className="text-xs text-muted-foreground">{b.accountCode} · {t(`usages.${b.usage}`)}</div>
+                    <div className="text-xs text-muted-foreground">{t(`sources.${b.source}`)} · {b.accountCode} · {t(`usages.${b.usage}`)}</div>
+                  </TableCell>
+                  {/* What the batch covers and how long it has waited, without opening it (opening takes it into review; D10). */}
+                  <TableCell className="text-sm">
+                    <div>{periodsLabel(b.periods, LOCALE_FORMAT_TAGS[locale]) || "—"}</div>
+                    {/* Waiting, as the Records list says it (the same helper and words). */}
+                    <div className="text-xs text-muted-foreground" data-testid="review-batch-waiting">{waitingLabel(b.submittedAt, { t: tReview, locale })}</div>
                   </TableCell>
                   <TableCell>{b.subsidiaryName}</TableCell>
                   <TableCell className="space-x-1">

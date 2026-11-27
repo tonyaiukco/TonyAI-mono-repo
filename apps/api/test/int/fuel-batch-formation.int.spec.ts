@@ -414,30 +414,47 @@ describe('later rows, the tray, the reporting company and the holder (task 6.3)'
     expect((await batchService().list(mk, {})).find((d) => d.id === byReporter!.id)).toMatchObject({ status: 'withdrawn', reportingSubsidiaryId: T() });
   });
 
-  it('moves the batch’s reporting company with its records when a rebuild writes them under a moved main company (fifth review, P2)', async () => {
-    const reporter = await centralReporter();
-    await confirmed('MV', S());
-    const up = await upload(reporter, sales([['MV-1', 'MV', '03.03.2025', 'Motorin', 10, 'OZK-MV']]));
-    await services().formation.formBatches(reporter, up.id);
-    const [batch] = await batchesOf();
-    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id: batch!.id } })).reportedBySubsidiaryId).toBe(T());
-    // The reporter's main company moves from T to a new company U.
+  /** The reporter's main company moves from T to a new company U; answers U and the request as the guard builds it then. */
+  async function moveMainCompany(reporter: RequestUser): Promise<{ u: string; moved: RequestUser }> {
     const u = await owner.subsidiary.create({
       data: { organisationId: tenant.organisationId, legalName: `Int-test U ${randomUUID().slice(0, 6)}`, geographyCode: 'TR', nodeType: 'company', parentId: S(), control: 'controlled' },
     });
     await owner.userSubsidiaryAccess.delete({ where: { userId_subsidiaryId: { userId: reporter.id, subsidiaryId: T() } } });
     await owner.userSubsidiaryAccess.create({ data: { userId: reporter.id, subsidiaryId: u.id, organisationId: tenant.organisationId, kind: 'assigned', categories: ['Water'] } });
-    const moved: RequestUser = {
-      ...reporter,
-      accessibleSubsidiaryIds: [u.id, S()],
-      categoryGrants: { [u.id]: ['Water'], [S()]: ['Mobile Combustion'] },
-      grantKinds: { [u.id]: 'assigned', [S()]: 'central_reporter' },
+    return {
+      u: u.id,
+      moved: {
+        ...reporter,
+        accessibleSubsidiaryIds: [u.id, S()],
+        categoryGrants: { [u.id]: ['Water'], [S()]: ['Mobile Combustion'] },
+        grantKinds: { [u.id]: 'assigned', [S()]: 'central_reporter' },
+      },
     };
-    // A declaration change rebuilds the records (on-road to off-road): they are written for U now, and so is the header.
-    await batchService().changeDeclarations(moved, batch!.id, { usage: 'off_road' });
-    expect((await recordsOf(batch!.id)).map((r) => r.reportedBySubsidiaryId)).toEqual([u.id]);
-    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id: batch!.id } })).reportedBySubsidiaryId).toBe(u.id);
-    expect((await batchService().list(moved, {})).find((d) => d.id === batch!.id)).toMatchObject({ reportingSubsidiaryId: u.id });
+  }
+
+  it('keeps one reporting company per batch: a moved central reporter’s later row forms a further batch, and its declarations are not rewritten (sixth review, P2)', async () => {
+    const reporter = await centralReporter();
+    await confirmed('MV', S());
+    const first = await upload(reporter, sales([['MV-1', 'MV', '03.03.2025', 'Motorin', 10, 'OZK-MV']]));
+    await services().formation.formBatches(reporter, first.id);
+    const [march] = await batchesOf();
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id: march!.id } })).reportedBySubsidiaryId).toBe(T());
+    const { u, moved } = await moveMainCompany(reporter);
+
+    // A later row of the same invoice is written for U: never into T's open batch.
+    const later = await upload(moved, sales([['MV-2', 'MV', '04.04.2025', 'Motorin', 20, 'OZK-MV']]));
+    expect(await services().formation.formBatches(moved, later.id)).toMatchObject({ formedBatches: 1, joinedBatches: 0 });
+    const batches = await batchesOf();
+    expect(batches.map((b) => [b.invoiceRef, b.sequence])).toEqual([['OZK-MV', 1], ['OZK-MV', 2]]);
+    for (const [batch, entity] of [[batches[0]!, T()], [batches[1]!, u]] as const) {
+      expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id: batch.id } })).reportedBySubsidiaryId).toBe(entity);
+      expect((await recordsOf(batch.id)).map((r) => r.reportedBySubsidiaryId)).toEqual([entity]);
+    }
+
+    // T's batch is not rebuilt for U: refused, nothing changed.
+    const refused = await batchService().changeDeclarations(moved, march!.id, { usage: 'off_road' }).catch((e: unknown) => e);
+    expect(errorCodeOf(refused)).toBe('fuel_batch_reporting_changed');
+    expect((await recordsOf(march!.id)).map((r) => [r.activityType, r.reportedBySubsidiaryId])).toEqual([['on_road_diesel', T()]]);
   });
 
   it('holds a central reporter’s rows for a month the company’s own user entered, with the single-entry conflict', async () => {
@@ -464,6 +481,18 @@ describe('later rows, the tray, the reporting company and the holder (task 6.3)'
       formedBatches: 0, held: [{ reason: 'fuel_out_of_scope', rows: 1 }],
     });
     expect(await batchesOf()).toEqual([]);
+  });
+
+  it('counts a formation’s waiting rows by the holder’s access as it stands after the step (sixth review, P2)', async () => {
+    await confirmed('WF', S());
+    const superAdmin = tenant.users.superAdmin;
+    const up = await upload(superAdmin, sales([['WF-1', 'WF', '03.03.2025', 'Otogaz LPG', 10, 'OZK-WF']]));
+    expect((await owner.fuelRow.findFirstOrThrow({ where: { importBatchId: up.id } })).state).toBe('waiting_fuel');
+    // The grant goes while the step runs; the request still names the company.
+    await owner.userSubsidiaryAccess.deleteMany({ where: { userId: superAdmin.id } });
+    const out = await services().formation.formBatches(superAdmin, up.id);
+    // Answered without the company's rows: the holder no longer reads them.
+    expect(out.waiting).toEqual([]);
   });
 
   it('holds an invoice of any size in one statement: 50,000 judged rows pass no parameter limit (fifth review, P2)', async () => {

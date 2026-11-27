@@ -14,7 +14,10 @@ import { deciderFor } from '../activity-records/record-approver';
 
 // The author's standing re-read under lock is proven against the database
 // (`test/int/fuel-batch-lifecycle.int.spec.ts`); here, only when it is asked.
-vi.mock('../central-reporting/record-entities', () => ({ lockAuthorAccess: vi.fn(async () => null) }));
+vi.mock('../central-reporting/record-entities', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../central-reporting/record-entities')>()),
+  lockAuthorAccess: vi.fn(async () => null),
+}));
 // The decider as the record cores verify it: the request's user unless a test says otherwise.
 vi.mock('../activity-records/record-approver', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../activity-records/record-approver')>()),
@@ -54,6 +57,7 @@ const batchOf = (over: Partial<FuelBatch> = {}): FuelBatch =>
     organisationId: ORG,
     subsidiaryId: COMPANY,
     category: 'Mobile Combustion',
+    reportedBySubsidiaryId: null,
     status: 'draft',
     createdBy: AUTHOR,
     submittedAt: null,

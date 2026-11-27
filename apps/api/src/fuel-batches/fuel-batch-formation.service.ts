@@ -30,7 +30,8 @@ import {
 import { SingleEntryPeriodConflictError } from '../central-reporting/central-reporting-errors';
 import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { sumDecimals } from '../fuel-files/decimal';
-import { keepReportingCompany } from './batch-reporting';
+import { keepReportingCompany, reportingHeaderFor } from './batch-reporting';
+import { currentReader } from '../fuel-files/current-reader';
 import { usageCategory } from '../fuel-files/fuel-scope';
 import { FuelUploadsService } from '../fuel-files/fuel-uploads.service';
 
@@ -140,7 +141,11 @@ export class FuelBatchFormationService {
       }
     }
 
-    const summary = await this.uploads.detail(user, upload.id);
+    // The upload as the holder reads it now, after a long step: a company or
+    // category withdrawn meanwhile is not counted (sixth review of the branch, P2).
+    // A holder that cannot be re-read gets no scoped count, and no further step.
+    const reader = await currentReader(this.prisma, user).catch(() => null);
+    const summary = reader ? await this.uploads.detail(reader, upload.id) : null;
     // The holder's own held rows, by reason — as `processableRows` counts its
     // own ready rows — so a holder is told how many of its rows a step held,
     // a company outside its scope included, though the summary's row scope
@@ -154,12 +159,14 @@ export class FuelBatchFormationService {
     return {
       formedBatches,
       joinedBatches,
-      processableRows: summary.processableRows,
+      processableRows: summary?.processableRows ?? 0,
       held: held.filter((h) => isFuelHoldReason(h.reason)).map((h) => ({ reason: h.reason as FuelHoldReason, rows: h.rows, litres: sumDecimals([h.litres]) })),
-      waiting: [
-        { reason: 'fuel_account_unmatched' as const, ...summary.rows.waiting_account },
-        { reason: 'fuel_name_unmatched' as const, ...summary.rows.waiting_fuel },
-      ].filter((w) => w.rows > 0),
+      waiting: summary
+        ? [
+            { reason: 'fuel_account_unmatched' as const, ...summary.rows.waiting_account },
+            { reason: 'fuel_name_unmatched' as const, ...summary.rows.waiting_fuel },
+          ].filter((w) => w.rows > 0)
+        : [],
     };
   }
 
@@ -210,11 +217,15 @@ export class FuelBatchFormationService {
       // B4: a company outside the holder's current scope is held, never tried.
       if (!user.accessibleSubsidiaryIds.includes(subsidiaryId)) throw new GroupHeld('fuel_out_of_scope');
 
-      const [open] = await tx.$queryRaw<Array<{ id: string; status: string }>>`
-        SELECT id::text, status FROM fuel_batches
+      const [candidate] = await tx.$queryRaw<Array<{ id: string; status: string; reported_by_subsidiary_id: string | null }>>`
+        SELECT id::text, status, reported_by_subsidiary_id::text FROM fuel_batches
         WHERE fuel_account_id = ${key.accountId}::uuid AND invoice_ref = ${key.invoiceRef}
           AND usage = ${key.usage} AND created_by = ${user.id}::uuid AND status IN ('draft', 'rejected')
         ORDER BY sequence DESC LIMIT 1 FOR UPDATE`;
+      // Joined only when its records would carry the batch's reporting company:
+      // a central reporter whose main company moved forms a further batch of the
+      // invoice, so no batch holds records of two (TA025 fixes each; sixth review, P2).
+      const open = candidate && candidate.reported_by_subsidiary_id === reportingHeaderFor(user, subsidiaryId) ? candidate : undefined;
       const batchId = open?.id ?? randomUUID();
       await declareFuelBatchStep(tx, batchId);
       if (!open) {

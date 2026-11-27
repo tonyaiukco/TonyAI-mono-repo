@@ -71,6 +71,20 @@ export class FuelUploadsService {
     return summary!;
   }
 
+  /**
+   * The caller's own just-stored upload, file-level counters only (rows read,
+   * refused, duplicate): what an apply answers when its caller cannot be
+   * re-read after the write — no count a scope decides (sixth review, P2).
+   */
+  async storedOnly(user: RequestUser, id: string): Promise<FuelUploadDTO> {
+    const found = await this.prisma.importBatch.findFirst({
+      where: { id, organisationId: user.organisationId ?? '00000000-0000-0000-0000-000000000000', uploadedBy: user.id, source: { not: 'template' } },
+    });
+    if (!found) throw new ResourceNotFoundError('fuel_file_not_found');
+    const [summary] = await this.summaries(user, [found], false);
+    return summary!;
+  }
+
   /** `GET /fuel-files/tray`: the rows waiting for an account or a fuel name, in the reader's scope (D14). */
   async tray(user: RequestUser): Promise<FuelTrayDTO> {
     this.assertOrganisation(user);
@@ -300,16 +314,18 @@ export class FuelUploadsService {
   private async summaries(
     user: RequestUser,
     imports: ReadonlyArray<{ id: string; uploadedBy: string; source: string; fileName: string; sizeBytes: number; sha256: string; createdAt: Date; totalRows: number; acceptedCount: number | null; rejectedCount: number | null }>,
+    /** False: the file-level counters only, no row a scope decides (`storedOnly`). */
+    scoped = true,
   ): Promise<FuelUploadDTO[]> {
     if (imports.length === 0) return [];
     const ids = imports.map((i) => i.id);
     const scope = fuelRowScopeSql(user, 'r');
-    const counts = await this.prisma.$queryRaw<CountRow[]>`
+    const counts = !scoped ? [] : await this.prisma.$queryRaw<CountRow[]>`
       SELECT r.import_batch_id::text, r.state, r.hold_reason, count(*)::int AS rows, sum(r.litres)::text AS litres
       FROM fuel_rows r
       WHERE r.import_batch_id = ANY(${ids}::uuid[]) AND ${scope}
       GROUP BY r.import_batch_id, r.state, r.hold_reason`;
-    const mine = await this.prisma.$queryRaw<Array<{ import_batch_id: string; ready: number; held: number }>>`
+    const mine = !scoped ? [] : await this.prisma.$queryRaw<Array<{ import_batch_id: string; ready: number; held: number }>>`
       SELECT import_batch_id::text,
              count(*) FILTER (WHERE state = 'ready')::int AS ready,
              count(*)::int AS held

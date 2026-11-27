@@ -56,7 +56,7 @@ function harness(source: string, groups: Group[], options: { refuse?: Error; ope
       const sql = sqlOf(strings);
       if (sql.includes('FROM fuel_accounts')) return [{ state: 'confirmed', subsidiary_id: current.company }];
       if (sql.includes('FROM fuel_rows') && sql.includes('FOR UPDATE')) return current.rows;
-      if (sql.includes("status IN ('draft', 'rejected')")) return options.open ? [{ id: 'b-open', status: 'draft' }] : [];
+      if (sql.includes("status IN ('draft', 'rejected')")) return options.open ? [{ id: 'b-open', status: 'draft', reported_by_subsidiary_id: null }] : [];
       if (sql.includes('fuel_batch_id =') && sql.includes("state = 'assigned'")) return options.open ? [{ fuel: 'diesel', year: 2025, month: 3, litres: '100' }] : [];
       if (sql.includes('max(sequence)')) return [{ next: 1 }];
       return [];

@@ -532,6 +532,29 @@ describe('the batch list past one page (WP9 PR B review, P2)', () => {
   });
 });
 
+describe('the review queue’s “show all” (sixth review of the branch, P2)', () => {
+  it('lists submitted and under-review batches as one list, oldest submission first, with one total', async () => {
+    const user = await masterkey();
+    const ids: string[] = [];
+    for (const [i, day] of ['03.03.2025', '04.03.2025', '05.03.2025'].entries()) {
+      const id = await formedBatch(user, [day], `OZK-IR${i}`);
+      await withEvidence(id);
+      await services().batches.submit(user, id, 'checked');
+      ids.push(id);
+    }
+    const s = services();
+    // The middle one is taken into review: the list still runs in submission order.
+    const middle = await owner.fuelBatch.findUniqueOrThrow({ where: { id: ids[1]! } });
+    await s.batches.startReview(user, ids[1]!, middle.submittedAt!.toISOString());
+    const listed = await s.batches.list(user, { inReview: true });
+    expect(listed.map((b) => [b.id, b.status])).toEqual([[ids[0], 'submitted'], [ids[1], 'under_review'], [ids[2], 'submitted']]);
+    expect((await s.batches.metadata(user, { inReview: true })).total).toBe(3);
+    expect((await s.batches.list(user, { inReview: true, after: fuelBatchCursor(listed[0]!) })).map((b) => b.id)).toEqual([ids[1], ids[2]]);
+    // The months each covers, for the queue's row (D10).
+    expect(listed[0]!.periods).toEqual([{ year: 2025, month: 3 }]);
+  });
+});
+
 describe('a batch file in a locked period (security review of PR B)', () => {
   it('refuses to take a file off a draft batch whose period is locked, and keeps every link and the file', async () => {
     const user = await masterkey();

@@ -181,5 +181,6 @@ export function reviewRecordFilters(options: {
 export function reviewBatchFilters(options: { subsidiaryId: string | null; showAll: boolean }): FuelBatchFilters[] {
   const company = options.subsidiaryId === null ? {} : { subsidiaryId: options.subsidiaryId };
   if (!options.showAll) return [{ ...company, awaitingMyDecision: true }];
-  return [{ ...company, status: 'submitted' }, { ...company, status: 'under_review' }];
+  // One list in submission order, so its pages follow the oldest submission first (sixth review of WP9 PR B, P2).
+  return [{ ...company, inReview: true }];
 }

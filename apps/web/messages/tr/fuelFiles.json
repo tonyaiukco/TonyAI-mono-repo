@@ -218,7 +218,8 @@
     "recordsTab": "Kayıtlar ({count})",
     "batchesTab": "Yakıt paketleri ({count})",
     "empty": "Karar bekleyen yakıt paketi yok.",
-    "notYours": "Karar sizin değil"
+    "notYours": "Karar sizin değil",
+    "periods": "Aylar"
   },
   "entry": {
     "fuel": "Yakıt",

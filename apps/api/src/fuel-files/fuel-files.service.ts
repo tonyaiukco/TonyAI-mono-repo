@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, PayloadTooLargeException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, PayloadTooLargeException } from '@nestjs/common';
 import { Prisma } from '@tonyai/db';
 import {
   can,
@@ -21,7 +21,7 @@ import {
   type FuelUsage,
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
-import { readAccess } from '../auth/auth.guard';
+import { currentReader } from './current-reader';
 import { AuditService } from '../audit/audit.service';
 import { errorBody } from '../common/api-error';
 import { withParserDeadlineMs } from '../common/work-deadline';
@@ -235,22 +235,18 @@ export class FuelFilesService {
 
     // The stored upload as the caller reads it now, after a long apply: a company
     // withdrawn meanwhile is not counted in its answer (fifth review, P2). The
-    // upload is stored either way, so a caller whose standing changed is answered
-    // with no company's rows rather than refused — never retried as a new upload.
-    const reader = await this.currentReader(user).catch(() => ({ ...user, accessibleSubsidiaryIds: [], categoryGrants: {} }));
-    return this.uploads.detail(reader, importId);
+    // upload is stored either way, so it is never refused here (a retry would
+    // upload it twice).
+    // A caller that cannot be re-read (disabled, its role or organisation changed)
+    // is told only that its upload is stored — no count that depends on a scope
+    // (sixth review of the branch, P2).
+    const reader = await this.currentReader(user).catch(() => null);
+    return reader ? this.uploads.detail(reader, importId) : this.uploads.storedOnly(user, importId);
   }
 
-  /**
-   * The caller re-read: the same role, organisation and an enabled account
-   * (403 otherwise, as `lockActor`), and its scope as the guard builds it now.
-   */
-  private async currentReader(user: RequestUser): Promise<RequestUser> {
-    const profile = await this.prisma.profile.findUnique({ where: { id: user.id }, include: { subsidiaryAccess: true } });
-    if (!profile || profile.disabledAt || profile.role !== user.role || profile.organisationId !== user.organisationId) {
-      throw new ForbiddenException();
-    }
-    return { ...user, ...(await readAccess(this.prisma, profile)) };
+  /** The caller re-read after the file (`currentReader`). */
+  private currentReader(user: RequestUser): Promise<RequestUser> {
+    return currentReader(this.prisma, user);
   }
 
   /** The checks every fuel upload passes before its file is read, then the read. */

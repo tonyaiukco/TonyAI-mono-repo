@@ -163,3 +163,12 @@ export async function submitInParts(
   }
   return out;
 }
+
+/**
+ * The months a batch covers, as the review queue names them (D10): each
+ * "Mar 2025" in the reader's locale, oldest first (sixth review of WP9 PR B).
+ */
+export function periodsLabel(periods: ReadonlyArray<{ year: number; month: number }>, localeTag: string): string {
+  const format = new Intl.DateTimeFormat(localeTag, { month: "short", year: "numeric", timeZone: "UTC" });
+  return periods.map((p) => format.format(new Date(Date.UTC(p.year, p.month - 1, 1)))).join(", ");
+}

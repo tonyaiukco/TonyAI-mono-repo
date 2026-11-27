@@ -636,6 +636,12 @@ export interface FuelBatchDTO {
   /** Sum of its live records' figures; null when none is calculated. */
   tCo2e: number | null;
   evidenceCount: number;
+  /**
+   * The months its rows fall in, oldest first: what the review queue shows a
+   * batch covers without opening it (opening takes it into review; D10, sixth
+   * review of WP9 PR B).
+   */
+  periods: Array<{ year: number; month: number }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -682,6 +688,12 @@ export interface FuelBatchFilters {
   awaitingMyDecision?: boolean;
   /** The caller's own batches (the Fuel files page's Batches tab). */
   mine?: boolean;
+  /**
+   * Every batch awaiting a decision — submitted or under review — as one list
+   * in submission order (the review queue's "show all"; one cursor, so its
+   * pages follow the oldest submission first; sixth review of WP9 PR B).
+   */
+  inReview?: boolean;
   /**
    * `GET /fuel-batches` only: `fuelBatchCursor` of the last batch already
    * loaded; the next page starts right after it in the list's order

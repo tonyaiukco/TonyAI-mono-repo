@@ -32,7 +32,7 @@ import { lockAuthorAccess } from '../central-reporting/record-entities';
 import { approversFor, awaitingDecisionWhere, deciderFor } from '../activity-records/record-approver';
 import { sumDecimals } from '../fuel-files/decimal';
 import { fuelBatchVerdicts } from './fuel-batch-anomaly';
-import { keepReportingCompany } from './batch-reporting';
+import { keepReportingCompany, reportingHeaderFor } from './batch-reporting';
 import { EvidenceService } from '../evidence/evidence.service';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { usageCategory } from '../fuel-files/fuel-scope';
@@ -61,6 +61,19 @@ export class FuelBatchNotOpenError extends ConflictException {
   }
 }
 
+/**
+ * The author's reporting company is no longer the one the batch's records were
+ * written for (a central reporter's main company moved): a rebuild would leave
+ * records of two reporting companies in one batch, since a record keeps the
+ * entity it was stored with (TA025). Withdraw it and form it again (sixth
+ * review of WP9 PR B).
+ */
+export class FuelBatchReportingChangedError extends ConflictException {
+  constructor() {
+    super(errorBody('fuel_batch_reporting_changed', 'This batch was written for another reporting company. Withdraw it and form it again.'));
+  }
+}
+
 /** As a record's own edit refuses a role that may not author records. */
 const ROLE_REFUSAL = 'Your role may not modify activity records';
 
@@ -80,6 +93,7 @@ export class FuelBatchesService {
     if (filters.status) and.push({ status: filters.status });
     if (filters.subsidiaryId) and.push({ subsidiaryId: filters.subsidiaryId });
     if (filters.mine) and.push({ createdBy: user.id });
+    if (filters.inReview) and.push({ status: { in: ['submitted', 'under_review'] } });
     if (filters.awaitingMyDecision) {
       // The record rule's own filter: a batch carries the fields it reads.
       const awaiting = await awaitingDecisionWhere(this.prisma, user);
@@ -92,7 +106,7 @@ export class FuelBatchesService {
   async list(user: RequestUser, filters: FuelBatchFilters): Promise<FuelBatchDTO[]> {
     const filtered = await this.filterWhere(user, filters);
     if (filtered === null) return [];
-    const reviewOrder = filters.awaitingMyDecision || filters.status === 'submitted' || filters.status === 'under_review';
+    const reviewOrder = filters.awaitingMyDecision || filters.inReview || filters.status === 'submitted' || filters.status === 'under_review';
     let where: Prisma.FuelBatchWhereInput = filtered;
     const cursor = filters.after ? parseFuelBatchCursor(filters.after) : null;
     // A cursor this list did not give (a date no calendar has, a malformed id) is refused before any query.
@@ -184,12 +198,15 @@ export class FuelBatchesService {
   async dtos(user: RequestUser, batches: readonly FuelBatch[]): Promise<FuelBatchDTO[]> {
     if (batches.length === 0) return [];
     const ids = batches.map((b) => b.id);
-    const [companies, accounts, rowSums, recordSums, siblings, uploaders, evidence, approvers] = await Promise.all([
+    const [companies, accounts, rowSums, rowPeriods, recordSums, siblings, uploaders, evidence, approvers] = await Promise.all([
       this.prisma.subsidiary.findMany({ where: { id: { in: batches.map((b) => b.subsidiaryId) } }, select: { id: true, legalName: true, tradingName: true } }),
       this.prisma.fuelAccount.findMany({ where: { id: { in: batches.map((b) => b.fuelAccountId) } }, select: { id: true, code: true, name: true } }),
       this.prisma.$queryRaw<Array<{ id: string; rows: number; litres: string }>>`
         SELECT fuel_batch_id::text AS id, count(*)::int AS rows, sum(litres)::text AS litres
         FROM fuel_rows WHERE fuel_batch_id = ANY(${ids}::uuid[]) GROUP BY fuel_batch_id`,
+      this.prisma.$queryRaw<Array<{ id: string; year: number; month: number }>>`
+        SELECT DISTINCT fuel_batch_id::text AS id, year, month FROM fuel_rows
+        WHERE fuel_batch_id = ANY(${ids}::uuid[]) ORDER BY 1, 2, 3`,
       this.prisma.activityRecord.findMany({
         where: { fuelBatchId: { in: ids }, status: { not: 'voided' } },
         select: { fuelBatchId: true, calculation: true, reportedBySubsidiaryId: true, createdBy: true, subsidiaryId: true, status: true, id: true },
@@ -264,6 +281,7 @@ export class FuelBatchesService {
         litres: sums ? sumDecimals([sums.litres]) : '0',
         tCo2e: figures.length ? figures.reduce((s, c) => s + c.tCo2e, 0) : null,
         evidenceCount: evidence.find((e) => e.id === b.id)?.files ?? 0,
+        periods: rowPeriods.filter((p) => p.id === b.id).map((p) => ({ year: p.year, month: p.month })),
         createdAt: b.createdAt.toISOString(),
         updatedAt: b.updatedAt.toISOString(),
       };
@@ -504,6 +522,8 @@ export class FuelBatchesService {
     try {
       await this.prisma.$transaction(async (tx) => {
         const batch = await this.lockOpen(tx, user, id, false);
+        // A batch written for another reporting company is not rewritten for this one (sixth review, P2).
+        if (batch.reportedBySubsidiaryId !== reportingHeaderFor(user, batch.subsidiaryId)) throw new FuelBatchReportingChangedError();
         await declareFuelBatchStep(tx, id);
         // The declaration as it stood and as it now stands, whole: a tanker
         // batch is one delivery, whose rows share one fuel and period — so the

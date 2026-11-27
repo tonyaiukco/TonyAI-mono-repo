@@ -268,9 +268,7 @@ describe('the review queue lists (inc28-fuel-bulk D10)', () => {
 
   it('asks for the batches awaiting the viewer by default, and each pending status with "show all"', () => {
     expect(reviewBatchFilters({ subsidiaryId: null, showAll: false })).toEqual([{ awaitingMyDecision: true }]);
-    expect(reviewBatchFilters({ subsidiaryId: 's1', showAll: true })).toEqual([
-      { subsidiaryId: 's1', status: 'submitted' },
-      { subsidiaryId: 's1', status: 'under_review' },
-    ]);
+    // "Show all": one list over both pending statuses, in submission order (sixth review of WP9 PR B).
+    expect(reviewBatchFilters({ subsidiaryId: 's1', showAll: true })).toEqual([{ subsidiaryId: 's1', inReview: true }]);
   });
 });

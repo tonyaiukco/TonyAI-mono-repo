@@ -3372,6 +3372,9 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** Declarations, files, withdrawal or submit on a batch that is not a draft
    *  or returned (C14). */
   fuel_batch_not_open: 409,
+  // A batch written for one reporting company cannot be rewritten for another:
+  // its author's main company moved since (TA025 fixes a record's entity).
+  fuel_batch_reporting_changed: 409,
   /** A mapping holding live assigned or excluded rows (C14). params: `rows`. */
   fuel_account_in_use: 409,
   /** Adding a source and code already stored. */
