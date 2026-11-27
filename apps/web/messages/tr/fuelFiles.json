@@ -1,0 +1,64 @@
+{
+  "title": "Yakıt dosyaları",
+  "subtitle": "Taşıt kartı ve tanker dosyaları: yükleyin, hesapları eşleyin, partilerini onaya gönderin",
+  "tabs": {
+    "upload": "Yükle",
+    "uploads": "Yüklemeler",
+    "batches": "Partiler",
+    "tray": "Eşleşmeyenler",
+    "accounts": "Hesaplar"
+  },
+  "sources": {
+    "shell": "Shell",
+    "petrol_ofisi": "Petrol Ofisi",
+    "tanker": "Tanker teslimatları"
+  },
+  "usages": {
+    "on_road": "Karayolu",
+    "off_road": "Arazi (yol dışı)",
+    "stationary": "Sabit (jeneratör, kazan)",
+    "marine": "Deniz (gemi)"
+  },
+  "fuels": {
+    "diesel": "Motorin",
+    "petrol": "Benzin",
+    "lpg": "LPG",
+    "marine_gas_oil": "Deniz motorini (MGO)"
+  },
+  "rowStates": {
+    "waiting_account": "Hesap bekliyor",
+    "excluded": "Hariç (iştirak)",
+    "waiting_fuel": "Yakıt adı bekliyor",
+    "ready": "Hazır",
+    "held": "Bekletiliyor",
+    "assigned": "Partide",
+    "withdrawn": "Geri çekildi"
+  },
+  "batchStatus": {
+    "draft": "Taslak",
+    "submitted": "Gönderildi",
+    "under_review": "İncelemede",
+    "approved": "Onaylandı",
+    "rejected": "İade edildi",
+    "withdrawn": "Geri çekildi"
+  },
+  "previewOutcomes": {
+    "batches": "Parti oluşturur",
+    "excluded": "Hariç (iştirak)",
+    "waiting_account": "Hesap bekler",
+    "waiting_fuel": "Yakıt adı bekler",
+    "outside_scope": "Şirketleriniz dışında"
+  },
+  "accountStates": {
+    "unmatched": "Eşleşmedi",
+    "proposed": "Önerildi",
+    "confirmed": "Onaylandı"
+  },
+  "rowsOne": "{count} satır",
+  "rowsMany": "{count} satır",
+  "litres": "{litres} L",
+  "forbidden": {
+    "title": "Yakıt dosyaları rolünüze açık değil",
+    "body": "Denetçi partileri onay kuyruğunda okur; yüklemeler ve hesaplar veri giren roller içindir."
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "title": "Fuel files",
+  "subtitle": "Fuel card and tanker files: upload, map accounts, and send their batches for review",
+  "tabs": {
+    "upload": "Upload",
+    "uploads": "Uploads",
+    "batches": "Batches",
+    "tray": "Unmatched",
+    "accounts": "Accounts"
+  },
+  "sources": {
+    "shell": "Shell",
+    "petrol_ofisi": "Petrol Ofisi",
+    "tanker": "Tanker deliveries"
+  },
+  "usages": {
+    "on_road": "On-road",
+    "off_road": "Off-road",
+    "stationary": "Stationary (generator, boiler)",
+    "marine": "Marine (vessel)"
+  },
+  "fuels": {
+    "diesel": "Diesel",
+    "petrol": "Petrol",
+    "lpg": "LPG",
+    "marine_gas_oil": "Marine gas oil"
+  },
+  "rowStates": {
+    "waiting_account": "Waiting for an account",
+    "excluded": "Excluded (associate)",
+    "waiting_fuel": "Waiting for a fuel name",
+    "ready": "Ready",
+    "held": "Held",
+    "assigned": "In a batch",
+    "withdrawn": "Withdrawn"
+  },
+  "batchStatus": {
+    "draft": "Draft",
+    "submitted": "Submitted",
+    "under_review": "Under review",
+    "approved": "Approved",
+    "rejected": "Returned",
+    "withdrawn": "Withdrawn"
+  },
+  "previewOutcomes": {
+    "batches": "Forms batches",
+    "excluded": "Excluded (associate)",
+    "waiting_account": "Waits for an account",
+    "waiting_fuel": "Waits for a fuel name",
+    "outside_scope": "Outside your companies"
+  },
+  "accountStates": {
+    "unmatched": "Unmatched",
+    "proposed": "Proposed",
+    "confirmed": "Confirmed"
+  },
+  "rowsOne": "{count} row",
+  "rowsMany": "{count} rows",
+  "litres": "{litres} L",
+  "forbidden": {
+    "title": "Fuel files are not open to your role",
+    "body": "An auditor reads batches in the review queue; uploads and accounts are for the roles that enter data."
+  }
+}
