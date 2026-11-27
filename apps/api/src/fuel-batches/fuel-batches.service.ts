@@ -25,7 +25,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import { declareFuelBatchStep, lockPeriodsShared, periodOf } from '../activity-records/lifecycle-lock';
 import { AuthorOnlyRefusedError, RecordChangedError } from '../activity-records/errors';
-import { grantedCategories } from '../activity-records/record-scope';
 import { approversFor, awaitingDecisionWhere } from '../activity-records/record-approver';
 import { sumDecimals } from '../fuel-files/decimal';
 import { fuelBatchVerdicts } from './fuel-batch-anomaly';

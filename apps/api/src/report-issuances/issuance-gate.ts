@@ -159,10 +159,10 @@ export function boundaryMatchesVersion(
 ): boolean {
   if (rebuilt === null) return false;
   switch (schemaVersion) {
+    // 4 (inc28-fuel-bulk) adds a dataset field, not a boundary shape.
     case 1:
     case 2:
     case 3:
-    // 4 (inc28-fuel-bulk) adds a dataset field, not a boundary shape.
     case 4:
       return canonicalJson(rebuilt) === canonicalJson(retained);
     default:

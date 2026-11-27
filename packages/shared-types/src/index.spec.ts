@@ -1241,6 +1241,8 @@ describe('bulk submit — the code list', () => {
       'evidence_required',
       'calculation_stale',
       'variance_reason_required',
+      // inc28-fuel-bulk D9: a fuel batch's record, submitted with its batch.
+      'record_in_batch',
       'unexpected',
       'not_processed_deadline',
     ]);
