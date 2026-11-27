@@ -286,6 +286,8 @@ export interface ReportData {
   coverage: ReportLiveCoverage;
   includeMethodologyNotes: boolean;
   includeEvidenceSummary: boolean;
+  /** inc28-fuel-bulk D17: the selection counts a card file's batch record; printed only with the methodology note. */
+  cardFuelAttribution: boolean;
   summary: ReportInventorySummary;
   records: ReportLedgerRow[];
   /** Records withdrawn from this year — disclosed by every format, counted by

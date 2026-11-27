@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
-  BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA, INVENTORY_CATEGORIES, REPORT_DATASET_SCHEMA_VERSION,
+  BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA,
+  cardFuelAttributionOf, INVENTORY_CATEGORIES, REPORT_DATASET_SCHEMA_VERSION,
   REPORT_DATASET_SCHEMA_VERSIONS, REPORT_COVERAGE_GAP_CODES,
   REPORT_PROVENANCE_ISSUE_CODES, REPORT_ISSUANCE_GAP_CODES,
   type ActivityCalculationSnapshot, type ActivityRecordDTO,
@@ -52,7 +53,7 @@ describe('the additive report dataset contract', () => {
     expectTypeOf<ReportDatasetRecord['createdByName']>().toEqualTypeOf<undefined>();
     expectTypeOf<ReportDatasetRecord['reviewedByName']>().toEqualTypeOf<undefined>();
     expectTypeOf<ReportDatasetRecord['voidedByName']>().toEqualTypeOf<undefined>();
-    expect(REPORT_DATASET_SCHEMA_VERSION).toBe(3);
+    expect(REPORT_DATASET_SCHEMA_VERSION).toBe(4);
     // Snapshot V3 is a field of a record, not a new dataset shape (D11).
     expect(REPORT_DATASET_SCHEMA_VERSIONS.at(-1)).toBe(REPORT_DATASET_SCHEMA_VERSION);
     // The newest version asks what the write path asks today; older ones never move.
@@ -66,7 +67,18 @@ describe('the additive report dataset contract', () => {
       'Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas',
     ]);
     expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[3]).not.toBe(INVENTORY_CATEGORIES);
-    expect(REPORT_DATASET_SCHEMA_VERSIONS).toEqual([1, 2, 3]);
+    // Schema 4 (inc28-fuel-bulk D17) decides the same categories as 3; it adds a field, not a category.
+    expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[4]).toEqual(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[3]);
+    expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[4]).not.toBe(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[3]);
+    expect(REPORT_DATASET_SCHEMA_VERSIONS).toEqual([1, 2, 3, 4]);
+  });
+
+  it('reads the card-fuel attribution from schema 4 on, and false before (inc28-fuel-bulk D17)', () => {
+    expect(cardFuelAttributionOf({ schemaVersion: 4, cardFuelAttribution: true })).toBe(true);
+    expect(cardFuelAttributionOf({ schemaVersion: 4, cardFuelAttribution: false })).toBe(false);
+    expect(cardFuelAttributionOf({ schemaVersion: 3 })).toBe(false);
+    // A flag on an earlier version is never read (the issuance gate refuses such a dataset).
+    expect(cardFuelAttributionOf({ schemaVersion: 3, cardFuelAttribution: true })).toBe(false);
   });
 
   it('can describe a mid-year site, named exclusions and an unsupported source without invented amounts', () => {

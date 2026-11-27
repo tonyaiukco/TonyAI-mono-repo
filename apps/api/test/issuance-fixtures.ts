@@ -115,6 +115,8 @@ export interface DatasetFacts {
   releases?: ReportReleaseStanding[];
   datasetId?: string;
   schemaVersion?: ReportDatasetSchemaVersion;
+  /** Schema 4 on: written as given (false by default); never written before 4. */
+  cardFuelAttribution?: boolean;
 }
 
 /** A retained dataset as a capture writes it. */
@@ -140,6 +142,7 @@ export function datasetOf(facts: DatasetFacts = {}): ReportDataset {
     evidence,
     periodLocks: facts.locks ?? allLocks(),
     ...assessments,
+    ...(schemaVersion >= 4 ? { cardFuelAttribution: facts.cardFuelAttribution ?? false } : {}),
   };
   return { ...content, fingerprint: reportDatasetFingerprint(content) };
 }

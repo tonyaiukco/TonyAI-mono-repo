@@ -98,6 +98,14 @@ export function readRetainedDataset(row: RetainedDatasetRow): ReportDataset {
   if (dataset.datasetId !== row.id || dataset.organisationId !== row.organisationId || dataset.context?.year !== row.reportingYear) {
     problem('its identity disagrees with its row');
   }
+  // Schema 4 (inc28-fuel-bulk D17): the card-fuel attribution is a boolean on
+  // every dataset of 4 on and absent from every earlier one. The gate cannot
+  // recompute it (a dataset keeps no record's batch), so its shape is all it
+  // holds: an earlier version carrying the key, re-fingerprinted, is refused.
+  const hasAttribution = Object.prototype.hasOwnProperty.call(dataset, 'cardFuelAttribution');
+  if (dataset.schemaVersion >= 4 ? typeof dataset.cardFuelAttribution !== 'boolean' : hasAttribution) {
+    problem('its card-fuel attribution is not the shape its schemaVersion holds');
+  }
   let fingerprint: ReturnType<typeof reportDatasetFingerprint>;
   try {
     fingerprint = reportDatasetFingerprint(dataset);
@@ -137,7 +145,7 @@ export function readRetainedDataset(row: RetainedDatasetRow): ReportDataset {
  * Whether the retained boundary is the frozen version as stored — every fact
  * of it: ids, names, months, cells, policies and source fields, its number,
  * decision and decider (PR C follow-up (9)). Compared under the dataset's
- * schemaVersion: versions 1, 2 and 3's boundary is what `buildBoundarySnapshot`
+ * schemaVersion: versions 1 to 4's boundary is what `buildBoundarySnapshot`
  * builds from a frozen version's rows (its frozen names, W7), compared whole;
  * the versions differ only in the categories a boundary must decide
  * (`BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA`), never in the boundary's shape. A later
@@ -154,6 +162,8 @@ export function boundaryMatchesVersion(
     case 1:
     case 2:
     case 3:
+    // 4 (inc28-fuel-bulk) adds a dataset field, not a boundary shape.
+    case 4:
       return canonicalJson(rebuilt) === canonicalJson(retained);
     default:
       return false;

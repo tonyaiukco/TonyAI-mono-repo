@@ -48,6 +48,7 @@
   "scopeValue": "Scope {scope}",
   "noCommittedData": "No committed data for this selection.",
   "methodology": "<strong>Methodology:</strong> every calculation stores an immutable snapshot of the emission factor it used (value, source, version) — the full factor appendix is included in the generated PDF/Excel. Consolidation approach: {approach}. Aligned with ISO 14064-1 / GHG Protocol.",
+  "cardFuelAttribution": "Fuel bought with the group's fuel cards (Shell, Petrol Ofisi) is attributed to the company that holds the card account; this shifts emissions between the group's companies and never changes the group total.",
   "methodologyApproach": {
     "operational_control": "operational control",
     "financial_control": "financial control"

@@ -274,6 +274,8 @@ export class ReportDatasetsService {
       evidence: facts.evidence,
       periodLocks: facts.periodLocks,
       ...assessments,
+      // Schema 4 (inc28-fuel-bulk D17): always a boolean, never undefined (the encoder refuses one).
+      cardFuelAttribution: facts.cardFuelAttribution,
     };
     return { ...content, fingerprint: reportDatasetFingerprint(content) };
   }

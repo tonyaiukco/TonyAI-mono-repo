@@ -1414,6 +1414,13 @@ export interface ReportMetaDTO {
   /** What the year's inventory boundary says about the selection (K3). The
    * `status` above is review status only — it never certifies completeness. */
   coverage: import('./report-consistency').ReportLiveCoverage;
+  /**
+   * inc28-fuel-bulk D17: a counted record of a Shell or Petrol Ofisi batch is
+   * among the records this selection reads, so a report printed with its
+   * methodology note states the account-based attribution. A client reads it
+   * as `=== true` (an earlier API sends none).
+   */
+  cardFuelAttribution: boolean;
 }
 
 // Target Types

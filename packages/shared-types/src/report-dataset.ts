@@ -12,15 +12,17 @@ import type {
  * All timestamps use Date.prototype.toISOString() UTC spelling; months are calendar months of reportingYear.
  * Producers validate runtime inputs, referential integrity and the invariants
  * below. TypeScript shapes alone do not certify a complete inventory. */
-export const REPORT_DATASET_SCHEMA_VERSION = 3 as const;
+export const REPORT_DATASET_SCHEMA_VERSION = 4 as const;
 
 /**
  * Every version a retained dataset may hold. 2 (LP4-02) is 1 with Fugitive Gas
  * among the categories a boundary must decide, and 3 (UAT round 4, BUG-12) is
- * 2 with Fire Suppression; content and encoding are the same shape, so the
- * version only selects the rule K2 recomputes under.
+ * 2 with Fire Suppression; up to 3 content and encoding are the same shape, so
+ * the version only selects the rule K2 recomputes under. 4 (inc28-fuel-bulk
+ * D17) is 3 with one top-level boolean, `cardFuelAttribution`, always present
+ * from 4 on and absent before: an earlier dataset's fingerprint never meets it.
  */
-export const REPORT_DATASET_SCHEMA_VERSIONS = Object.freeze([1, 2, 3] as const);
+export const REPORT_DATASET_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4] as const);
 export type ReportDatasetSchemaVersion = (typeof REPORT_DATASET_SCHEMA_VERSIONS)[number];
 
 /**
@@ -32,6 +34,9 @@ export const BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA = Object.freeze({
   1: Object.freeze(['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const),
   2: Object.freeze(['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const),
   3: Object.freeze([
+    'Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas',
+  ] as const),
+  4: Object.freeze([
     'Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas',
   ] as const),
 }) satisfies Record<ReportDatasetSchemaVersion, readonly InventoryCategory[]>;
@@ -355,7 +360,20 @@ export interface ReportDataset {
   coverage: ReportCoverageAssessment;
   provenance: ReportProvenanceAssessment;
   scopes: readonly [ReportScopeDisclosure<1>, ReportScopeDisclosure<2>, ReportUncoveredScope];
+  /**
+   * Schema 4 on (inc28-fuel-bulk D17), always a boolean: whether a counted
+   * record of a Shell or Petrol Ofisi batch is among the records this
+   * dataset's selection reads, so its PDF states the account-based
+   * attribution in the methodology note. Absent from a dataset of an earlier
+   * version, which reads as false (`cardFuelAttributionOf`).
+   */
+  cardFuelAttribution?: boolean;
   fingerprint: ReportDatasetFingerprint;
+}
+
+/** A retained dataset's card-fuel attribution: its own flag from schema 4 on, false before. */
+export function cardFuelAttributionOf(dataset: Pick<ReportDataset, 'schemaVersion' | 'cardFuelAttribution'>): boolean {
+  return dataset.schemaVersion >= 4 && dataset.cardFuelAttribution === true;
 }
 
 export const REPORT_ISSUANCE_GAP_CODES = [

@@ -1,5 +1,6 @@
 import { IntlMessageFormat } from 'intl-messageformat';
 import {
+  cardFuelAttributionOf,
   CATEGORY_ACTIVITY_TYPES,
   CATEGORY_SCOPE_MAP,
   UNSPECIFIED_ACTIVITY_TYPE,
@@ -38,7 +39,9 @@ import tr from './i18n/tr.json';
 // v4 (UAT round 2, K1): the tier names — "Parent company" / "Ana Şirket" for the organisation.
 // v5 (ng-kwh-engine): a gross energy bill's gross-to-net ratio among a record's inputs.
 // v6 (BUG-17): explains a refrigerant term priced on its refill.
-export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v7';
+// v8 (inc28-fuel-bulk D17): the card-fuel attribution in the methodology note, from a schema 4
+// dataset that holds it; a dataset of an earlier schema renders byte-for-byte as under v7.
+export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v8';
 
 export interface IssuanceDocument {
   issuanceId: string;
@@ -292,7 +295,7 @@ ${final ? '' : `<h2>${t('gapsHeading')}</h2>${table([t('colGap'), t('colEntity')
 ${isDetail ? `<h2>${t('coverageHeading')}</h2>${table([t('colGap'), t('colEntity'), t('colCategory'), t('colSources'), t('colObligations'), t('colRecords')], coverageRows, [3, 4, 5])}
 <h2>${t('ledgerHeading')}</h2>${table([t('colEntity'), t('colCategory'), t('colPeriod'), t('colStatus'), t('colActivity'), t('colEmissions'), t('colStanding')], ledgerRows, [4, 5])}
 <h2>${t('withdrawnHeading')}</h2>${table([t('colEntity'), t('colCategory'), t('colPeriod'), t('colEmissions'), t('colReason')], withdrawnRows, [3])}` : ''}
-${doc.options.includeMethodologyNotes ? `<h2>${t('methodologyHeading')}</h2><p class="note">${t('methodologyText')}</p>${table([t('colRelease'), t('colEdition'), t('colStanding')], releaseRows)}` : ''}
+${doc.options.includeMethodologyNotes ? `<h2>${t('methodologyHeading')}</h2><p class="note">${t('methodologyText')}${cardFuelAttributionOf(dataset) ? ` ${t('cardFuelAttribution')}` : ''}</p>${table([t('colRelease'), t('colEdition'), t('colStanding')], releaseRows)}` : ''}
 ${doc.options.includeEvidenceSummary ? `<h2>${t('evidenceHeading')}</h2>${table([t('colFile'), t('colEntity'), t('colLinkedRecords')], evidenceRows, [2])}` : ''}
 <h2>${t('identityHeading')}</h2>
 <table class="identity"><tbody>

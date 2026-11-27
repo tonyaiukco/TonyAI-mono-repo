@@ -82,7 +82,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/h
 | `GET` | `/denominators` | One `CursorPage` of intensity denominators (tenant‑scoped; `?subsidiaryId=&year=`; year DESC, metric ASC, id ASC) | any |
 | `POST` `PATCH` `DELETE` | `/denominators`(`/:id`) | Manage an intensity denominator | `masterkey` |
 | `GET` | `/intensity` | Scope 1 + 2 emissions per configured denominator, per metric (`?year=`), a metric with no such record left out; `selectedSubsidiaryIds`, the companies a coverage ratio reads, holds only those that hold records (no sector group or associate, `inc26-group-tree`) — one summary per subsidiary, each bounded by `REPORT_RECORD_LIMIT` (422 `query_too_broad`, never a partial figure), as is `GET /intensity/context` | any |
-| `GET` | `/reports/meta` | Report completeness/status for a year (badge + data warning) | any |
+| `GET` | `/reports/meta` | Report completeness/status for a year (badge + data warning). Also `cardFuelAttribution` (`inc28-fuel-bulk` D17): true when a counted record of a Shell or Petrol Ofisi batch is among the Scope 1/2 records the selection reads; see `docs/api/reports-and-issuance.md` | any |
 | `GET` | `/reports/pdf` | Branded audit‑ready PDF (Puppeteer; methodology + evidence appendices). Every export answers `HEAD` 405 (LP3-02 (15)) | `masterkey`, `auditor`, `super_admin` (its granted companies only) |
 | `GET` | `/reports/excel` | Excel export: Summary / Raw Activity Data / Withdrawn Records / Factors Used sheets | `masterkey`, `auditor`, `super_admin` (its granted companies only) |
 | `GET` | `/reports/csv` | CSV export of the committed ledger **plus the withdrawn rows**, one table | `masterkey`, `auditor`, `super_admin` (its granted companies only) |

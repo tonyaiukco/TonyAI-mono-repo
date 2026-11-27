@@ -1,5 +1,6 @@
 import {
   isCalculated,
+  REPORT_DATASET_SCHEMA_VERSION,
   type CalculationInput,
   type CalculationResultV3,
   type ReportDatasetRecord,
@@ -165,7 +166,7 @@ describe('the fire suppression edition beside the TR package (uat4-fire-suppress
       locks: [...allLocks(), lock('Annual', 'annual')],
       releases: [standing(release('rel-a')), standing(dry.factorRelease as unknown as ReturnType<typeof release>)],
     });
-    expect(dataset.schemaVersion).toBe(3);
+    expect(dataset.schemaVersion).toBe(REPORT_DATASET_SCHEMA_VERSION);
     expect(deriveIssuance(dataset)).toEqual({ status: 'final', gaps: [] });
   });
 });

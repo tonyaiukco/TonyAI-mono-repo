@@ -71,6 +71,7 @@
   "withdrawnHeading": "Withdrawn records, excluded from every figure",
   "methodologyHeading": "Methodology",
   "methodologyText": "Prepared under the GHG Protocol Corporate Standard for Scope 1 and Scope 2. Each figure is the calculation its record retained when the dataset was captured; issuing recalculates nothing. The factor and conversion releases, as they stood at capture:",
+  "cardFuelAttribution": "Fuel bought with the group's fuel cards (Shell, Petrol Ofisi) is attributed to the company that holds the card account; this shifts emissions between the group's companies and never changes the group total.",
   "colRelease": "Release",
   "colEdition": "Edition",
   "releaseAuthoritative": "Authoritative",

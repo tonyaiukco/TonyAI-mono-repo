@@ -251,7 +251,7 @@ describe('an Electricity self-generation block in the issued document (self-gen-
   });
 
   it('keeps the renderer version', () => {
-    expect(ISSUANCE_RENDERER).toBe('tonyai-issuance-pdf-v7');
+    expect(ISSUANCE_RENDERER).toBe('tonyai-issuance-pdf-v8');
   });
 });
 
@@ -274,5 +274,28 @@ describe('the issuance catalogues', () => {
     const invisible = new RegExp(`[${[0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0x00a0, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e]
       .map((c) => String.fromCharCode(c)).join('')}]`);
     for (const value of [...Object.values(en), ...Object.values(tr)]) expect(value).not.toMatch(invisible);
+  });
+});
+
+describe('the card-fuel attribution in the issued PDF (inc28-fuel-bulk D17)', () => {
+  const statement = (language: 'en' | 'tr') => (language === 'en' ? en : tr).cardFuelAttribution;
+
+  it.each(['en', 'tr'] as const)('prints it in the methodology note, in %s, from a dataset that holds it', (language) => {
+    expect(html(datasetOf({ cardFuelAttribution: true }), { language })).toContain(statement(language));
+  });
+
+  it('prints it nowhere without the methodology note, or from a dataset whose flag is false', () => {
+    const notesOff = { options: { includeMethodologyNotes: false, includeEvidenceSummary: true } };
+    expect(html(datasetOf({ cardFuelAttribution: true }), notesOff)).not.toContain(statement('en'));
+    expect(html(datasetOf({ cardFuelAttribution: false }))).not.toContain(statement('en'));
+  });
+
+  it('renders a schema 3 dataset exactly as before: no statement, the same page as the same dataset at schema 4 without it', () => {
+    const old = datasetOf({ schemaVersion: 3 });
+    expect(html(old)).not.toContain(statement('en'));
+    // The page differs from a schema 4 dataset of the same facts only where the identity prints its own fingerprint.
+    const strip = (page: string, d: ReportDataset) => page.split(d.fingerprint.hex).join('<fp>');
+    const current = datasetOf({ cardFuelAttribution: false });
+    expect(strip(html(old), old)).toBe(strip(html(current), current));
   });
 });

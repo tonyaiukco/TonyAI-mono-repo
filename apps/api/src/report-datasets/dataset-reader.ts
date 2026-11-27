@@ -10,7 +10,7 @@ import type {
   ReportingPeriod,
   ReportReleaseStanding,
 } from '@tonyai/shared-types';
-import { isProvenanceSnapshot } from '@tonyai/shared-types';
+import { COUNTED_STATUSES, FUEL_CARD_SOURCES, isProvenanceSnapshot } from '@tonyai/shared-types';
 import { RELEASE_SNAPSHOT_SELECT, releaseSnapshot } from '../calculations/release-snapshot';
 import { QueryTooBroadError } from '../common/api-error';
 import { CaptureSnapshot } from '../common/capture-snapshot';
@@ -182,6 +182,8 @@ export interface CapturedFactsRead {
   evidence: ReportEvidenceReference[];
   periodLocks: PeriodLockDTO[];
   releases: Map<string, ReportReleaseStanding>;
+  /** inc28-fuel-bulk D17: a counted record of a Shell or Petrol Ofisi batch is among the selection's records. */
+  cardFuelAttribution: boolean;
 }
 
 /** The capture's clock and the caller's access, read first. */
@@ -216,16 +218,17 @@ export async function readCaptureFacts(
   snapshot: CaptureSnapshot,
   query: CaptureQuery,
   limits: CaptureLimits,
-): Promise<Pick<CapturedFactsRead, 'records' | 'evidence' | 'periodLocks' | 'releases'>> {
+): Promise<Pick<CapturedFactsRead, 'records' | 'evidence' | 'periodLocks' | 'releases' | 'cardFuelAttribution'>> {
   const db = CaptureSnapshot.txOf(snapshot);
   const subsidiaryIds = [...query.resolvedSubsidiaryIds];
+  const selected: Prisma.ActivityRecordWhereInput = {
+    subsidiaryId: { in: subsidiaryIds },
+    reportingYear: query.reportingYear,
+    scope: { in: [...query.scopes] },
+    ...(query.category === undefined ? {} : { category: query.category }),
+  };
   const rows = query.scopes.length === 0 ? [] : await db.activityRecord.findMany({
-    where: {
-      subsidiaryId: { in: subsidiaryIds },
-      reportingYear: query.reportingYear,
-      scope: { in: [...query.scopes] },
-      ...(query.category === undefined ? {} : { category: query.category }),
-    },
+    where: selected,
     select: RECORD_SELECT,
     orderBy: { id: 'asc' },
     take: limits.records + 1,
@@ -263,7 +266,12 @@ export async function readCaptureFacts(
   });
   const releases = new Map(releaseRows.map((r) => [r.id, releaseStanding(r)]));
 
-  return { records, evidence, periodLocks: locks.map(periodLock), releases };
+  // In the same snapshot as the records it describes (D17): counted, and of a card file's batch.
+  const cardFuelAttribution = query.scopes.length === 0 ? false : (await db.activityRecord.count({
+    where: { ...selected, status: { in: [...COUNTED_STATUSES] }, fuelBatch: { source: { in: [...FUEL_CARD_SOURCES] } } },
+  })) > 0;
+
+  return { records, evidence, periodLocks: locks.map(periodLock), releases, cardFuelAttribution };
 }
 
 /**

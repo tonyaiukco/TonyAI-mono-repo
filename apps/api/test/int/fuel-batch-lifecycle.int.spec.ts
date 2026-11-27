@@ -9,6 +9,8 @@ import { FuelBatchFormationService } from '../../src/fuel-batches/fuel-batch-for
 import { FuelBatchesService } from '../../src/fuel-batches/fuel-batches.service';
 import { FuelFilesService } from '../../src/fuel-files/fuel-files.service';
 import { FuelUploadsService } from '../../src/fuel-files/fuel-uploads.service';
+import { ReportsService } from '../../src/reports/reports.service';
+import { PdfRenderer } from '../../src/common/pdf-renderer';
 import { batchVerdictsOf } from '../../../../packages/db/scripts/anomaly-recompute.lib.mjs';
 import { row as sheetRow, xlsx } from '../xlsx';
 import { attachEvidence, connect, connectOwner, createTenant, type Tenant } from './db';
@@ -394,5 +396,27 @@ describe('declarations, withdrawal and bulk submit (task 7.4)', () => {
     await withEvidence(ready);
     const result = await services().batches.bulkSubmit(user, [ready, bare]);
     expect(result).toEqual({ submitted: [ready], failed: [{ batchId: bare, code: 'evidence_required' }] });
+  });
+});
+
+describe('the card-fuel attribution follows the report\'s selection (task 8.2)', () => {
+  it('is stated once a card batch record counts, for its company, scope and category only', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025'], 'OZK-RA');
+    await withEvidence(id);
+    const reports = new ReportsService(runtime, new AuditService(runtime), new PdfRenderer());
+    const flag = (subsidiaryId?: string, filters: { scope?: 1 | 2 | 3; category?: 'Mobile Combustion' | 'Electricity' } = {}) =>
+      reports.meta(user, 2025, subsidiaryId, filters).then((m) => m.cardFuelAttribution);
+    // A draft is not counted.
+    expect(await flag()).toBe(false);
+    await services().batches.submit(user, id);
+    expect(await flag()).toBe(true);
+    expect(await flag(tenant.subsidiaryId)).toBe(true);
+    expect(await flag(tenant.subsidiaryId, { scope: 1, category: 'Mobile Combustion' })).toBe(true);
+    // Another company's filter, a scope or a category that leaves card fuel out.
+    expect(await flag(tenant.otherSubsidiaryId)).toBe(false);
+    expect(await flag(undefined, { scope: 2 })).toBe(false);
+    expect(await flag(undefined, { scope: 3 })).toBe(false);
+    expect(await flag(undefined, { category: 'Electricity' })).toBe(false);
   });
 });
