@@ -257,7 +257,7 @@ export class FuelFilesService {
     }
     const read = await withParserDeadlineMs(FUEL_PARSE_TIMEOUT_MS, () => readFuelFile(file.buffer, source));
     // Keyed here, once: nothing past this point sees a row's unkeyed hash (D5, revised).
-    const reading = keyReading(read, await organisationDedupeKey(this.prisma, user.organisationId));
+    const reading = keyReading(read, await organisationDedupeKey(this.prisma, this.audit, user));
     return {
       source,
       usage,

@@ -13,12 +13,13 @@
 -- ---------------------------------------------------------------------------
 -- A stored plain digest cannot be re-keyed (the card number is not kept), and
 -- a mix of plain and keyed digests would miss the duplicates between them.
--- The fuel upload screen ships with this change, so a database holding fuel
--- rows has them only from the API alone; this stops rather than guess.
+-- No earlier image stores a fuel row (the upload endpoints ship with this
+-- change), so a database holding any got them by hand; this stops rather than
+-- guess. A refused deploy is recorded as failed: see the message for the way on.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM "fuel_rows") THEN
-    RAISE EXCEPTION 'fuel_rows holds rows whose dedupe digest is the plain sha256 (inc28-fuel-bulk D5, revised); they cannot be re-keyed. Remove them (and their batches, accounts and imports) before applying this migration.';
+    RAISE EXCEPTION 'fuel_rows holds rows whose dedupe digest is the plain sha256 (inc28-fuel-bulk D5, revised); they cannot be re-keyed. Remove them (and their batches, accounts and imports), then mark this migration rolled back (prisma migrate resolve --rolled-back 20261128100000_inc28_fuel_dedupe_key) and deploy again.';
   END IF;
 END
 $$;

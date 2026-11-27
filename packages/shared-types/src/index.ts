@@ -7124,6 +7124,9 @@ export const AUDIT_ENTITIES = [
   // inc28-fuel-bulk: a fuel batch's lifecycle step, files, declarations or
   // withdrawal; `entityId` is the batch.
   'fuel_batch',
+  // inc28-fuel-bulk D5, revised: an organisation's fuel dedupe key created
+  // (`create`); `entityId` is the organisation. The diff never holds the key.
+  'fuel_dedupe_key',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

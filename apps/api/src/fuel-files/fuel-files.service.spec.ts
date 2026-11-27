@@ -81,6 +81,9 @@ describe('FuelFilesService — refusals before anything is stored', () => {
     const result = await refusal(service.preview(user('auditor', [LOGISTICS]), asFile(file), { source: 'petrol_ofisi', usage: 'on_road' }));
     expect(result.status).toBe(403);
     expect(prisma.$transaction).not.toHaveBeenCalled();
+    // Refused before the key is read or created (D5, revised).
+    expect(prisma.fuelDedupeKey.findUnique).not.toHaveBeenCalled();
+    expect(prisma.fuelDedupeKey.createMany).not.toHaveBeenCalled();
   });
 
   it('refuses an upload that names no source, or a card file with no usage — never assuming one', async () => {

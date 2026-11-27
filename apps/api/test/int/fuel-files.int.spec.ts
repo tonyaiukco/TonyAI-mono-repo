@@ -175,6 +175,13 @@ describe('applying a fuel file (task 5.1)', () => {
       await other.cleanup();
     }
 
+    // Its creation is audited once, naming the organisation and never the key.
+    const created = await owner.auditLog.findMany({ where: { entity: 'fuel_dedupe_key', organisationId: tenant.organisationId } });
+    expect(created.map((a) => [a.action, a.entityId, a.userId, a.diff])).toEqual([
+      ['create', tenant.organisationId, user.id, { fuelDedupeKey: 'created' }],
+    ]);
+    expect(JSON.stringify(created)).not.toContain(key.toString('hex'));
+
     // A re-upload keys the same way and finds every row; the key stays as created.
     expect((await apply(user, file)).rowsDuplicate).toBe(3);
     const again = await owner.fuelDedupeKey.findUniqueOrThrow({ where: { organisationId: tenant.organisationId } });
@@ -184,6 +191,12 @@ describe('applying a fuel file (task 5.1)', () => {
     const denied = (p: Promise<unknown>) => p.then(() => 'allowed', (e: unknown) => String(e));
     expect(await denied(runtime.$executeRaw`UPDATE fuel_dedupe_keys SET secret = secret WHERE organisation_id = ${tenant.organisationId}::uuid`)).toMatch(/permission denied/);
     expect(await denied(runtime.$executeRaw`DELETE FROM fuel_dedupe_keys WHERE organisation_id = ${tenant.organisationId}::uuid`)).toMatch(/permission denied/);
+    // A key lost by hand while rows remain is never silently replaced (a new
+    // key would store every re-uploaded row again): the upload is refused.
+    await owner.fuelDedupeKey.delete({ where: { organisationId: tenant.organisationId } });
+    expect(await denied(apply(user, file))).toMatch(/no fuel dedupe key/);
+    expect(await owner.fuelDedupeKey.count({ where: { organisationId: tenant.organisationId } })).toBe(0);
+    expect(await rowsOf()).toHaveLength(3);
     // … nor insert a malformed one (the CHECK).
     const second = await createTenant();
     try {
@@ -228,7 +241,7 @@ describe('applying a fuel file (task 5.1)', () => {
     expect(JSON.stringify(preview)).not.toContain(holder.id);
     const own = await services().files.preview(holder, asFile(file), { source: 'petrol_ofisi', usage: 'on_road' });
     expect(own.duplicates.map((d) => d.code)).toEqual(Array(3).fill('fuel_duplicate'));
-    // A preview stores nothing.
+    // A preview stores no row (the key already exists: the apply above created it).
     expect(await rowsOf()).toHaveLength(3);
   });
 
@@ -253,6 +266,8 @@ describe('applying a fuel file (task 5.1)', () => {
     const error = await apply(tenant.users.auditor, file).catch((e: unknown) => e);
     expect((error as { getStatus(): number }).getStatus()).toBe(403);
     expect(await rowsOf()).toHaveLength(0);
+    // Refused before the organisation's dedupe key is created.
+    expect(await owner.fuelDedupeKey.count({ where: { organisationId: tenant.organisationId } })).toBe(0);
   });
 });
 
