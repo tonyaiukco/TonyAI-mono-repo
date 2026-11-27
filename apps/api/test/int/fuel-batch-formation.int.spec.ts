@@ -7,12 +7,13 @@ import type { RequestUser } from '../../src/auth/auth.types';
 import { AuditService } from '../../src/audit/audit.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { FuelBatchFormationService } from '../../src/fuel-batches/fuel-batch-formation.service';
+import { FuelBatchesService } from '../../src/fuel-batches/fuel-batches.service';
 import { FuelFilesService } from '../../src/fuel-files/fuel-files.service';
 import { FuelUploadsService } from '../../src/fuel-files/fuel-uploads.service';
 import { FuelAccountsService } from '../../src/fuel-accounts/fuel-accounts.service';
 import { errorCodeOf } from '../../src/common/api-error';
 import { row as sheetRow, xlsx, OFFICE_RELATIONSHIPS, SPREADSHEETML } from '../xlsx';
-import { addMember, connect, connectOwner, createRecord, createTenant, type Tenant } from './db';
+import { addMember, attachEvidence, connect, connectOwner, createRecord, createTenant, type Tenant } from './db';
 import { failingAuditClient, lifecycleServices } from './services';
 import { loadTrReleases } from './tr-releases';
 
@@ -313,5 +314,135 @@ describe('the slot key and the slot kind beside manual records (task 6.2)', () =
     expect(errorCodeOf(await services().records.previewCreate(user, dto as never).catch((e: unknown) => e))).toBe('slot_holds_untyped');
     const up = await upload(user, sales([['K-1', 'KIND', '02.03.2025', 'Motorin', 10, 'OZK-K']]));
     expect(await services().formation.formBatches(user, up.id)).toMatchObject({ held: [{ reason: 'slot_holds_untyped' }] });
+  });
+});
+
+describe('later rows, the tray, the reporting company and the holder (task 6.3)', () => {
+  const S = () => tenant.subsidiaryId;
+  const T = () => tenant.otherSubsidiaryId;
+  function batchService() {
+    const { records, evidence } = lifecycleServices(runtime);
+    return new FuelBatchesService(runtime, new AuditService(runtime), records, evidence);
+  }
+  /** A standard user whose main company is T, a central reporter of S for Mobile Combustion; S's own user keeps Water. */
+  async function centralReporter(): Promise<RequestUser> {
+    await owner.userSubsidiaryAccess.update({
+      where: { userId_subsidiaryId: { userId: tenant.users.standardUser.id, subsidiaryId: S() } },
+      data: { categories: ['Water'] },
+    });
+    const member = await addMember(owner, tenant, UserRole.standard_user, { grants: [T()], categories: ['Water'] });
+    await owner.userSubsidiaryAccess.create({
+      data: { userId: member.id, subsidiaryId: S(), organisationId: tenant.organisationId, kind: 'central_reporter', categories: ['Mobile Combustion'] },
+    });
+    // As the guard builds it: both companies, each with its categories.
+    return { ...member, accessibleSubsidiaryIds: [T(), S()], categoryGrants: { [T()]: ['Water'], [S()]: ['Mobile Combustion'] } };
+  }
+
+  it('forms a further batch for a late row of an approved invoice; the approved batch, its rows and records stay byte-equal', async () => {
+    await confirmed('LATE', S());
+    const user = await masterkey();
+    const first = await upload(user, sales([['LT-1', 'LATE', '03.03.2025', 'Motorin', 100, 'OZK-LT']]));
+    await services().formation.formBatches(user, first.id);
+    const [approved] = await batchesOf();
+    await attachEvidence(owner, tenant, (await recordsOf(approved!.id)).map((r) => r.id));
+    const batches = batchService();
+    const submitted = await batches.submit(user, approved!.id);
+    await batches.approve(user, approved!.id, submitted.submittedAt);
+    const snapshot = async () => ({
+      batch: await owner.fuelBatch.findUniqueOrThrow({ where: { id: approved!.id } }),
+      records: await recordsOf(approved!.id),
+      rows: await owner.fuelRow.findMany({ where: { fuelBatchId: approved!.id }, orderBy: { id: 'asc' } }),
+    });
+    const before = await snapshot();
+
+    const late = await upload(user, sales([['LT-2', 'LATE', '12.03.2025', 'Motorin', 40, 'OZK-LT']]));
+    expect(await services().formation.formBatches(user, late.id)).toMatchObject({ formedBatches: 1, joinedBatches: 0 });
+    expect(await snapshot()).toEqual(before);
+    const all = await batchesOf();
+    expect(all.map((b) => [b.sequence, b.status])).toEqual([[1, 'approved'], [2, 'draft']]);
+    expect((await recordsOf(all[1]!.id)).map((r) => [r.periodValue, r.activityType, r.activityValue])).toEqual([['March', 'on_road_diesel', 40]]);
+    // Both of the invoice's batches say it has another.
+    expect((await batches.list(user, {})).map((b) => b.hasSiblings)).toEqual([true, true]);
+  });
+
+  it('forms one batch per invoice once an unknown account’s tray rows are released by its confirmation', async () => {
+    const user = await masterkey();
+    const up = await upload(user, sales([
+      ['TR-1', 'TRAY', '03.03.2025', 'Motorin', 10, 'OZK-T1'],
+      ['TR-2', 'TRAY', '04.03.2025', 'Motorin', 20, 'OZK-T2'],
+      ['TR-3', 'TRAY', '05.04.2025', 'Motorin', 30, 'OZK-T3'],
+    ]));
+    expect(await services().formation.formBatches(user, up.id)).toMatchObject({
+      formedBatches: 0, processableRows: 0, waiting: [{ reason: 'fuel_account_unmatched', rows: 3 }],
+    });
+    const account = await owner.fuelAccount.findFirstOrThrow({ where: { organisationId: tenant.organisationId, code: 'TRAY' } });
+    await new FuelAccountsService(runtime, new AuditService(runtime)).confirm(user, account.id, { subsidiaryId: S() });
+    expect(await services().formation.formBatches(user, up.id)).toMatchObject({ formedBatches: 3, processableRows: 0, held: [], waiting: [] });
+    expect((await batchesOf()).map((b) => [b.invoiceRef, b.sequence, b.subsidiaryId])).toEqual([
+      ['OZK-T1', 1, S()], ['OZK-T2', 1, S()], ['OZK-T3', 1, S()],
+    ]);
+  });
+
+  it('names a central reporter’s main company as its batch’s reporting company, and none on a masterkey’s', async () => {
+    const reporter = await centralReporter();
+    await confirmed('CR', S());
+    const up = await upload(reporter, sales([['CR-1', 'CR', '03.03.2025', 'Motorin', 10, 'OZK-CR']]));
+    expect(await services().formation.formBatches(reporter, up.id)).toMatchObject({ formedBatches: 1 });
+    const mk = await masterkey();
+    const own = await upload(mk, sales([['CR-2', 'CR', '04.04.2025', 'Motorin', 10, 'OZK-MK']]));
+    expect(await services().formation.formBatches(mk, own.id)).toMatchObject({ formedBatches: 1 });
+
+    const [byReporter, byMasterkey] = await batchesOf();
+    expect(byReporter).toMatchObject({ invoiceRef: 'OZK-CR', subsidiaryId: S(), createdBy: reporter.id });
+    expect((await recordsOf(byReporter!.id)).map((r) => [r.subsidiaryId, r.reportedBySubsidiaryId, r.createdBy])).toEqual([[S(), T(), reporter.id]]);
+    expect(byMasterkey).toMatchObject({ invoiceRef: 'OZK-MK', subsidiaryId: S(), createdBy: mk.id });
+    expect((await recordsOf(byMasterkey!.id)).map((r) => r.reportedBySubsidiaryId)).toEqual([null]);
+    const dtos = await batchService().list(mk, {});
+    const reporterDto = dtos.find((d) => d.id === byReporter!.id)!;
+    expect(reporterDto).toMatchObject({ reportingSubsidiaryId: T(), createdBy: reporter.id });
+    expect(reporterDto.uploaders.map((u) => u.id)).toEqual([reporter.id]);
+    expect(dtos.find((d) => d.id === byMasterkey!.id)!.reportingSubsidiaryId).toBeNull();
+  });
+
+  it('holds a central reporter’s rows for a month the company’s own user entered, with the single-entry conflict', async () => {
+    await createRecord(runtime, tenant, {
+      category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres', periodValue: 'March', reportingYear: 2025,
+      createdBy: tenant.users.standardUser.id,
+    });
+    const reporter = await centralReporter();
+    await confirmed('SE', S());
+    const up = await upload(reporter, sales([['SE-1', 'SE', '03.03.2025', 'Motorin', 10, 'OZK-SE']]));
+    expect(await services().formation.formBatches(reporter, up.id)).toMatchObject({
+      formedBatches: 0, processableRows: 0, held: [{ reason: 'single_entry_period_conflict', rows: 1 }],
+    });
+    expect(await batchesOf()).toEqual([]);
+  });
+
+  it('holds the rows of an uploader whose grant was withdrawn, as outside its scope', async () => {
+    await confirmed('WG', S());
+    const superAdmin = tenant.users.superAdmin;
+    const up = await upload(superAdmin, sales([['WG-1', 'WG', '03.03.2025', 'Motorin', 10, 'OZK-WG']]));
+    await owner.userSubsidiaryAccess.deleteMany({ where: { userId: superAdmin.id } });
+    const narrowed: RequestUser = { ...superAdmin, accessibleSubsidiaryIds: [] };
+    expect(await services().formation.formBatches(narrowed, up.id)).toMatchObject({
+      formedBatches: 0, held: [{ reason: 'fuel_out_of_scope', rows: 1 }],
+    });
+    expect(await batchesOf()).toEqual([]);
+  });
+
+  it('forms nothing of a disabled uploader’s ready rows until a masterkey takes them over; the uploader stays named', async () => {
+    await confirmed('DIS', S());
+    const uploader = tenant.users.superAdmin;
+    const up = await upload(uploader, sales([['D-1', 'DIS', '03.03.2025', 'Motorin', 10, 'OZK-D']]));
+    await owner.profile.update({ where: { id: uploader.id }, data: { disabledAt: new Date() } });
+    const mk = await masterkey();
+    expect(await services().formation.formBatches(mk, up.id).catch((e: unknown) => (e as { getStatus(): number }).getStatus())).toBe(403);
+    expect(await batchesOf()).toEqual([]);
+    await services().uploads.takeOver(mk, up.id, {});
+    expect(await services().formation.formBatches(mk, up.id)).toMatchObject({ formedBatches: 1 });
+    const [batch] = await batchesOf();
+    expect(batch).toMatchObject({ createdBy: mk.id, subsidiaryId: S() });
+    const [dto] = await batchService().list(mk, {});
+    expect(dto!.uploaders.map((u) => u.id)).toEqual([uploader.id]);
   });
 });
