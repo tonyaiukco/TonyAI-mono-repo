@@ -30,13 +30,22 @@ export default function FuelFilesPage() {
   const [version, setVersion] = useState(0);
   const mayUpload = can(user?.role, "record.author");
   const [tab, setTab] = useState<string>("upload");
+  // `?batch=<id>`: a batch's record in Data Entry links here; open that batch (D16).
+  const [linkedBatch, setLinkedBatch] = useState<string | null>(null);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("batch");
+    if (id) {
+      setTab("batches");
+      setLinkedBatch(id);
+    }
+  }, []);
 
   useEffect(() => {
     api.me().then(setUser).catch(showError);
   }, [setUser, showError]);
   useEffect(() => {
-    if (user && !mayUpload && tab === "upload") setTab("batches");
-  }, [user, mayUpload, tab]);
+    if (user && !mayUpload && tab === "upload") setTab(linkedBatch ? "batches" : "uploads");
+  }, [user, mayUpload, tab, linkedBatch]);
 
   const bump = () => setVersion((v) => v + 1);
 
@@ -70,7 +79,7 @@ export default function FuelFilesPage() {
               <UploadsTab role={user?.role} refreshKey={version} />
             </TabsContent>
             <TabsContent value="batches" className="mt-4">
-              <BatchesTab user={user} refreshKey={version} />
+              <BatchesTab user={user} refreshKey={version} initialOpen={linkedBatch} />
             </TabsContent>
             <TabsContent value="tray" className="mt-4">
               <TrayTab role={user?.role} refreshKey={version} onChanged={bump} />

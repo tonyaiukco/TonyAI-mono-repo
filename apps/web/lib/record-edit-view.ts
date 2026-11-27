@@ -135,6 +135,8 @@ export interface ActionableRecord {
   status: string;
   createdBy: string | null;
   periodLocked?: boolean;
+  /** A fuel batch's record is edited and recalled with its batch (inc28-fuel-bulk D9). */
+  fuelBatchId?: string | null;
 }
 
 export interface RecordActions {
@@ -154,7 +156,7 @@ export interface RecordActions {
  * offered in one; a copy is a new record and may target another period.
  */
 export function recordActions(user: ActingUser | null, record: ActionableRecord): RecordActions {
-  const open = !record.periodLocked;
+  const open = !record.periodLocked && !record.fuelBatchId;
   return {
     edit: open && mayEditRecord(user, record),
     recall: open && mayRecallRecord(user, record),

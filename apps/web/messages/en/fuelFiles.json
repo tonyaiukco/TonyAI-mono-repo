@@ -202,5 +202,16 @@
     "batchesTab": "Fuel batches ({count})",
     "empty": "No fuel batch awaits a decision.",
     "notYours": "Not yours to decide"
+  },
+  "entry": {
+    "fuel": "Fuel",
+    "usage": "Usage",
+    "chooseFuel": "Choose the fuel.",
+    "chooseUsage": "Choose the usage.",
+    "stationaryLine": "Filed under stationary combustion: saved as a Fuel record.",
+    "cardFuelNote": "Fuel bought with the group's fuel cards (Shell, Petrol Ofisi) and uploaded centrally is counted for the card's account holder — do not enter it here again.",
+    "fuelFilesLink": "Fuel files",
+    "addAnother": "Add another fuel",
+    "batchMark": "Fuel batch"
   }
 }

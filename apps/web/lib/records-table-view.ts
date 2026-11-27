@@ -154,3 +154,12 @@ export function jumpToRecords(
   heading.focus({ preventScroll: true });
   return true;
 }
+
+/**
+ * A fuel batch's record in the entered-records table (inc28-fuel-bulk D16):
+ * marked, and linked to its batch on Fuel files in place of the record's own
+ * edit, delete, submit, recall and file actions. Null for any other record.
+ */
+export function fuelBatchLink(row: { fuelBatchId?: string | null }): string | null {
+  return row.fuelBatchId ? `/fuel-files?batch=${encodeURIComponent(row.fuelBatchId)}` : null;
+}

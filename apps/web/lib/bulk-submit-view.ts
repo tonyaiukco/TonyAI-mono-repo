@@ -50,6 +50,7 @@ export type BulkSubmitKey =
   | 'roleForbidden'
   | 'failed'
   | 'block.role'
+  | 'block.inBatch'
   | 'block.rejected'
   | 'block.already'
   | 'block.notAuthor'
@@ -286,7 +287,10 @@ export type SubmittableRow = Pick<
   | 'reportingPeriod'
   | 'periodValue'
   | 'periodLocked'
->;
+> & {
+  /** A fuel batch's record (inc28-fuel-bulk D9): submitted with its batch, never from this list. */
+  fuelBatchId?: string | null;
+};
 
 /** Who is asking. `null` while `api.me()` is still in flight. */
 export type SubmittingUser = Pick<AuthUser, 'id' | 'role'>;
@@ -323,6 +327,7 @@ export function submitBlockReason(
   words: RecordWords,
 ): string | null {
   if (!mayAuthorRecords(user)) return t('block.role');
+  if (row.fuelBatchId) return t('block.inBatch');
   if (!acceptsBulkSubmit(row.status)) {
     return row.status === 'rejected'
       ? t('block.rejected')

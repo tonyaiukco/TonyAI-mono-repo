@@ -10,6 +10,7 @@ import {
   Clock,
   Copy,
   History,
+  Layers,
   Loader2,
   Paperclip,
   Pencil,
@@ -33,7 +34,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { RECORDS_HEADING_ID, evidenceCell, type RecordsFilter } from "@/lib/records-table-view";
+import { RECORDS_HEADING_ID, evidenceCell, fuelBatchLink, type RecordsFilter } from "@/lib/records-table-view";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { recordActions, type RecordActions } from "@/lib/record-edit-view";
 import { api } from "@/lib/api";
@@ -305,6 +307,7 @@ export function RecordsTable({
   const t = useTranslations("dataEntry");
   const tStatus = useTranslations("recordStatus");
   const tCommon = useTranslations("common");
+  const tFuel = useTranslations("fuelFiles");
   const locale = useLocale();
   const words = useRecordWords();
   const describe = useDescribeError();
@@ -882,6 +885,16 @@ export function RecordsTable({
                     <Badge variant="outline" className={`px-1.5 py-0 text-[10px] ${badge.className}`}>
                       {tStatus(`label.${r.status}`)}
                     </Badge>
+                    {fuelBatchLink(r) && (
+                      <Link
+                        href={fuelBatchLink(r)!}
+                        className="ml-1 inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"
+                        data-testid="record-batch-mark"
+                      >
+                        <Layers className="h-3 w-3" aria-hidden />
+                        {tFuel("entry.batchMark")}
+                      </Link>
+                    )}
                   </TableCell>
                   <TableCell className="py-1">
                     <RowActions

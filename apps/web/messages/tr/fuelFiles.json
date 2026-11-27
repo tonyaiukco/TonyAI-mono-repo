@@ -202,5 +202,16 @@
     "batchesTab": "Yakıt paketleri ({count})",
     "empty": "Karar bekleyen yakıt paketi yok.",
     "notYours": "Karar sizin değil"
+  },
+  "entry": {
+    "fuel": "Yakıt",
+    "usage": "Kullanım",
+    "chooseFuel": "Yakıtı seçin.",
+    "chooseUsage": "Kullanımı seçin.",
+    "stationaryLine": "Sabit yanma altında kaydedilir: Yakıt kaydı olarak saklanır.",
+    "cardFuelNote": "Grubun taşıt kartlarıyla (Shell, Petrol Ofisi) alınan ve merkezden yüklenen yakıt, kartın hesap sahibine sayılır — burada yeniden girmeyin.",
+    "fuelFilesLink": "Yakıt dosyaları",
+    "addAnother": "Başka bir yakıt ekle",
+    "batchMark": "Yakıt paketi"
   }
 }

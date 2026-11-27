@@ -114,6 +114,11 @@ describe('recordActions — the API\'s gates, row by row', () => {
   const admin = { id: 'u-admin', role: 'masterkey' };
   const row = (status: string, createdBy = author.id, periodLocked = false) => ({ status, createdBy, periodLocked });
 
+  it('offers neither Edit nor Recall on a fuel batch\'s record: it is acted on with its batch (inc28-fuel-bulk)', () => {
+    expect(recordActions(author, { ...row('draft'), fuelBatchId: 'b-1' })).toEqual({ edit: false, recall: false, copy: false });
+    expect(recordActions(author, { ...row('submitted'), fuelBatchId: 'b-1' }).recall).toBe(false);
+  });
+
   it('offers Edit on the author\'s draft and rejected records only', () => {
     expect(recordActions(author, row('draft'))).toEqual({ edit: true, recall: false, copy: false });
     expect(recordActions(author, row('rejected')).edit).toBe(true);

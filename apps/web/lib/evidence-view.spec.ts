@@ -72,6 +72,10 @@ function linked(over: Partial<EvidenceLinkedRecordDTO> = {}): EvidenceLinkedReco
 }
 
 describe('attachBlockReason — the upload’s refusals, in the evidence API’s order', () => {
+  it('refuses a fuel batch\'s record: its files go on the batch (inc28-fuel-bulk)', () => {
+    expect(attachBlockReason({ ...draft(), fuelBatchId: 'b-1' }, ME)).toMatch(/fuel batch/i);
+  });
+
   it('lets an own draft or rejected record in an open period take a file', () => {
     expect(attachBlockReason(draft(), ME)).toBeNull();
     expect(attachBlockReason(draft({ status: 'rejected' }), ME)).toBeNull();

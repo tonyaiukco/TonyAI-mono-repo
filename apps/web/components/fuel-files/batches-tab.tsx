@@ -21,7 +21,7 @@ import { RowCount } from "./common";
 const ALL = "__all__";
 
 /** Batches (D16): status filter, submit one or many, open a batch to recall, declare, attach files or withdraw it. */
-export function BatchesTab({ user, refreshKey }: { user: AuthUser | null; refreshKey: number }) {
+export function BatchesTab({ user, refreshKey, initialOpen = null }: { user: AuthUser | null; refreshKey: number; initialOpen?: string | null }) {
   const t = useTranslations("fuelFiles");
   const tIssues = useTranslations("errors.codes");
   const locale = useLocale() as Locale;
@@ -29,7 +29,10 @@ export function BatchesTab({ user, refreshKey }: { user: AuthUser | null; refres
   const [status, setStatus] = useState<FuelBatchStatus | typeof ALL>(ALL);
   const [batches, setBatches] = useState<FuelBatchDTO[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(initialOpen);
+  useEffect(() => {
+    if (initialOpen) setOpen(initialOpen);
+  }, [initialOpen]);
   const [busy, setBusy] = useState(false);
   const [version, setVersion] = useState(0);
   const viewer = user ? { id: user.id, role: user.role } : null;
