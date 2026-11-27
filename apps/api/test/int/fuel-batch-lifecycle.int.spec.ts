@@ -287,6 +287,23 @@ describe('a batch’s record is not acted on singly (task 7.2)', () => {
     expect(await counted()).toBeLessThan(base);
     expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id } })).status).toBe('approved');
   });
+
+  it('never moves an approved batch whose every record is voided: no review, no return, no records come back (QA review of PR B)', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025', '04.04.2025']);
+    await withEvidence(id);
+    const s = services();
+    const submitted = await s.batches.submit(user, id);
+    await s.batches.approve(user, id, submitted.submittedAt);
+    for (const r of await owner.activityRecord.findMany({ where: { fuelBatchId: id } })) await s.records.void(user, r.id, 'Entered twice');
+    const decider = tenant.users.superAdmin;
+    const code = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => errorCodeOf(e));
+    expect(await code(s.batches.startReview(decider, id, submitted.submittedAt))).toBe('fuel_batch_not_open');
+    expect(await code(s.batches.reject(decider, id, 'reopen', submitted.submittedAt))).toBe('fuel_batch_not_open');
+    expect(await code(s.batches.changeDeclarations(user, id, { usage: 'off_road' }))).toBe('fuel_batch_not_open');
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id } })).status).toBe('approved');
+    expect(await statuses(id)).toEqual(['voided', 'voided']);
+  });
 });
 
 describe('evidence on the batch (task 7.3)', () => {

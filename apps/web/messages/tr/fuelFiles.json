@@ -213,6 +213,7 @@
     "cardFuelNote": "Grubun taşıt kartlarıyla (Shell, Petrol Ofisi) alınan ve merkezden yüklenen yakıt, kartın hesap sahibine sayılır — burada yeniden girmeyin.",
     "fuelFilesLink": "Yakıt dosyaları",
     "addAnother": "Başka bir yakıt ekle",
-    "batchMark": "Yakıt paketi"
+    "batchMark": "Yakıt paketi",
+    "openBatch": "Bu kayıt bir yakıt paketine ait: değiştirmek için paketi Yakıt dosyaları'nda açın."
   }
 }

@@ -213,6 +213,7 @@
     "cardFuelNote": "Fuel bought with the group's fuel cards (Shell, Petrol Ofisi) and uploaded centrally is counted for the card's account holder — do not enter it here again.",
     "fuelFilesLink": "Fuel files",
     "addAnother": "Add another fuel",
-    "batchMark": "Fuel batch"
+    "batchMark": "Fuel batch",
+    "openBatch": "This record belongs to a fuel batch: open the batch on Fuel files to change it."
   }
 }

@@ -149,6 +149,10 @@ describe('forming batches (task 6.3)', () => {
     const [after] = await recordsOf(batch!.id);
     expect(after!.id).toBe(before!.id);
     expect(after!.activityValue).toBe(35.5);
+    // The figure is recomputed for the new quantity, never carried over (QA review of PR B).
+    const tOf = (r: typeof before) => (r!.calculation as { tCo2e?: number }).tCo2e ?? null;
+    expect(tOf(before)).not.toBeNull();
+    expect(Math.abs(tOf(after)! / tOf(before)! - 35.5 / 30)).toBeLessThan(1e-6);
     expect(await owner.fuelRow.count({ where: { fuelBatchId: batch!.id, state: 'assigned' } })).toBe(3);
   });
 

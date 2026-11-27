@@ -60,8 +60,8 @@ const record = (id: string) => ({
   submittedAt: SUBMITTED_AT,
 });
 
-function harness(seen: FuelBatch, options: { locked?: FuelBatch; recordsNow?: string[]; recordRefusal?: Error } = {}) {
-  const seenRecords = [record('r1'), record('r2')];
+function harness(seen: FuelBatch, options: { locked?: FuelBatch; recordsNow?: string[]; recordRefusal?: Error; live?: string[] } = {}) {
+  const seenRecords = (options.live ?? ['r1', 'r2']).map(record);
   const tx = {
     $queryRaw: vi.fn(async () => [{ id: BATCH }]),
     $executeRaw: vi.fn(async () => 1),
@@ -115,6 +115,37 @@ describe('FuelBatchesService — the step’s own refusals (task 7.1)', () => {
   it('refuses a submit by anyone but the batch’s author, a masterkey included', async () => {
     const h = harness(batchOf());
     expect(await codeOf(h.service.submit(user('masterkey', '00000000-0000-4000-8000-0000000000f9'), BATCH))).toBe('record_submit_forbidden');
+    expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
+  });
+
+  it('never moves a batch with no live record (every one voided), whatever the step', async () => {
+    const approved = batchOf({ status: 'approved', submittedAt: SUBMITTED_AT, submissionCount: 1 });
+    for (const step of [
+      (h: ReturnType<typeof harness>) => h.service.startReview(user('super_admin', 'r'), BATCH, SUBMITTED_AT.toISOString()),
+      (h: ReturnType<typeof harness>) => h.service.reject(user('super_admin', 'r'), BATCH, 'why', SUBMITTED_AT.toISOString()),
+      (h: ReturnType<typeof harness>) => h.service.approve(user('super_admin', 'r'), BATCH, SUBMITTED_AT.toISOString()),
+    ]) {
+      const h = harness(approved, { live: [], recordsNow: [] });
+      expect(await codeOf(step(h))).toBe('fuel_batch_not_open');
+      expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
+      expect(h.audit.record).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([
+    ['review', 'approved'], ['review', 'under_review'], ['approve', 'approved'], ['reject', 'approved'], ['reject', 'draft'],
+  ] as const)('refuses to %s a batch that is %s, before any record is touched', async (action, status) => {
+    const h = harness(batchOf({ status, submittedAt: SUBMITTED_AT, submissionCount: 1 }));
+    const reviewer = user('super_admin', 'r');
+    const run = action === 'review'
+      ? h.service.startReview(reviewer, BATCH, SUBMITTED_AT.toISOString())
+      : action === 'approve'
+        ? h.service.approve(reviewer, BATCH, SUBMITTED_AT.toISOString())
+        : h.service.reject(reviewer, BATCH, 'why', SUBMITTED_AT.toISOString());
+    expect(await codeOf(run)).toBe('record_changed');
+    expect(h.records.startReviewLocked).not.toHaveBeenCalled();
+    expect(h.records.approveLocked).not.toHaveBeenCalled();
+    expect(h.records.rejectLocked).not.toHaveBeenCalled();
     expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
   });
 

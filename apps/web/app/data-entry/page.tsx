@@ -21,7 +21,7 @@ import type { FuelEntryUsage, ManualFuel } from "@/lib/types";
 import NextLink from "next/link";
 
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
@@ -193,6 +193,7 @@ import { appendById, readPages } from "@/lib/cursor-pages";
 import { uploadHeldFiles } from "@/lib/held-evidence";
 import {
   blankRecordsFilter,
+  fuelBatchLink,
   isNarrowed,
   pickRecordsFilter,
   recordsQuery,
@@ -290,6 +291,7 @@ function DataEntryPageInner() {
   const tRoles = useTranslations("users");
   const signOut = useSignOut();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { user, setUser } = useAuthStore();
   const t = useTranslations("dataEntry");
   const tFuel = useTranslations("fuelFiles");
@@ -1397,6 +1399,13 @@ function DataEntryPageInner() {
    * refuse to save is worse than saying why.
    */
   function loadRecord(rec: ActivityRecordPageItemDTO, mode: "open" | "edit" = "open") {
+    // A fuel batch's record is never opened into the form: it is changed with
+    // its batch, so the form offers it nothing but the way there (inc28-fuel-bulk D16).
+    const batchLink = fuelBatchLink(rec);
+    if (batchLink) {
+      toast.info(tFuel("entry.openBatch"), { action: { label: tFuel("entry.batchMark"), onClick: () => router.push(batchLink) } });
+      return;
+    }
     if (rec.status !== "draft" && rec.status !== "rejected") {
       toast.info(t("notEditable", { status: tStatus(`inline.${rec.status}`) }));
       return;

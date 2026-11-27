@@ -266,6 +266,9 @@ export class FuelBatchesService {
         if (!locked) throw new ResourceNotFoundError('fuel_batch_not_found');
         const batch = await tx.fuelBatch.findUniqueOrThrow({ where: { id } });
         if (batch.status !== seenBatch.status || batch.submissionCount !== seenBatch.submissionCount) throw new RecordChangedError();
+        // A batch is never moved past its records: with none live (each voided)
+        // no record's own status or approver gate would run (QA review of PR B).
+        if (seenRecords.length === 0) throw new FuelBatchNotOpenError();
         gate(batch);
         await declareFuelBatchStep(tx, id);
         await lockPeriodsShared(tx, seenRecords.map(periodOf));
@@ -348,7 +351,11 @@ export class FuelBatchesService {
     if (!can(user.role, 'record.decide')) throw new ForbiddenException();
     return this.step(
       user, id, 'review',
-      (batch) => this.assertSubmission(batch, seenSubmittedAt, false),
+      (batch) => {
+        // The batch's own status, as each record's: only a submitted batch is taken into review.
+        if (batch.status !== 'submitted') throw new RecordChangedError();
+        this.assertSubmission(batch, seenSubmittedAt, false);
+      },
       (tx, seen, current) => this.records.startReviewLocked(tx, user, seen, current, current.submittedAt?.toISOString() ?? null),
       () => ({ status: 'under_review', reviewedBy: user.id, reviewedAt: new Date() }),
     );
@@ -359,7 +366,10 @@ export class FuelBatchesService {
     const recomputed = new Map<string, Awaited<ReturnType<ActivityRecordsService['recomputeFor']>>>();
     return this.step(
       user, id, 'approve',
-      (batch) => this.assertSubmission(batch, seenSubmittedAt, true),
+      (batch) => {
+        if (batch.status !== 'submitted' && batch.status !== 'under_review') throw new RecordChangedError();
+        this.assertSubmission(batch, seenSubmittedAt, true);
+      },
       (tx, seen, current) =>
         this.records.approveLocked(tx, user, seen, current, current.submittedAt?.toISOString() ?? null, recomputed.get(seen.id)!),
       () => ({ status: 'approved', reviewedBy: user.id, reviewedAt: new Date(), reviewNote: null }),
@@ -376,7 +386,10 @@ export class FuelBatchesService {
     }
     return this.step(
       user, id, 'reject',
-      (batch) => this.assertSubmission(batch, seenSubmittedAt, true),
+      (batch) => {
+        if (batch.status !== 'submitted' && batch.status !== 'under_review') throw new RecordChangedError();
+        this.assertSubmission(batch, seenSubmittedAt, true);
+      },
       (tx, seen, current) => this.records.rejectLocked(tx, user, seen, current, reason, current.submittedAt?.toISOString() ?? null),
       () => ({ status: 'rejected', reviewedBy: user.id, reviewedAt: new Date(), reviewNote: reason }),
     );
