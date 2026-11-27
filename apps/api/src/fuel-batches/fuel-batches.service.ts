@@ -15,6 +15,7 @@ import {
   type FuelRowState,
   type FileFuel,
   PERIOD_VALUES,
+  fuelRecordTarget,
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
@@ -28,6 +29,9 @@ import { grantedCategories } from '../activity-records/record-scope';
 import { approversFor, awaitingDecisionWhere } from '../activity-records/record-approver';
 import { sumDecimals } from '../fuel-files/decimal';
 import { fuelBatchVerdicts } from './fuel-batch-anomaly';
+import { EvidenceService } from '../evidence/evidence.service';
+import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
+import { usageCategory } from '../fuel-files/fuel-scope';
 import { fuelBatchScopeWhere } from './fuel-batch-scope';
 
 export { fuelBatchScopeWhere };
@@ -60,6 +64,7 @@ export class FuelBatchesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly records: ActivityRecordsService,
+    private readonly evidence: EvidenceService,
   ) {}
 
   // ── Reads (D10) ────────────────────────────────────────────────────────────
@@ -390,5 +395,183 @@ export class FuelBatchesService {
     }
     return { submitted, failed };
   }
+
+  // ── Declarations and withdrawal (D13) ─────────────────────────────────────
+
+  /**
+   * `PATCH /fuel-batches/:id/declarations` (author; draft or returned): the
+   * usage, and for a tanker batch its fuel, year and month, rewritten on the
+   * batch and its rows; then the records rebuilt by key (year, month,
+   * category, activity type) in the same transaction — a key in both sets
+   * keeps its record and id, a new key is created and given the batch's
+   * files, an old key is removed. A refusal leaves everything as it was.
+   */
+  async changeDeclarations(
+    user: RequestUser,
+    id: string,
+    change: { usage: FuelUsage; fuel?: FileFuel; year?: number; month?: number },
+  ): Promise<FuelBatchDetailDTO> {
+    const seenBatch = await this.visible(user, id);
+    const tanker = seenBatch.source === 'tanker';
+    if (!tanker && (change.fuel !== undefined || change.year !== undefined || change.month !== undefined)) {
+      throw new BadRequestException(errorBody('validation_failed', 'Only a tanker delivery declares its fuel and period.'));
+    }
+    const removed: Array<{ id: string; storagePath: string }> = [];
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const batch = await this.lockOpen(tx, user, id, false);
+        await declareFuelBatchStep(tx, id);
+        const before = { usage: batch.usage };
+        await tx.fuelBatch.update({ where: { id }, data: { usage: change.usage, category: usageCategory(change.usage) } });
+        await tx.fuelRow.updateMany({
+          where: { fuelBatchId: id, state: 'assigned' },
+          data: {
+            usage: change.usage,
+            ...(tanker && change.fuel ? { fuel: change.fuel } : {}),
+            ...(tanker && change.year ? { year: change.year } : {}),
+            ...(tanker && change.month ? { month: change.month } : {}),
+          },
+        });
+        removed.push(...(await this.rebuild(tx, user, { ...batch, usage: change.usage })));
+        await this.audit.record(
+          user,
+          { action: 'update', entity: 'fuel_batch', entityId: id, diff: { declarations: { before, after: change } } },
+          tx,
+        );
+      }, STEP_TX);
+    } catch (error) {
+      throw this.stepRefusal(error);
+    }
+    await this.evidenceBlobs(removed);
+    return this.detail(user, id);
+  }
+
+  /**
+   * `POST /fuel-batches/:id/withdraw` (author or masterkey; draft or returned):
+   * its records removed as a draft's are, the batch and its rows kept as
+   * withdrawn with who, when and why, out of every sum (C14).
+   */
+  async withdraw(user: RequestUser, id: string, reason: string): Promise<FuelBatchDetailDTO> {
+    if (typeof reason !== 'string' || reason.trim() === '') {
+      throw new BadRequestException(errorBody('validation_failed', 'A withdrawal needs a reason.'));
+    }
+    await this.visible(user, id);
+    const removed: Array<{ id: string; storagePath: string }> = [];
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockOpen(tx, user, id, can(user.role, 'fuel_rows.take_over'));
+        await declareFuelBatchStep(tx, id);
+        const records = await tx.activityRecord.findMany({ where: { fuelBatchId: id, status: { not: 'voided' } }, orderBy: { id: 'asc' } });
+        await lockPeriodsShared(tx, records.map(periodOf));
+        for (const record of records) {
+          const current = await this.records.lockSeenRecord(tx, record, user.organisationId);
+          removed.push(...(await this.records.removeLocked(tx, user, current)));
+        }
+        const [rows] = await tx.$queryRaw<Array<{ rows: number; litres: string | null }>>`
+          WITH w AS (
+            UPDATE fuel_rows SET withdrawn_state = state, state = 'withdrawn', withdrawn_by = ${user.id}::uuid,
+              withdrawn_at = now(), withdrawn_reason = ${reason.trim()}, updated_at = now()
+            WHERE fuel_batch_id = ${id}::uuid AND state = 'assigned' RETURNING litres
+          ) SELECT count(*)::int AS rows, sum(litres)::text AS litres FROM w`;
+        await tx.fuelBatch.update({
+          where: { id },
+          data: { status: 'withdrawn', withdrawnBy: user.id, withdrawnAt: new Date(), withdrawnReason: reason.trim() },
+        });
+        await this.audit.record(
+          user,
+          { action: 'retract', entity: 'fuel_batch', entityId: id, diff: { reason: reason.trim(), rows: rows?.rows ?? 0, litres: rows?.litres ?? '0', records: records.length } },
+          tx,
+        );
+      }, STEP_TX);
+    } catch (error) {
+      throw this.stepRefusal(error);
+    }
+    await this.evidenceBlobs(removed);
+    return this.detail(user, id);
+  }
+
+  /** The batch row locked, open, and the caller's (or, for a withdrawal, a masterkey's). */
+  private async lockOpen(tx: Prisma.TransactionClient, user: RequestUser, id: string, anyAuthor: boolean): Promise<FuelBatch> {
+    const [locked] = await tx.$queryRaw<Array<{ id: string }>>`SELECT id::text FROM fuel_batches WHERE id = ${id}::uuid FOR UPDATE`;
+    if (!locked) throw new ResourceNotFoundError('fuel_batch_not_found');
+    const batch = await tx.fuelBatch.findUniqueOrThrow({ where: { id } });
+    if (batch.status !== 'draft' && batch.status !== 'rejected') throw new FuelBatchNotOpenError();
+    if (!anyAuthor && batch.createdBy !== user.id) {
+      throw new ForbiddenException(errorBody('record_author_forbidden', 'Only the batch’s author changes it.'));
+    }
+    return batch;
+  }
+
+  /** D13's rebuild by key, from the batch's assigned rows as they now stand. */
+  private async rebuild(tx: Prisma.TransactionClient, user: RequestUser, batch: FuelBatch): Promise<Array<{ id: string; storagePath: string }>> {
+    const rows = await tx.fuelRow.findMany({ where: { fuelBatchId: batch.id, state: 'assigned' }, select: { fuel: true, year: true, month: true, litres: true } });
+    const usage = batch.usage as FuelUsage;
+    const wanted = new Map<string, { fuel: FileFuel; year: number; month: number; litres: string[] }>();
+    for (const r of rows) {
+      const target = fuelRecordTarget(r.fuel as FileFuel, usage)!;
+      const key = `${r.year}|${r.month}|${target.category}|${target.activityType}`;
+      const entry = wanted.get(key) ?? { fuel: r.fuel as FileFuel, year: r.year, month: r.month, litres: [] };
+      wanted.set(key, entry);
+      entry.litres.push(r.litres.toString());
+    }
+    const existing = await tx.activityRecord.findMany({ where: { fuelBatchId: batch.id, status: { not: 'voided' } }, orderBy: { id: 'asc' } });
+    const keyOfRecord = (r: ActivityRecord) =>
+      `${r.reportingYear}|${(PERIOD_VALUES.monthly as readonly string[]).indexOf(r.periodValue) + 1}|${r.category}|${r.activityType}`;
+    const files = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT DISTINCT l.evidence_id::text AS id FROM activity_record_evidence l
+      JOIN activity_records a ON a.id = l.activity_record_id WHERE a.fuel_batch_id = ${batch.id}::uuid`;
+    const periods = [
+      ...existing.map(periodOf),
+      ...[...wanted.values()].map((w) => ({
+        subsidiaryId: batch.subsidiaryId, reportingYear: w.year, reportingPeriod: 'monthly', periodValue: PERIOD_VALUES.monthly[w.month - 1]!,
+      })),
+    ];
+    await lockPeriodsShared(tx, periods as never);
+    const locked = new Map<string, LiveRecord>();
+    for (const record of existing) locked.set(record.id, await this.records.lockSeenRecord(tx, record, user.organisationId));
+    // New keys first, given the batch's files, so no file loses its last link to a removed record.
+    for (const [key, w] of wanted) {
+      if (existing.some((r) => keyOfRecord(r) === key)) continue;
+      const target = fuelRecordTarget(w.fuel, usage)!;
+      const dto = Object.assign(new CreateActivityRecordDto(), {
+        subsidiaryId: batch.subsidiaryId, locationId: null, reportingYear: w.year, reportingPeriod: 'monthly',
+        periodValue: PERIOD_VALUES.monthly[w.month - 1], category: target.category, activityType: target.activityType,
+        activityValue: Number(sumDecimals(w.litres)), activityUnit: target.units[0]!,
+        ...(batch.source === 'shell' ? {} : { input: { invoice_no: batch.invoiceRef } }),
+      }) as CreateActivityRecordDto;
+      const prepared = await this.records.previewCreate(user, dto, { fuelBatchId: batch.id });
+      let created: { id: string };
+      try {
+        created = await this.records.createInTransaction(tx, user, dto, prepared, { fuelBatchId: batch.id });
+      } catch (error) {
+        throw this.records.createRefusal(error, dto, prepared);
+      }
+      if (files.length) {
+        await tx.activityRecordEvidence.createMany({
+          data: files.map((f) => ({ activityRecordId: created.id, evidenceId: f.id, subsidiaryId: batch.subsidiaryId, linkedBy: user.id })),
+        });
+      }
+    }
+    const removed: Array<{ id: string; storagePath: string }> = [];
+    for (const record of existing) {
+      const w = wanted.get(keyOfRecord(record));
+      if (w) {
+        await this.records.updateBatchQuantityLocked(tx, user, locked.get(record.id)!, Number(sumDecimals(w.litres)));
+      } else {
+        removed.push(...(await this.records.removeLocked(tx, user, locked.get(record.id)!)));
+      }
+    }
+    return removed;
+  }
+
+  private stepRefusal(error: unknown): unknown {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') return new RecordChangedError();
+    return error;
+  }
+
+  private async evidenceBlobs(files: Array<{ storagePath: string }>): Promise<void> {
+    if (files.length) await this.evidence.removeBlobs(files.map((f) => f.storagePath));
+  }
+
 }
 

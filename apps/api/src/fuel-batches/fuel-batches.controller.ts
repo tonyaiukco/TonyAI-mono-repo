@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { EvidenceService } from '../evidence/evidence.service';
 import type { BulkSubmitFuelBatchesResultDTO, FuelBatchDetailDTO, FuelBatchDTO, FuelBatchMetadataDTO, FuelBatchRowDTO } from '@tonyai/shared-types';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -6,7 +6,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 import { ApproveActivityRecordDto, StartReviewActivityRecordDto } from '../activity-records/dto/approve-activity-record.dto';
 import { RejectActivityRecordDto } from '../activity-records/dto/reject-activity-record.dto';
-import { BulkSubmitFuelBatchesDto, FuelBatchFiltersDto, FuelBatchRowsQueryDto, SubmitFuelBatchDto } from './dto/fuel-batch.dto';
+import { BulkSubmitFuelBatchesDto, FuelBatchFiltersDto, FuelBatchRowsQueryDto, SubmitFuelBatchDto, UpdateFuelBatchDeclarationsDto, WithdrawFuelBatchDto } from './dto/fuel-batch.dto';
 import { FuelBatchesService } from './fuel-batches.service';
 
 /** Fuel batches: the review unit (inc28-fuel-bulk D9, D10). */
@@ -85,5 +85,20 @@ export class FuelBatchesController {
   @HttpCode(200)
   reject(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string, @Body() body: RejectActivityRecordDto): Promise<FuelBatchDetailDTO> {
     return this.batches.reject(user, id, body.varianceReason, body.seenSubmittedAt);
+  }
+
+  @Patch(':id/declarations')
+  declarations(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUuidParamPipe) id: string,
+    @Body() body: UpdateFuelBatchDeclarationsDto,
+  ): Promise<FuelBatchDetailDTO> {
+    return this.batches.changeDeclarations(user, id, body);
+  }
+
+  @Post(':id/withdraw')
+  @HttpCode(200)
+  withdraw(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string, @Body() body: WithdrawFuelBatchDto): Promise<FuelBatchDetailDTO> {
+    return this.batches.withdraw(user, id, body.reason);
   }
 }

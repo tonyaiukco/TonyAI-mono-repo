@@ -49,7 +49,7 @@ function services() {
     evidence,
     files: new FuelFilesService(runtime, audit, uploads),
     formation: new FuelBatchFormationService(runtime, audit, records, uploads),
-    batches: new FuelBatchesService(runtime, audit, records),
+    batches: new FuelBatchesService(runtime, audit, records, evidence),
     records,
     periodLocks,
   };
@@ -292,5 +292,66 @@ describe('evidence on the batch (task 7.3)', () => {
       expect(errorCodeOf(submit.reason)).toBe('evidence_required');
       expect(batch.status).toBe('draft');
     }
+  });
+});
+
+describe('declarations, withdrawal and bulk submit (task 7.4)', () => {
+  const code = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => errorCodeOf(e));
+
+  it('changes a returned batch’s usage: same litres as off-road records, its files kept, its trail kept, submittable again', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025', '04.04.2025'], 'OZK-DC');
+    const s = services();
+    const file = await s.evidence.uploadForFuelBatch(user, id, pdfFile());
+    const first = await s.batches.submit(user, id);
+    await s.batches.reject(user, id, 'It was off-road', first.submittedAt);
+    const after = await s.batches.changeDeclarations(user, id, { usage: 'off_road' });
+    expect(after).toMatchObject({ usage: 'off_road', status: 'rejected', category: 'Mobile Combustion' });
+    const records = await owner.activityRecord.findMany({ where: { fuelBatchId: id }, orderBy: { periodValue: 'asc' } });
+    expect(records.map((r) => [r.activityType, r.activityValue])).toEqual([['off_road_diesel', 100], ['off_road_diesel', 100]]);
+    expect(await owner.activityRecordEvidence.count({ where: { evidenceId: file.id } })).toBe(2);
+    expect(await owner.auditLog.count({ where: { entity: 'fuel_batch', entityId: id, action: { in: ['submit', 'reject', 'update'] } } })).toBe(3);
+    expect((await s.batches.submit(user, id)).submissionCount).toBe(2);
+    // A submitted batch refuses a change and a withdrawal.
+    expect(await code(s.batches.changeDeclarations(user, id, { usage: 'on_road' }))).toBe('fuel_batch_not_open');
+    expect(await code(s.batches.withdraw(user, id, 'no'))).toBe('fuel_batch_not_open');
+  });
+
+  it('leaves everything as it was when the rebuild is refused by a locked period', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025'], 'OZK-DL');
+    const s = services();
+    const before = await owner.activityRecord.findMany({ where: { fuelBatchId: id } });
+    await s.periodLocks.lock(user, { subsidiaryId: tenant.subsidiaryId, reportingYear: 2025, reportingPeriod: 'monthly', periodValue: 'March' } as never);
+    expect(await code(s.batches.changeDeclarations(user, id, { usage: 'stationary' }))).toBe('period_locked');
+    expect(await owner.activityRecord.findMany({ where: { fuelBatchId: id } })).toEqual(before);
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id } })).usage).toBe('on_road');
+    expect((await owner.fuelRow.findMany({ where: { fuelBatchId: id } })).map((r) => r.usage)).toEqual(['on_road']);
+  });
+
+  it('withdraws a draft batch, keeping it and its rows readable; the same file again forms a new batch of replacing rows', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025'], 'OZK-WD');
+    const s = services();
+    await s.batches.withdraw(user, id, 'Uploaded under the wrong usage');
+    expect(await owner.activityRecord.count({ where: { fuelBatchId: id } })).toBe(0);
+    const batch = await owner.fuelBatch.findUniqueOrThrow({ where: { id } });
+    expect(batch).toMatchObject({ status: 'withdrawn', withdrawnReason: 'Uploaded under the wrong usage' });
+    const rows = await owner.fuelRow.findMany({ where: { fuelBatchId: id } });
+    expect(rows.map((r) => [r.state, r.withdrawnState])).toEqual([['withdrawn', 'assigned']]);
+    const again = await formedBatch(user, ['03.03.2025'], 'OZK-WD');
+    expect(again).not.toBe(id);
+    const replacing = await owner.fuelRow.findFirstOrThrow({ where: { fuelBatchId: again } });
+    expect(replacing.replacesId).toBe(rows[0]!.id);
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id: again } })).sequence).toBe(2);
+  });
+
+  it('submits a mixed selection batch by batch, naming each refusal', async () => {
+    const user = await masterkey();
+    const ready = await formedBatch(user, ['03.03.2025'], 'OZK-B1');
+    const bare = await formedBatch(user, ['04.03.2025'], 'OZK-B2');
+    await withEvidence(ready);
+    const result = await services().batches.bulkSubmit(user, [ready, bare]);
+    expect(result).toEqual({ submitted: [ready], failed: [{ batchId: bare, code: 'evidence_required' }] });
   });
 });

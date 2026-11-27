@@ -1,7 +1,14 @@
 import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 import {
+  FILE_FUELS,
   FUEL_BATCH_STATUSES,
+  FUEL_USAGES,
+  REPORTING_YEAR_MAX,
+  REPORTING_YEAR_MIN,
+  type FileFuel,
+  type FuelUsage,
+  type UpdateFuelBatchDeclarationsRequest,
   type BulkSubmitFuelBatchesRequest,
   type FuelBatchFilters,
   type FuelBatchStatus,
@@ -35,4 +42,12 @@ export class WithdrawFuelBatchDto implements WithdrawFuelBatchRequest {
 
 export class BulkSubmitFuelBatchesDto implements BulkSubmitFuelBatchesRequest {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @IsUUID('all', { each: true }) batchIds!: string[];
+}
+
+/** `PATCH /fuel-batches/:id/declarations` (D13). */
+export class UpdateFuelBatchDeclarationsDto implements UpdateFuelBatchDeclarationsRequest {
+  @IsIn([...FUEL_USAGES]) usage!: FuelUsage;
+  @IsOptional() @IsIn([...FILE_FUELS]) fuel?: FileFuel;
+  @IsOptional() @IsInt() @Min(REPORTING_YEAR_MIN) @Max(REPORTING_YEAR_MAX) year?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(12) month?: number;
 }
