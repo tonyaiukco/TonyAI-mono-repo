@@ -6478,7 +6478,18 @@ export interface EvidenceDTO {
   uploadedBy: string;
   createdAt: string;
   linkedRecords: EvidenceLinkedRecordDTO[];
+  /** Provenance of a part cut from a larger uploaded PDF. */
+  source?: EvidenceSourceDTO;
 }
+
+export interface EvidenceSourceDTO {
+  sha256: string;
+  /** One-based, inclusive page numbers in the original PDF. */
+  pageFrom: number;
+  pageTo: number;
+}
+
+export * from './evidence-assistant';
 
 /** Why one record refused a file in `POST /evidence` — the upload is all or nothing. */
 export interface EvidenceLinkRefusal {

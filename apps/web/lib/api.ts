@@ -31,6 +31,8 @@ import type {
   SealedFactorReleaseDTO,
   ReleaseParametersQuery,
   ActivityRecordDTO,
+  EvidenceAssistantDTO,
+  FuelBatchEvidenceUploadDTO,
   RecordAuditTrailDTO,
   ApproveInput,
   StartReviewInput,
@@ -701,6 +703,8 @@ export const api = {
     apiFetch<ActivityRecordListMetadataDTO>(`/activity-records/metadata${boundedQuery(params, ACTIVITY_FILTER_KEYS)}`),
   getActivityRecord: (id: string) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${encodeURIComponent(id)}`),
+  getRecordEvidenceAssistant: (id: string) =>
+    apiFetch<EvidenceAssistantDTO>(`/activity-records/${encodeURIComponent(id)}/evidence-assistant`),
   /** One record's history, oldest first (WP5): who may read it is `mayReadRecordTrail`. */
   getRecordAuditTrail: (id: string) =>
     apiFetch<RecordAuditTrailDTO>(`/activity-records/${encodeURIComponent(id)}/audit-trail`),
@@ -1016,6 +1020,8 @@ export const api = {
   fuelBatchMetadata: (filters: FuelBatchFilters = {}) =>
     apiFetch<FuelBatchMetadataDTO>(`/fuel-batches/metadata${fuelBatchQuery(filters)}`),
   getFuelBatch: (id: string) => apiFetch<FuelBatchDetailDTO>(`/fuel-batches/${encodeURIComponent(id)}`),
+  getFuelBatchEvidenceAssistant: (id: string) =>
+    apiFetch<EvidenceAssistantDTO>(`/fuel-batches/${encodeURIComponent(id)}/evidence-assistant`),
   fuelBatchRows: (id: string, page: { offset?: number; limit?: number } = {}) => {
     const search = new URLSearchParams();
     if (page.offset !== undefined) search.set("offset", String(page.offset));
@@ -1047,7 +1053,7 @@ export const api = {
     form.append("fuelBatchId", batchId);
     const res = await fetch(`${BASE_URL}/evidence`, { method: "POST", headers: await authHeaders(), body: form });
     if (!res.ok) throw await apiError(res);
-    return (await res.json()) as EvidenceDTO;
+    return (await res.json()) as FuelBatchEvidenceUploadDTO;
   },
   detachFuelBatchEvidence: (batchId: string, evidenceId: string) =>
     apiFetch<{ fileDeleted: boolean }>(
