@@ -181,6 +181,7 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // UPDATE because `SELECT … FOR UPDATE` requires it (LP1-01's row locks).
   evidence: SIUD,
   activity_record_evidence: ['SELECT', 'INSERT', 'DELETE'],
+  evidence_readings: ['SELECT', 'INSERT'],
   period_locks: ['SELECT', 'INSERT', 'DELETE'],
   import_batches: ['SELECT', 'INSERT', 'UPDATE'],
   // Append-only: written with every mutation, read by /audit.

@@ -615,12 +615,32 @@ model Evidence {
   // uploaded before LP1-02: unverified, never back-filled with a guess.
   sha256       String?                  @db.Char(64)
   uploadedBy   String                   @map("uploaded_by") @db.Uuid
+  // The original upload's digest and inclusive page range for a split PDF.
+  sourceSha256   String?                @map("source_sha256") @db.Char(64)
+  sourcePageFrom Int?                   @map("source_page_from")
+  sourcePageTo   Int?                   @map("source_page_to")
+  readings     EvidenceReading[]
   links        ActivityRecordEvidence[]
   createdAt    DateTime                 @default(now()) @map("created_at")
 
   @@unique([id, subsidiaryId])
   @@index([subsidiaryId])
   @@map("evidence")
+}
+
+// API-only reading cache. A newer reader adds a row for its own version.
+model EvidenceReading {
+  evidenceId    String   @map("evidence_id") @db.Uuid
+  subsidiaryId  String   @map("subsidiary_id") @db.Uuid
+  evidence      Evidence @relation(fields: [evidenceId, subsidiaryId], references: [id, subsidiaryId], onDelete: Cascade, onUpdate: NoAction)
+  readerVersion String   @map("reader_version")
+  status        String
+  pageCount     Int      @map("page_count")
+  invoices      Json
+  readAt        DateTime @default(now()) @map("read_at") @db.Timestamptz(6)
+
+  @@id([evidenceId, readerVersion])
+  @@map("evidence_readings")
 }
 
 // One evidence file backing one activity record. Both foreign keys are
@@ -1436,5 +1456,6 @@ model FuelRow {
   @@index([holderId, state])
   @@index([subsidiaryId, state])
   @@index([fuelAccountId, invoiceRef])
+  @@index([organisationId, invoiceRef])
   @@map("fuel_rows")
 }

@@ -1847,6 +1847,45 @@ async function main() {
       forgedKeys.map((f) => `${f.role}=${f.status}`).join(', '),
     );
 
+    // Invoice readings may contain a buyer's name and tax number.
+    const readingClients = [
+      ['anon', ANON, undefined],
+      ['standard_user', ANON, token],
+      ['super_admin', ANON, await getToken(SUPER_ADMIN_EMAIL)],
+      ['masterkey', ANON, adminToken],
+      ['auditor', ANON, await getToken(AUDITOR_EMAIL)],
+      ['service_role', SERVICE, SERVICE],
+    ];
+    const readingProbes = await Promise.all(readingClients.map(async ([role, key, bearer]) => {
+      const read = await count('evidence_readings', { key, token: bearer, query: 'select=invoices' });
+      const headers = { apikey: key, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+      if (bearer) headers.Authorization = `Bearer ${bearer}`;
+      const write = await fetch(`${URL_}/rest/v1/evidence_readings`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          evidence_id: '99999999-0000-0000-0000-00000000e001',
+          subsidiary_id: '99999999-0000-0000-0000-00000000e002',
+          reader_version: 'rls-probe',
+          status: 'no_text',
+          page_count: 1,
+          invoices: [],
+        }),
+      });
+      return {
+        role,
+        read: denied(read),
+        // RLS alone would refuse with 42501 too ("violates row-level security
+        // policy"); only the privilege refusal proves the role holds no INSERT.
+        write: !write.ok && /permission denied for table evidence_readings/i.test(await write.text()),
+      };
+    }));
+    check(
+      'evidence_readings: every client role is refused read and insert by privilege',
+      readingProbes.every(({ read, write }) => read && write),
+      readingProbes.map(({ role, read, write }) => `${role}=read:${read},write:${write}`).join('; '),
+    );
+
     // The lifecycle columns on `profiles` (LP4-01). Supabase's default
     // privileges give `authenticated` table-level UPDATE on `profiles`, so
     // RLS — no UPDATE policy — is all that stops a user rewriting its own row:

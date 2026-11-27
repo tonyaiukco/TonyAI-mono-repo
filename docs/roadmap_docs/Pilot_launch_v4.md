@@ -18,7 +18,7 @@ into the planning file and this file stops being updated.
 | `tonyai_INC-2.8_…` (Rev.3) | Fuel bulk ingestion: Shell, Petrol Ofisi and tanker adapters, account mapping, batch review |
 | `tonyai_INC-2.9_…` (Rev.3) | Bulk framework, evidence reading rules, review-queue evidence assistant (fuel only at go-live) |
 
-The five documents are the owner's originals (Turkish, untracked). They are not committed without the owner's word.
+The five documents are the owner's originals (Turkish), tracked in the repository since `204618d4`.
 
 ## 2. Where the code stands (measured 2026-11-24, `main` at `3ff43127`)
 
@@ -71,7 +71,7 @@ step, so it can run in a second session; without one, Lane B starts when Lane A 
 | Tue 11-24 | Plan · WP1 | — | — |
 | Wed 11-25 | WP2 · WP3 · WP4 | WP9 parsers and fuel-name rules (on synthetic fixtures; the real files are QA's, §7) | WP1 |
 | Thu 11-26 | WP5 · WP6 starts · **forecast to the owner** | WP9 account mapping, unmatched tray | WP2–WP4 |
-| Fri 11-27 | WP6 lands · WP7 | WP10 invoice reader against the golden invoice set | WP5 |
+| Fri 11-27 | WP6 lands · WP7 | WP10 invoice reader (synthetic fixtures since K1 = B, §7; the golden set is QA's acceptance test) | WP5 |
 | Sat 11-28 | WP8 | WP9 integration: owning entity, batches in the review queue | WP6, WP7 |
 | Sun 11-29 | Fixes from QA · whole local e2e suite · handover note | WP10 panel in the review queue | everything merged |
 | Mon 11-30 | QA's full acceptance test on hosted QA (A1–A15, the real files), approved by QA | | |
@@ -160,13 +160,16 @@ shapes (`apps/api/test/fixtures/fuel/`). After the deploy, **QA tests it in full
 the real files (the 8 Shell exports, the Petrol Ofisi `SatisListesi`, the tanker file) — and approves it. A
 difference QA finds (a header row, a sheet name, a cell type, a figure) comes back as a fix.
 
-Still missing for WP10, kept **outside the repository** (it carries real company data):
-
-- The golden invoice set: 4 OZK and 23 Duman invoices (PDF), and one shared invoice (e.g. `OZK2025000011923`).
+**WP10 (owner, 2026-11-27; K1 = B, Decisions 2026-11-28): the golden invoice set, the Readiness Review's values
+and the handoff index §4 are not inputs to the build.** WP10 is built and tested on synthetic invoice fixtures in
+the documented layouts (`apps/api/test/fixtures/invoices/`, PR B). After the deploy, **QA runs the reader's gate
+and its acceptance tests on hosted QA** with the real invoices (4 OZK and 23 Duman invoices, and one shared
+invoice such as `OZK2025000011923`, kept **outside the repository** because they carry real company data) — this
+moves INC-2.8 §7's "before every release" gate to QA. A difference QA finds comes back as a fix.
 
 ## 8. Working rules for this sprint
 
-- OpenSpec for every package: `/opsx:propose`, then `/opsx:apply`, ticking `tasks.md` as work lands; archive in the package's own PR once its tasks are done (the owner asked for this on WP1, 2026-11-24).
+- OpenSpec for every package: `/opsx:propose`, then `/opsx:apply`, ticking `tasks.md` as work lands; archive once its tasks are done (the owner asked for this on WP1, 2026-11-24). The OpenSpec tree and its archive stay local and are never committed (owner, 2026-11-25); the planning file and the PR description carry what a reader of the repository needs.
 - Verification by risk: WP1 gets typecheck, unit tests and its e2e specs; every other package adds `test:int`,
   the live API and the review pass. The whole e2e suite runs locally on built servers before the handover.
 - Build on what exists: recall, `ImportBatch`, the inventory boundary, the equipment lines and `cvBasis` are
@@ -186,6 +189,6 @@ Still missing for WP10, kept **outside the repository** (it carries real company
 | 6 `inc26-roles-approval-chain` | merged 11-25 (`b7edcb96`; Claude Code), archived locally | `feat/inc26-roles-approval-chain`, [#364](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/364) | `ci100-2` | owner's rulings R1–R6 (§6, Decisions 2026-11-25 (sixth)) and the evidence ruling (seventh); one migration, not expand-only (deploy note in the PR); three review seats; e2e 311/311; `CLAUDE.md`'s canonical roles and seed users updated; hosted QA per-role counts read 11-26 (34 masterkey, 8 auditor, 10 standard user, 0 super_admin = 52) |
 | 7 `inc26-group-tree` | merged 11-26 (Claude Code), after seven owner reviews | [#365](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/365) (`02e6a246`) | QA `ci101-1` (run 45818614665) | the owner's direction and readings RD1–RD14 (Decisions 2026-11-25 (eighth)); one expand-only migration with the carry-over and triggers TA018–TA023; a `super_admin`'s child companies and own-company declarations (R6); hosted readback 11-26: one root per organisation (20), 52 nodes and carry-over rows, 0 records on closed nodes; reference total 2026 Scope 1+2: 17 records, 371.540681472944 tCO2e |
 | 8 `inc26-central-reporter-onboarding` | merged 11-26 (`1d58203a`; Claude Code), archived locally | `feat/inc26-central-reporter-onboarding`, [#366](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/366) | `ci102-1` | the owner's direction (the documents decide) and C1–C11 approved as written, no cut (Decisions 2026-11-26); two expand-only migrations, triggers TA024–TA027, the central reporter grant, single entry in both halves, the eight-step wizard; hosted readback part 1 11-26 (21 organisations, 25 access rows all assigned, 0 stored reporting entities, 2026 reference total unchanged: 17 records, 371.540681472944 tCO2e); **part 2 owed**: which of the 3 R6 accounts are converted, by the owner's decision |
-| 9 `inc28-fuel-bulk` | in progress (Claude Code): PR A merged 11-27 (`0e0d3d91`); PR B (groups 4–10) implemented and proven locally 11-27 (e2e 338/338; 44,902 rows measured), unpushed — the owner reviews the branch | `feat/inc28-fuel-bulk-contract`, [#367](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/367) (PR A, merged); `feat/inc28-fuel-bulk` (PR B) | — | C1–C20 approved as written, two PRs (Decisions 2026-11-27); PR A: three tables, the slot key widened by the batch, TA028, TA029, RLS by D14's matrix, the shared contract, synthetic fixtures; three review seats (one P1 fixed) and two owner reviews (ten findings fixed); e2e 324/324. The real files and A1–A15 are QA's full acceptance test after the deploy, not build inputs (owner, 11-27; §7) |
-| 10 `inc29-evidence-assistant` | not started | — | — | waits for the invoice PDFs (§7) |
+| 9 `inc28-fuel-bulk` | merged 11-27 (Claude Code): PR A (`0e0d3d91`); PR B, groups 4–10 (`e10684e8`, after six owner reviews; 44,902 rows measured) | `feat/inc28-fuel-bulk-contract`, [#367](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/367) (PR A); `feat/inc28-fuel-bulk`, [#368](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/368) (PR B) | `ci103-1` (PR A) · `ci104-1` (PR B) | C1–C20 approved as written, two PRs (Decisions 2026-11-27); PR A: three tables, the slot key widened by the batch, TA028, TA029, RLS by D14's matrix, the shared contract, synthetic fixtures; three review seats (one P1 fixed) and two owner reviews (ten findings fixed); e2e 324/324. The real files and A1–A15 are QA's full acceptance test after the deploy, not build inputs (owner, 11-27; §7) |
+| 10 `inc29-evidence-assistant` | in progress: PR A (first commit `f1efa2f1` by Codex with the owner's approval; review fixes by Claude Code), the contract and the expand-only migration, in review | `feat/inc29-evidence-assistant-contract` (PR A) | — | K1 = B and C1–C11 approved as written, two PRs (Decisions 2026-11-28); PR B is Claude Code's; the real invoices are QA's acceptance test, not build inputs (§7) |
 | 11 ~~`uat4-self-generation-deferred`~~ | dropped 11-24 (owner) | — | — | self-generation stays live as it is |
