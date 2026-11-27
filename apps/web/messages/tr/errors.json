@@ -9,6 +9,7 @@
     "period_locked": "Dönem kapalı",
     "evidence_required": "Kanıt dosyası gerekiyor",
     "variance_reason_required": "Sapma nedeni gerekiyor",
+    "record_in_batch": "Bir yakıt paketine ait — paketi gönderin",
     "calculation_stale": "Hesap güncel değil",
     "unexpected": "İncelemeye gönderilemedi",
     "category_not_granted": "Kategori artık size atanmış değil"

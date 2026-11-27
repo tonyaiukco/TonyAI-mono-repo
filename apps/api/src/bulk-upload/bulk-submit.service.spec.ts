@@ -20,6 +20,7 @@ import {
   EVIDENCE_REFUSAL_FRAGMENT,
   EvidenceRequiredError,
   PeriodLockedError,
+  RecordInBatchError,
   RecordChangedError,
   SUBMIT_ROLE_REFUSAL,
   SubmitAuthorRefusedError,
@@ -521,6 +522,9 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     // read as `unexpected` — and a recompute that refused (a 422 or a 400 from
     // the engine) arrives as this class too, never as `not_found`.
     [new CalculationStaleError(), 'calculation_stale', /save the draft again/i],
+    // inc28-fuel-bulk D9: a ConflictException too — a fuel batch's record is
+    // named as one, never `unexpected`.
+    [new RecordInBatchError(), 'record_in_batch', /fuel batch/i],
     // calc-refusal-422 (design D2): a library refusal that escapes the
     // wrapper is the same stale issue — never `not_found`, never `unexpected`.
     [

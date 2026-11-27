@@ -18,7 +18,7 @@ import { readRuntimeConfig } from '../common/runtime-config';
 import { PrismaService } from '../prisma/prisma.service';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
-import { declareFuelBatchStep } from '../activity-records/lifecycle-lock';
+import { declareFuelBatchStep, lockPeriodsShared } from '../activity-records/lifecycle-lock';
 import { CategoryNotGrantedError } from '../activity-records/record-scope';
 import {
   ActivityTypeSlotConflictError,
@@ -225,6 +225,20 @@ export class FuelBatchFormationService {
         existingRecords.map((r) => [keyOf(fuelOfActivityType(r.activityType), r.reportingYear, monthOf(r.periodValue)), r]),
       );
 
+      // Every period this group writes, locked shared and in sorted order BEFORE
+      // any record row is locked (lifecycle-lock.ts: a writer never waits on a
+      // period lock while holding a row lock). The create core takes the same
+      // shared lock again for a new key; a transaction re-taking a shared
+      // advisory lock it holds does not wait.
+      await lockPeriodsShared(
+        tx,
+        [...sums.values()].map((sum) => ({
+          subsidiaryId,
+          reportingYear: sum.year,
+          reportingPeriod: 'monthly',
+          periodValue: PERIOD_VALUES.monthly[sum.month - 1]!,
+        })),
+      );
       for (const [k, sum] of [...sums.entries()].sort(([a], [b]) => a.localeCompare(b))) {
         const target = fuelRecordTarget(sum.fuel, key.usage)!;
         const quantity = Number(sumDecimals(sum.litres));

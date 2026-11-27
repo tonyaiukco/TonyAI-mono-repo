@@ -9,6 +9,7 @@
     "period_locked": "Period closed",
     "evidence_required": "Needs an evidence file",
     "variance_reason_required": "Needs a variance reason",
+    "record_in_batch": "Belongs to a fuel batch — submit the batch",
     "calculation_stale": "Figure out of date",
     "unexpected": "Could not be submitted",
     "category_not_granted": "Category no longer assigned to you"

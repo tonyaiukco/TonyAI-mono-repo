@@ -45,7 +45,7 @@ interface Group { account_id: string; invoice_ref: string; usage: string; compan
 
 const sqlOf = (strings: TemplateStringsArray | unknown) => (Array.isArray(strings) ? (strings as string[]).join('?') : String(strings));
 
-function harness(source: string, groups: Group[], options: { refuse?: Error } = {}) {
+function harness(source: string, groups: Group[], options: { refuse?: Error; open?: boolean } = {}) {
   const created: Array<{ batch: Record<string, unknown>; records: Array<Record<string, unknown>> }> = [];
   const holds: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }> = [];
   const audits: unknown[] = [];
@@ -56,7 +56,8 @@ function harness(source: string, groups: Group[], options: { refuse?: Error } = 
       const sql = sqlOf(strings);
       if (sql.includes('FROM fuel_accounts')) return [{ state: 'confirmed', subsidiary_id: current.company }];
       if (sql.includes('FROM fuel_rows') && sql.includes('FOR UPDATE')) return current.rows;
-      if (sql.includes("status IN ('draft', 'rejected')")) return [];
+      if (sql.includes("status IN ('draft', 'rejected')")) return options.open ? [{ id: 'b-open', status: 'draft' }] : [];
+      if (sql.includes('fuel_batch_id =') && sql.includes("state = 'assigned'")) return options.open ? [{ fuel: 'diesel', year: 2025, month: 3, litres: '100' }] : [];
       if (sql.includes('max(sequence)')) return [{ next: 1 }];
       return [];
     }),
@@ -66,7 +67,10 @@ function harness(source: string, groups: Group[], options: { refuse?: Error } = 
         return data;
       }),
     },
-    activityRecord: { findMany: vi.fn(async () => []) },
+    activityRecord: {
+      findMany: vi.fn(async () =>
+        options.open ? [{ id: 'rec-1', activityType: 'on_road_diesel', reportingYear: 2025, periodValue: 'March', status: 'draft' }] : []),
+    },
   };
   const prisma = {
     fuelRow: {
@@ -86,9 +90,11 @@ function harness(source: string, groups: Group[], options: { refuse?: Error } = 
     previewCreate: vi.fn(async () => ({ prepared: true })),
     createInTransaction: vi.fn(async (_tx: unknown, _user: unknown, dto: Record<string, unknown>) => {
       if (options.refuse) throw options.refuse;
-      created.at(-1)!.records.push(dto);
+      (created.at(-1) ?? created[created.push({ batch: {}, records: [] }) - 1]!).records.push(dto);
     }),
     createRefusal: vi.fn((error: unknown) => error),
+    lockSeenRecord: vi.fn(async (_tx: unknown, r: unknown) => r),
+    updateBatchQuantityLocked: vi.fn(async () => undefined),
   };
   const uploads = {
     visibleUpload: vi.fn(async () => ({ id: UPLOAD, source })),
@@ -177,6 +183,26 @@ describe('FuelBatchFormationService — one group, one batch (task 6.3)', () => 
         data: { state: 'held', holdReason: 'period_locked' },
       },
     ]);
+  });
+
+  it('joins an open batch with every period locked shared before any record row is locked', async () => {
+    const h = harness(
+      'petrol_ofisi',
+      [{ account_id: 'acc-a', invoice_ref: 'OZK-J', usage: 'on_road', company: A, rows: [row('1', 'diesel', 3, '50'), row('2', 'diesel', 4, '20')] }],
+      { open: true },
+    );
+    const out = await h.service.formBatches(holder, UPLOAD);
+    expect(h.holds).toEqual([]);
+    expect(out).toMatchObject({ formedBatches: 0, joinedBatches: 1 });
+    // March's record grows by the joining row; April's is new.
+    expect(h.records.updateBatchQuantityLocked).toHaveBeenCalledWith(h.tx, holder, expect.objectContaining({ id: 'rec-1' }), 150);
+    expect(h.records.createInTransaction).toHaveBeenCalledTimes(1);
+    const periodLocks = h.tx.$executeRaw.mock.calls
+      .map((call, i) => ({ sql: sqlOf(call[0]), order: h.tx.$executeRaw.mock.invocationCallOrder[i]! }))
+      .filter((c) => c.sql.includes('pg_advisory_xact_lock_shared'));
+    expect(periodLocks).toHaveLength(2);
+    const firstRowLock = h.records.lockSeenRecord.mock.invocationCallOrder[0]!;
+    expect(periodLocks.every((l) => l.order < firstRowLock)).toBe(true);
   });
 
   it('refuses a caller who holds none of the upload’s rows', async () => {

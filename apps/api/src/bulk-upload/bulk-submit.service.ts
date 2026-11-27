@@ -27,6 +27,7 @@ import {
   EvidenceRequiredError,
   PeriodLockedError,
   RecordChangedError,
+  RecordInBatchError,
   SUBMIT_ROLE_REFUSAL,
   SubmitAuthorRefusedError,
   SubmitRoleRefusedError,
@@ -393,6 +394,12 @@ export class BulkSubmitService {
     }
     if (error instanceof PeriodLockedError) {
       return { recordId, code: 'period_locked', message: error.message };
+    }
+    // inc28-fuel-bulk D9: a fuel batch's record is submitted with its batch.
+    // Before the plain Nest classes: it is a ConflictException, which would
+    // read as `unexpected`.
+    if (error instanceof RecordInBatchError) {
+      return { recordId, code: 'record_in_batch', message: this.messageOf(error) };
     }
     if (error instanceof EvidenceRequiredError) {
       return {

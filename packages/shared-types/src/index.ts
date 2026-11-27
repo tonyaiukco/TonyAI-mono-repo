@@ -8020,6 +8020,11 @@ export const BULK_SUBMIT_ISSUE_CODES = [
    * The import's `would_block_submit` warning, arrived at.
    */
   'variance_reason_required',
+  /**
+   * The record belongs to a fuel batch (inc28-fuel-bulk D9): its batch is
+   * submitted as a whole, from the batch, never record by record.
+   */
+  'record_in_batch',
   /** Anything the server did not anticipate. The record was NOT submitted. */
   'unexpected',
   /** No operation started for this id before the deadline; no existence or
