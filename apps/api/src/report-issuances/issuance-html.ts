@@ -40,7 +40,7 @@ import tr from './i18n/tr.json';
 // v5 (ng-kwh-engine): a gross energy bill's gross-to-net ratio among a record's inputs.
 // v6 (BUG-17): explains a refrigerant term priced on its refill.
 // v8 (inc28-fuel-bulk D17): the card-fuel attribution in the methodology note, from a schema 4
-// dataset that holds it; a dataset of an earlier schema renders byte-for-byte as under v7.
+// dataset that holds it; a dataset of an earlier schema renders as a schema 4 one whose flag is false (no statement).
 export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v8';
 
 export interface IssuanceDocument {
