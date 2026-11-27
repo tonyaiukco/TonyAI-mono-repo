@@ -31,6 +31,7 @@ import {
   ActivityTypeSlotConflictError,
   SnapshotImmutableError,
   recordTriggerCode,
+  RecordInBatchError,
 } from './errors';
 import {
   EVIDENCE_REQUIRED_CATEGORIES,
@@ -412,6 +413,11 @@ export interface FuelBatchSubmission {
 
 /** A record as the create wrote it, with its fuel records resolved. */
 export type CreatedRecord = ActivityRecord & { location: { name: string } | null } & FuelResolved;
+
+/** inc28-fuel-bulk D9: a fuel batch's record is acted on through its batch. */
+function assertNotInFuelBatch(record: { fuelBatchId?: string | null }): void {
+  if (record.fuelBatchId) throw new RecordInBatchError();
+}
 
 @Injectable()
 export class ActivityRecordsService {
@@ -1281,6 +1287,7 @@ export class ActivityRecordsService {
     dto: UpdateActivityRecordDto,
   ): Promise<ActivityRecordDTO> {
     const existing = await this.loadScoped(user, id);
+    assertNotInFuelBatch(existing);
     this.assertCanEdit(user, existing);
     assertSameVersion(existing, dto.seenUpdatedAt);
 
@@ -1545,6 +1552,7 @@ export class ActivityRecordsService {
     id: string,
   ): Promise<{ id: string; deleted: true }> {
     const existing = await this.loadScoped(user, id);
+    assertNotInFuelBatch(existing);
     this.assertCanDelete(user, existing);
     // Period-lock gate (FR §4.2): no deletions in a closed period. An early
     // answer; asked again under the lock.
@@ -1670,6 +1678,7 @@ export class ActivityRecordsService {
 
   async submit(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
+    assertNotInFuelBatch(seen);
     if (!mayAuthorRecords(user)) {
       throw new SubmitRoleRefusedError();
     }
@@ -1817,6 +1826,7 @@ export class ActivityRecordsService {
    */
   async recall(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
+    assertNotInFuelBatch(seen);
     if (!mayAuthorRecords(user)) {
       throw new ForbiddenException(
         'Your role may not modify activity records',
@@ -1868,6 +1878,7 @@ export class ActivityRecordsService {
       );
     }
     const seen = await this.loadScoped(user, id);
+    assertNotInFuelBatch(seen);
     const updated = await this.withLockedRecord(seen, user.organisationId, (tx, record) =>
       this.startReviewLocked(tx, user, seen, record, seenSubmittedAt),
     );
@@ -1910,6 +1921,7 @@ export class ActivityRecordsService {
       throw new ForbiddenException('Only a masterkey or a super_admin may approve records');
     }
     const seen = await this.loadScoped(user, id);
+    assertNotInFuelBatch(seen);
     assertSubmissionNamed(seenSubmittedAt);
     const recomputed = await this.recordCalculation.recompute(user.accessibleSubsidiaryIds, seen);
     const updated = await this.withLockedRecord(seen, user.organisationId, (tx, record) =>
@@ -2054,6 +2066,7 @@ export class ActivityRecordsService {
       );
     }
     const seen = await this.loadScoped(user, id);
+    assertNotInFuelBatch(seen);
     assertSubmissionNamed(seenSubmittedAt);
     const updated = await this.withLockedRecord(seen, user.organisationId, (tx, record) =>
       this.rejectLocked(tx, user, seen, record, varianceReason, seenSubmittedAt),

@@ -12,7 +12,7 @@ import { FuelUploadsService } from '../../src/fuel-files/fuel-uploads.service';
 import { batchVerdictsOf } from '../../../../packages/db/scripts/anomaly-recompute.lib.mjs';
 import { row as sheetRow, xlsx } from '../xlsx';
 import { attachEvidence, connect, connectOwner, createTenant, type Tenant } from './db';
-import { lifecycleServices } from './services';
+import { lifecycleServices, pdfFile } from './services';
 import { loadTrReleases } from './tr-releases';
 
 /**
@@ -44,7 +44,9 @@ function services() {
   const audit = new AuditService(runtime);
   const uploads = new FuelUploadsService(runtime, audit);
   const { records, periodLocks } = lifecycleServices(runtime);
+  const { evidence } = lifecycleServices(runtime);
   return {
+    evidence,
     files: new FuelFilesService(runtime, audit, uploads),
     formation: new FuelBatchFormationService(runtime, audit, records, uploads),
     batches: new FuelBatchesService(runtime, audit, records),
@@ -197,5 +199,49 @@ describe('the batch lifecycle (task 7.1)', () => {
     // The fourth invoice was judged against the three before it.
     const last = records.find((r) => r.periodValue === 'April')!;
     expect(last.anomalyBaselinePriorCount).toBe(3);
+  });
+});
+
+describe('a batch’s record is not acted on singly (task 7.2)', () => {
+  it('refuses every single-record step with record_in_batch and writes nothing; void and the period lock still act', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025']);
+    const [record] = await owner.activityRecord.findMany({ where: { fuelBatchId: id } });
+    const s = services();
+    const before = await owner.activityRecord.findUniqueOrThrow({ where: { id: record!.id } });
+    const code = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => errorCodeOf(e));
+    expect(await code(s.records.update(user, record!.id, { activityValue: 1 } as never))).toBe('record_in_batch');
+    expect(await code(s.records.submit(user, record!.id))).toBe('record_in_batch');
+    expect(await code(s.evidence.upload(user, record!.id, pdfFile()))).toBe('record_in_batch');
+    expect(await code(s.records.remove(user, record!.id))).toBe('record_in_batch');
+    expect(await owner.activityRecord.findUniqueOrThrow({ where: { id: record!.id } })).toEqual(before);
+
+    await withEvidence(id);
+    const submitted = await s.batches.submit(user, id);
+    expect(await code(s.records.recall(user, record!.id))).toBe('record_in_batch');
+    expect(await code(s.records.startReview(user, record!.id, submitted.submittedAt))).toBe('record_in_batch');
+    expect(await code(s.records.reject(user, record!.id, 'no', submitted.submittedAt))).toBe('record_in_batch');
+    expect(await code(s.records.approve(user, record!.id, submitted.submittedAt))).toBe('record_in_batch');
+    expect(await statuses(id)).toEqual(['submitted']);
+
+    await s.batches.approve(user, id, submitted.submittedAt);
+    // The period lock treats a batch's record as any record; void stays per record, with the masterkey.
+    await s.periodLocks.lock(user, { subsidiaryId: tenant.subsidiaryId, reportingYear: 2025, reportingPeriod: 'monthly', periodValue: 'March' } as never);
+    expect(await statuses(id)).toEqual(['locked']);
+  });
+
+  it('lets a masterkey void one approved record of a batch, which leaves the totals', async () => {
+    const user = await masterkey();
+    const id = await formedBatch(user, ['03.03.2025', '04.04.2025']);
+    await withEvidence(id);
+    const s = services();
+    const submitted = await s.batches.submit(user, id);
+    await s.batches.approve(user, id, submitted.submittedAt);
+    const [first] = await owner.activityRecord.findMany({ where: { fuelBatchId: id }, orderBy: { id: 'asc' } });
+    const base = await counted();
+    await s.records.void(user, first!.id, 'Entered twice');
+    expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: first!.id } })).status).toBe('voided');
+    expect(await counted()).toBeLessThan(base);
+    expect((await owner.fuelBatch.findUniqueOrThrow({ where: { id } })).status).toBe('approved');
   });
 });

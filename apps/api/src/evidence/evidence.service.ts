@@ -32,7 +32,7 @@ import { captureException } from '../observability/sentry';
 import type { RequestUser } from '../auth/auth.types';
 import { inRecordScope } from '../activity-records/record-scope';
 import { AuditService } from '../audit/audit.service';
-import { PeriodLockedError, RecordChangedError } from '../activity-records/errors';
+import { PeriodLockedError, RecordChangedError, RecordInBatchError } from '../activity-records/errors';
 import {
   LIFECYCLE_TX,
   asLostRace,
@@ -269,6 +269,8 @@ export class EvidenceService {
     record: ActivityRecord,
     locked: boolean,
   ): HttpException | null {
+    // A fuel batch's record takes and loses files through its batch (inc28-fuel-bulk D11).
+    if (record.fuelBatchId) return new RecordInBatchError();
     if (record.createdBy !== user.id) {
       return new ForbiddenException(
         'You may only modify evidence on records you created',
