@@ -4,8 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
 import { FUEL_TANKER_MAX_DELIVERIES } from '@tonyai/shared-types';
 import { OFFICE_RELATIONSHIPS, SPREADSHEETML, row as sheetRow, xlsx } from '../../test/xlsx';
-import { FUEL_HEADER_SEARCH_ROWS, readFuelFile } from './read-fuel-file';
-import { dedupeDigest } from './adapters/adapter';
+import { FUEL_HEADER_SEARCH_ROWS, keyReading, readFuelFile } from './read-fuel-file';
+import { createHash, createHmac } from 'node:crypto';
+import { dedupeDigest, keyHashOf } from './adapters/adapter';
 import { SHELL_HEADERS } from './adapters/shell';
 
 /**
@@ -228,7 +229,7 @@ describe('the dedupe digest (task 4.3)', () => {
   it('makes two fills of one card and station on one day, at different times, two keys', async () => {
     const { rows } = await readFuelFile(fixture('shell-items.xlsx'), 'shell');
     const [morning, evening] = rows.filter((r) => r.transactionAt?.startsWith('2025-03-03'));
-    expect(morning!.dedupeDigest).not.toBe(evening!.dedupeDigest);
+    expect(morning!.keyHash).not.toBe(evening!.keyHash);
   });
 
   it('makes one key of the same quantity as a number and as Turkish text', async () => {
@@ -249,10 +250,53 @@ describe('the dedupe digest (task 4.3)', () => {
     expect(reading.duplicates).toEqual([{ row: 3, code: 'fuel_duplicate' }]);
   });
 
-  it('is the source and its key, so one key of two sources is two digests', () => {
-    expect(dedupeDigest('petrol_ofisi', ['100001'])).not.toBe(dedupeDigest('tanker', ['100001']));
-    expect(dedupeDigest('tanker', ['a|b'])).not.toBe(dedupeDigest('tanker', ['a', 'b']));
-    expect(dedupeDigest('tanker', ['000101'])).toMatch(/^[0-9a-f]{64}$/);
+  it('is the source and its key, so one key of two sources is two hashes', () => {
+    expect(keyHashOf('petrol_ofisi', ['100001'])).not.toBe(keyHashOf('tanker', ['100001']));
+    expect(keyHashOf('tanker', ['a|b'])).not.toBe(keyHashOf('tanker', ['a', 'b']));
+    expect(keyHashOf('tanker', ['000101'])).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('the stored digest is keyed per organisation (D5, revised)', () => {
+  const keyA = Buffer.alloc(32, 0xa1);
+  const keyB = Buffer.alloc(32, 0xb2);
+
+  it('is HMAC-SHA256 of the key hash under the organisation key, 64 lowercase hex', () => {
+    const hash = keyHashOf('shell', ['7000-0000-0000-0001', '2025-03-03T08:10:00', '40', 'ST-0001']);
+    const digest = dedupeDigest(keyA, hash);
+    expect(digest).toBe(createHmac('sha256', keyA).update(hash).digest('hex'));
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('stores no row of a Shell file under its plain hash, and gives two organisations two digests', async () => {
+    const read = await readFuelFile(fixture('shell-items.xlsx'), 'shell');
+    const a = keyReading(read, keyA);
+    const b = keyReading(read, keyB);
+    expect(a.rows).toHaveLength(read.rows.length);
+    for (const [i, row] of a.rows.entries()) {
+      expect(row).not.toHaveProperty('keyHash');
+      expect(row.dedupeDigest).not.toBe(read.rows[i]!.keyHash);
+      expect(row.dedupeDigest).not.toBe(b.rows[i]!.dedupeDigest);
+      expect(row.dedupeDigest).toBe(dedupeDigest(keyA, read.rows[i]!.keyHash));
+    }
+    // The same key gives the same digests: a re-upload still finds its rows.
+    expect(keyReading(read, Buffer.alloc(32, 0xa1)).rows.map((r) => r.dedupeDigest)).toEqual(a.rows.map((r) => r.dedupeDigest));
+    // Keying keeps the file's distinct rows distinct.
+    expect(new Set(a.rows.map((r) => r.dedupeDigest)).size).toBe(a.rows.length);
+  });
+
+  it('keeps everything else of the reading as it was read', async () => {
+    const read = await readFuelFile(fixture('shell-items.xlsx'), 'shell');
+    const keyed = keyReading(read, keyA);
+    expect({ ...keyed, rows: [] }).toEqual({ ...read, rows: [] });
+    expect(keyed.rows.map(({ dedupeDigest: _d, ...row }) => row)).toEqual(read.rows.map(({ keyHash: _k, ...row }) => row));
+  });
+
+  it('cannot be reproduced from the row fields without the key (the plain sha256 is not it)', () => {
+    const parts = ['7000-0000-0000-0001', '2025-03-03T08:10:00', '40', 'ST-0001'];
+    const plain = createHash('sha256').update(JSON.stringify(['shell', ...parts])).digest('hex');
+    expect(keyHashOf('shell', parts)).toBe(plain);
+    expect(dedupeDigest(keyA, plain)).not.toBe(plain);
   });
 });
 

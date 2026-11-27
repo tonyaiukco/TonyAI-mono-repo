@@ -1,6 +1,6 @@
 import { FUEL_UPLOAD_MAX_ROWS, shellInvoiceRef } from '@tonyai/shared-types';
 import { canonicalQuantity, localDateTimeText, readCode, readDateTime, readQuantity, readText } from './cells';
-import { dedupeDigest, type FuelAdapter } from './adapter';
+import { keyHashOf, type FuelAdapter } from './adapter';
 
 /**
  * A Shell fuel-card export (INC-2.8 §1, §5): one per company, sheet `items`,
@@ -51,7 +51,7 @@ export const shellAdapter: FuelAdapter = {
         year: at.year,
         month: at.month,
         invoiceRef: shellInvoiceRef(at),
-        dedupeDigest: dedupeDigest('shell', [card, transactionAt, canonicalQuantity(litres), station]),
+        keyHash: keyHashOf('shell', [card, transactionAt, canonicalQuantity(litres), station]),
       },
     };
   },

@@ -179,6 +179,7 @@ model Organisation {
   fuelAccounts        FuelAccount[]
   fuelBatches         FuelBatch[]
   fuelRows            FuelRow[]
+  fuelDedupeKey       FuelDedupeKey?
   inventoryBoundaries InventoryBoundary[]
   reportDatasets      ReportDataset[]
   reportIssuances     ReportIssuance[]
@@ -1347,9 +1348,26 @@ model FuelBatch {
   @@map("fuel_batches")
 }
 
+// The organisation's key for the fuel dedupe digest (inc28-fuel-bulk D5,
+// revised by the owner 2026-11-27): 32 random bytes, created by the API on the
+// organisation's first fuel upload. Keyed, a digest of a Shell row cannot be
+// brute-forced back to its card number by a reader of `fuel_rows`. Read and
+// written by the API alone: RLS on with no policy and no client grant (the
+// migration). Never updated or deleted — a new key would stop every stored
+// digest from matching — it goes with its organisation.
+model FuelDedupeKey {
+  organisationId String       @id @map("organisation_id") @db.Uuid
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  secret         Bytes
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("fuel_dedupe_keys")
+}
+
 // One provider file row, as its column map reads it (D4); no card number,
-// station code or plate. `dedupeDigest` = sha256(source | key) (D5), unique
-// over live rows by a partial index in the migration. `state` is decided by
+// station code or plate. `dedupeDigest` = HMAC-SHA256(the organisation's
+// FuelDedupeKey, sha256(source | key)) (D5, revised 2026-11-27), unique over
+// live rows by a partial index in the migration. `state` is decided by
 // `fuelRowState` (D8); the migration's CHECKs hold the columns each state
 // needs. `holderId` is who will author its batch (C8): the uploader, or a
 // masterkey after a takeover. `subsidiaryId` is its account's confirmed

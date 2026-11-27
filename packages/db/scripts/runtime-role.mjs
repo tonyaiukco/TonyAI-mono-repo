@@ -220,6 +220,9 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   fuel_accounts: ['SELECT', 'INSERT'],
   fuel_batches: ['SELECT', 'INSERT'],
   fuel_rows: ['SELECT', 'INSERT'],
+  // D5, revised (owner, 2026-11-27): an organisation's dedupe key, created on
+  // its first fuel upload and read on every one — never updated or deleted.
+  fuel_dedupe_keys: ['SELECT', 'INSERT'],
   // Prisma's migration history: neither readable nor writable.
   _prisma_migrations: [],
 });

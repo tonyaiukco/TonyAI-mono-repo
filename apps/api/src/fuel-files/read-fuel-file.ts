@@ -2,7 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import type { FuelRowIssueDTO, FuelSource } from '@tonyai/shared-types';
 import { errorBody } from '../common/api-error';
 import { readWorksheet, type SheetCell } from '../bulk-upload/xlsx-reader';
-import type { FuelAdapter, FuelDraftRow } from './adapters/adapter';
+import { dedupeDigest, type FuelAdapter, type FuelDraftRow, type FuelReadRow } from './adapters/adapter';
 import { petrolOfisiAdapter } from './adapters/petrol-ofisi';
 import { shellAdapter } from './adapters/shell';
 import { tankerAdapter } from './adapters/tanker';
@@ -28,13 +28,29 @@ export const FUEL_ADAPTERS: Readonly<Record<FuelSource, FuelAdapter>> = Object.f
  */
 export const FUEL_HEADER_SEARCH_ROWS = 20;
 
-export interface FuelFileReading {
+export interface FuelFileReading<Row = FuelReadRow> {
   /** Data rows below the header that hold a value. */
   rowsRead: number;
-  rows: FuelDraftRow[];
+  rows: Row[];
   refused: FuelRowIssueDTO[];
   /** A row whose key appeared on an earlier row of the same file (D5). */
   duplicates: FuelRowIssueDTO[];
+}
+
+/** A reading whose rows carry the organisation's keyed digest, and no unkeyed hash: what is staged and stored. */
+export type KeyedFuelReading = FuelFileReading<FuelDraftRow>;
+
+/**
+ * A reading keyed for its organisation (D5, revised): each row's key hash
+ * replaced by its HMAC under the organisation's key. Within one file the
+ * repeats were already found by the key hash; keying keeps them apart, since
+ * an HMAC of two different hashes does not collide in practice.
+ */
+export function keyReading(reading: FuelFileReading, organisationKey: Buffer): KeyedFuelReading {
+  return {
+    ...reading,
+    rows: reading.rows.map(({ keyHash, ...row }) => ({ ...row, dedupeDigest: dedupeDigest(organisationKey, keyHash) })),
+  };
 }
 
 function columnsMissing(columns: readonly string[]): BadRequestException {
@@ -116,10 +132,10 @@ export async function readFuelFile(buffer: Buffer, source: FuelSource): Promise<
         const result = adapter.read(mapped, rowNumber);
         if ('refused' in result) {
           reading.refused.push({ row: rowNumber, code: result.refused });
-        } else if (seen.has(result.row.dedupeDigest)) {
+        } else if (seen.has(result.row.keyHash)) {
           reading.duplicates.push({ row: rowNumber, code: 'fuel_duplicate' });
         } else {
-          seen.add(result.row.dedupeDigest);
+          seen.add(result.row.keyHash);
           reading.rows.push(result.row);
         }
       },

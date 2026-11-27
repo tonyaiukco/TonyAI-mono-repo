@@ -11,7 +11,7 @@ import {
   type FuelUsage,
 } from '@tonyai/shared-types';
 import type { FuelDraftRow } from './adapters/adapter';
-import type { FuelFileReading } from './read-fuel-file';
+import type { KeyedFuelReading } from './read-fuel-file';
 
 /**
  * What a read file's rows become (inc28-fuel-bulk D3, D5, D8): a pure plan
@@ -90,7 +90,7 @@ export interface StagingInput {
   usage: FuelUsage | null;
   /** A tanker file's declarations by `EVRAK NO`; absent at preview. */
   declarations: ReadonlyMap<string, FuelTankerDeclaration> | null;
-  reading: FuelFileReading;
+  reading: KeyedFuelReading;
   accounts: ReadonlyMap<string, StagedAccount>;
   companies: ReadonlyMap<string, StagedCompany>;
   stored: ReadonlyMap<string, StoredDuplicate>;

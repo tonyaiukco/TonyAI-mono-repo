@@ -52,6 +52,11 @@ function harness() {
     $queryRaw: vi.fn(async () => []),
     $transaction: vi.fn(),
     importBatch: { create: vi.fn() },
+    fuelDedupeKey: {
+      findUnique: vi.fn(async () => ({ secret: Buffer.alloc(32, 7) })),
+      createMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+    },
   };
   const audit = { record: vi.fn(async () => undefined) };
   const uploads = { detail: vi.fn() };

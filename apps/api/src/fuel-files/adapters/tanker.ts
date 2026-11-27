@@ -1,6 +1,6 @@
 import { FUEL_TANKER_MAX_DELIVERIES, documentInvoiceRef } from '@tonyai/shared-types';
 import { readCode, readQuantity, readText } from './cells';
-import { dedupeDigest, type FuelAdapter } from './adapter';
+import { keyHashOf, type FuelAdapter } from './adapter';
 
 /**
  * A tanker deliveries file (INC-2.8 §1, §5): one row per delivery, no fuel,
@@ -40,7 +40,7 @@ export const tankerAdapter: FuelAdapter = {
         year: null,
         month: null,
         invoiceRef: document.ref,
-        dedupeDigest: dedupeDigest('tanker', [document.ref]),
+        keyHash: keyHashOf('tanker', [document.ref]),
       },
     };
   },

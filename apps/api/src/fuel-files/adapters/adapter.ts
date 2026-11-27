@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import type { FuelSource } from '@tonyai/shared-types';
 import type { SheetCell } from '../../bulk-upload/xlsx-reader';
 
@@ -9,8 +9,8 @@ import type { SheetCell } from '../../bulk-upload/xlsx-reader';
  * keep: no card number, station code or plate (C19, D5).
  */
 
-/** A row of the file as the adapter will store it, before any account or state is known. */
-export interface FuelDraftRow {
+/** A file row's fields as stored, before any account or state is known. */
+interface FuelRowFields {
   /** The 1-based row of the sheet. */
   fileRow: number;
   /** `Müşteri Kodu`, `Filo Kod Adı`, or the tanker file's `AÇIKLAMA`; as written, trimmed. */
@@ -28,7 +28,20 @@ export interface FuelDraftRow {
   month: number | null;
   /** `Fatura Numarası`, the Shell half-month, or `EVRAK NO`. */
   invoiceRef: string;
-  /** `sha256(source | key)` (D5): the only trace of the key's card and station. */
+}
+
+/**
+ * A row as the adapter reads it. `keyHash` is `sha256(source | key)`, unkeyed:
+ * it never leaves memory — only its keyed digest is stored or compared with
+ * stored rows (D5, revised).
+ */
+export interface FuelReadRow extends FuelRowFields {
+  keyHash: string;
+}
+
+/** A row as it will be stored: its key only as the organisation's keyed digest (D5, revised). */
+export interface FuelDraftRow extends FuelRowFields {
+  /** `HMAC-SHA256(organisation key, keyHash)`: the only trace of the key's card and station. */
   dedupeDigest: string;
 }
 
@@ -40,7 +53,7 @@ export type FuelRowRefusal =
   | 'fuel_quantity_unreadable'
   | 'fuel_date_unreadable';
 
-export type FuelRowReading = { row: FuelDraftRow } | { refused: FuelRowRefusal };
+export type FuelRowReading = { row: FuelReadRow } | { refused: FuelRowRefusal };
 
 export interface FuelAdapter {
   source: FuelSource;
@@ -55,9 +68,19 @@ export interface FuelAdapter {
 }
 
 /**
- * The dedupe digest (D5): the source and its key's parts, JSON-encoded so no
- * part's text can run into the next, hashed. Lowercase hex, as the column holds.
+ * A row's key hash (D5): the source and its key's parts, JSON-encoded so no
+ * part's text can run into the next, hashed. Unkeyed — a Shell key's card
+ * number can be brute-forced from it — so it is never stored (`dedupeDigest`).
  */
-export function dedupeDigest(source: FuelSource, parts: readonly string[]): string {
+export function keyHashOf(source: FuelSource, parts: readonly string[]): string {
   return createHash('sha256').update(JSON.stringify([source, ...parts])).digest('hex');
+}
+
+/**
+ * The stored dedupe digest (D5, revised by the owner 2026-11-27): the key
+ * hash under the organisation's HMAC key. Lowercase hex, 64 characters, as
+ * the column holds. One file read by two organisations gives two digests.
+ */
+export function dedupeDigest(organisationKey: Buffer, keyHash: string): string {
+  return createHmac('sha256', organisationKey).update(keyHash).digest('hex');
 }

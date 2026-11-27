@@ -29,7 +29,8 @@ import { proposeCompany } from '../fuel-accounts/propose';
 import { LitreTally } from './decimal';
 import { readsCompany } from './fuel-scope';
 import { FUEL_PARSE_TIMEOUT_MS } from './limits';
-import { readFuelFile, type FuelFileReading } from './read-fuel-file';
+import { organisationDedupeKey } from './dedupe-key';
+import { keyReading, readFuelFile, type KeyedFuelReading } from './read-fuel-file';
 import {
   planStaging,
   previewOutcome,
@@ -69,7 +70,7 @@ interface ParsedUpload {
   fileName: string;
   fileSize: number;
   fileSha256: string;
-  reading: FuelFileReading;
+  reading: KeyedFuelReading;
 }
 
 type Db = Prisma.TransactionClient;
@@ -254,7 +255,9 @@ export class FuelFilesService {
     if (!/\.xlsx$/i.test(file.originalname ?? '')) {
       throw new BadRequestException(errorBody('bulk_file_type', 'Upload an .xlsx file.'));
     }
-    const reading = await withParserDeadlineMs(FUEL_PARSE_TIMEOUT_MS, () => readFuelFile(file.buffer, source));
+    const read = await withParserDeadlineMs(FUEL_PARSE_TIMEOUT_MS, () => readFuelFile(file.buffer, source));
+    // Keyed here, once: nothing past this point sees a row's unkeyed hash (D5, revised).
+    const reading = keyReading(read, await organisationDedupeKey(this.prisma, user.organisationId));
     return {
       source,
       usage,
@@ -474,7 +477,7 @@ function assertDeclarations(plan: StagingPlan, declarations: Declarations): void
 }
 
 /** Each account's name as last read, in the file's order (fuel-account-mapping "One code under two names"). */
-function accountNames(reading: FuelFileReading): Map<string, string> {
+function accountNames(reading: KeyedFuelReading): Map<string, string> {
   const names = new Map<string, string>();
   for (const row of reading.rows) names.set(row.accountCode, row.accountName);
   return names;
@@ -527,7 +530,7 @@ function unrecognisedNames(plan: StagingPlan): FuelFilePreviewDTO['unrecognisedN
 }
 
 /** A tanker file's deliveries of a first read, each with what it needs (C3). */
-function deliveries(reading: FuelFileReading, stored: ReadonlyMap<string, StoredDuplicate>): FuelTankerDeliveryDTO[] {
+function deliveries(reading: KeyedFuelReading, stored: ReadonlyMap<string, StoredDuplicate>): FuelTankerDeliveryDTO[] {
   return reading.rows.map((row) => ({
     documentNo: row.invoiceRef,
     receiving: row.accountName,

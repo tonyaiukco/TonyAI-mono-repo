@@ -1,6 +1,6 @@
 import { FUEL_UPLOAD_MAX_ROWS, documentInvoiceRef } from '@tonyai/shared-types';
 import { localDateTimeText, readCode, readDateTime, readQuantity, readText } from './cells';
-import { dedupeDigest, type FuelAdapter } from './adapter';
+import { keyHashOf, type FuelAdapter } from './adapter';
 
 /**
  * A Petrol Ofisi `SatisListesi` (INC-2.8 §1, §5): one file, `Satış ID` unique,
@@ -51,7 +51,7 @@ export const petrolOfisiAdapter: FuelAdapter = {
         year: at.year,
         month: at.month,
         invoiceRef: invoice.ref,
-        dedupeDigest: dedupeDigest('petrol_ofisi', [saleId]),
+        keyHash: keyHashOf('petrol_ofisi', [saleId]),
       },
     };
   },

@@ -247,9 +247,14 @@ core. What changes is that **the file's rows are not records**.
    (chunked `INSERT … SELECT FROM jsonb_to_recordset`), with its audit row.
    Whole or nothing, so a retry is the same request; give it its own longer
    transaction timeout. This replaces the `dryRun` flag of the per-record loop.
-3. **Dedupe with a digest in a partial unique index.** `dedupe_digest =
-   sha256(source | key)`, unique per organisation, source and digest `WHERE
-   state <> 'withdrawn'`. Insert with `ON CONFLICT … DO NOTHING RETURNING`, and
+3. **Dedupe with a keyed digest in a partial unique index.** `dedupe_digest =
+   HMAC-SHA256(organisation key, sha256(source | key))`, unique per
+   organisation, source and digest `WHERE state <> 'withdrawn'`. Never store
+   a plain hash of a key that holds personal data (a card number with its
+   time, litres and station is brute-forceable): the adapters answer an
+   unkeyed `keyHash`, and `keyReading` swaps it for the keyed digest once,
+   right after the read, so no later code can store the wrong one (the types
+   differ). The key lives in `fuel_dedupe_keys`, no client grant. Insert with `ON CONFLICT … DO NOTHING RETURNING`, and
    count what did not come back as duplicates (a concurrent upload stored it).
    Report a stored key that waits in no batch under another holder apart
    (`fuel_duplicate_unbatched`), without naming the holder. A withdrawn key is

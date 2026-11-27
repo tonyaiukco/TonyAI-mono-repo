@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -144,6 +144,55 @@ describe('applying a fuel file (task 5.1)', () => {
     const diff = (audit?.diff as { fuelUpload: { byAccount: unknown[]; usage: string; rowsRead: number } }).fuelUpload;
     expect(diff).toMatchObject({ usage: 'on_road', rowsRead: 23 });
     expect(diff.byAccount).toContainEqual({ code: 'PO-9001', state: 'excluded', rows: 4, litres: '80' });
+  });
+
+  it('stores each digest keyed by the organisation’s own key, never the plain hash (D5, revised)', async () => {
+    const user = await masterkey();
+    const file = salesList('INT-KEY', 3);
+    expect(await owner.fuelDedupeKey.count({ where: { organisationId: tenant.organisationId } })).toBe(0);
+    await apply(user, file);
+
+    const { secret } = await owner.fuelDedupeKey.findUniqueOrThrow({ where: { organisationId: tenant.organisationId } });
+    const key = Buffer.from(secret);
+    expect(key).toHaveLength(32);
+    const plain = (saleId: string) => createHash('sha256').update(JSON.stringify(['petrol_ofisi', saleId])).digest('hex');
+    const keyed = (k: Buffer, saleId: string) => createHmac('sha256', k).update(plain(saleId)).digest('hex');
+    const stored = await rowsOf();
+    expect(stored.map((r) => r.dedupeDigest)).toEqual([0, 1, 2].map((i) => keyed(key, `INT-KEY-${i}`)));
+    expect(stored.map((r) => r.dedupeDigest)).not.toContain(plain('INT-KEY-0'));
+
+    // The same file in another organisation: another key, other digests, nothing of it a duplicate.
+    const other = await createTenant();
+    try {
+      const otherUser = { ...other.users.masterkey, accessibleSubsidiaryIds: [other.subsidiaryId] };
+      const upload = await apply(otherUser, file);
+      expect(upload.rowsDuplicate).toBe(0);
+      const otherKey = Buffer.from((await owner.fuelDedupeKey.findUniqueOrThrow({ where: { organisationId: other.organisationId } })).secret);
+      expect(otherKey.equals(key)).toBe(false);
+      const otherRows = await owner.fuelRow.findMany({ where: { organisationId: other.organisationId }, orderBy: { fileRow: 'asc' } });
+      expect(otherRows.map((r) => r.dedupeDigest)).toEqual([0, 1, 2].map((i) => keyed(otherKey, `INT-KEY-${i}`)));
+    } finally {
+      await other.cleanup();
+    }
+
+    // A re-upload keys the same way and finds every row; the key stays as created.
+    expect((await apply(user, file)).rowsDuplicate).toBe(3);
+    const again = await owner.fuelDedupeKey.findUniqueOrThrow({ where: { organisationId: tenant.organisationId } });
+    expect(Buffer.from(again.secret).equals(key)).toBe(true);
+
+    // The runtime role can neither change nor remove a key (SELECT and INSERT only).
+    const denied = (p: Promise<unknown>) => p.then(() => 'allowed', (e: unknown) => String(e));
+    expect(await denied(runtime.$executeRaw`UPDATE fuel_dedupe_keys SET secret = secret WHERE organisation_id = ${tenant.organisationId}::uuid`)).toMatch(/permission denied/);
+    expect(await denied(runtime.$executeRaw`DELETE FROM fuel_dedupe_keys WHERE organisation_id = ${tenant.organisationId}::uuid`)).toMatch(/permission denied/);
+    // … nor insert a malformed one (the CHECK).
+    const second = await createTenant();
+    try {
+      expect(
+        await denied(runtime.fuelDedupeKey.create({ data: { organisationId: second.organisationId, secret: Buffer.alloc(16) } })),
+      ).toMatch(/fuel_dedupe_keys_secret_check|check constraint/);
+    } finally {
+      await second.cleanup();
+    }
   });
 
   it('stores nothing when the transaction fails midway, and a retry stores the file once', async () => {
