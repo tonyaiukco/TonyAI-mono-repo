@@ -1,6 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
-import type { FuelBatch } from '@tonyai/db';
+import { Prisma, type FuelBatch } from '@tonyai/db';
 import type { RequestUser } from '../auth/auth.types';
 import type { AuditService } from '../audit/audit.service';
 import type { ApiErrorCode } from '@tonyai/shared-types';
@@ -285,6 +285,30 @@ describe('taking a batch into review names the submission shown (WP9 PR B review
       expect(h.records.startReviewLocked).not.toHaveBeenCalled();
       expect(h.tx.fuelBatch.update).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe('a declarations rebuild takes single entry’s year locks first (review of the single-entry fix)', () => {
+  it('locks every year it will write, in one order, before its first new record', async () => {
+    const h = harness(batchOf({ source: 'petrol_ofisi', usage: 'on_road' } as Partial<FuelBatch>));
+    const tx = h.tx as Record<string, unknown>;
+    tx.fuelRow = { findMany: vi.fn(async () => [
+      { fuel: 'petrol', year: 2026, month: 1, litres: new Prisma.Decimal('5') },
+      { fuel: 'diesel', year: 2025, month: 12, litres: new Prisma.Decimal('7') },
+    ]) };
+    (h.tx.activityRecord.findMany as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+    (h.tx.$queryRaw as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+    const stop = new Error('stop at the first new record');
+    (h.records as Record<string, unknown>).previewCreate = vi.fn(async () => { throw stop; });
+    const rebuild = (h.service as unknown as { rebuild(t: unknown, u: RequestUser, b: FuelBatch): Promise<unknown> }).rebuild.bind(h.service);
+    await expect(rebuild(h.tx, user('standard_user'), batchOf({ source: 'petrol_ofisi', usage: 'on_road' } as Partial<FuelBatch>))).rejects.toBe(stop);
+    const sqlOf = (s: unknown) => (Array.isArray(s) ? s.join('?') : String(s));
+    const yearLocks = h.tx.$executeRaw.mock.calls
+      .map((call, i) => ({ sql: sqlOf((call as unknown[])[0]), values: (call as unknown[]).slice(1), order: h.tx.$executeRaw.mock.invocationCallOrder[i]! }))
+      .filter((c) => c.sql.includes("hashtext('tonyai.single_entry_period')"));
+    expect(yearLocks.map((l) => l.values[2])).toEqual([2025, 2026]);
+    const firstCreate = ((h.records as Record<string, unknown>).previewCreate as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!;
+    expect(yearLocks.every((l) => l.order < firstCreate)).toBe(true);
   });
 });
 

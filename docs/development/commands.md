@@ -31,6 +31,20 @@ Run from the repo root (Turborepo fans out to each package):
 
 **After a rollback past the typo ceilings (2026-11-13):** do not run `pnpm anomaly:recompute -- --apply` under the old image. It would clear the ceiling flags of records in review, and their variance reasons would stay. The old `anomaly:probe` reports every ceiling flag (a count of 0, or an average of 0) as drift; that is expected. On screen, the old image reads a zero-average ceiling flag as a history flag against an average of 0, and the export shows a plain `yes`.
 
+## Read single entry's overlapping pairs (before the pilot)
+
+Build the API with `pnpm --filter @tonyai/api build`, then run
+`pnpm --filter @tonyai/api single-entry:overlaps`. It takes no switches and only
+reads, inside a read-only transaction, as the runtime role (`DATABASE_URL`, from
+the environment or `apps/api/.env`). It lists every pair of records of one company,
+category and year — one a company user's, the other a central reporter's, neither
+voided — whose periods overlap (the year with any of its periods, a month with its
+quarter): pairs stored before migration `20261128200000_single_entry_overlapping_periods`
+made single entry judge overlapping periods. The answer is JSON (`pairs`,
+`approvedPairs`, and each pair's record ids, periods and statuses; no names or
+figures). It exits 0 when there is no pair and 2 when there is one, or on a
+failure. On hosted QA it runs in the API container (runbook 11).
+
 ## Reprice drafts after the refrigerant refill rule
 
 Build the API with `pnpm --filter @tonyai/api build`, then run

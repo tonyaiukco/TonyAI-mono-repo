@@ -10,6 +10,7 @@
     "onboarding": "node dist/onboarding/onboarding.cli.js",
     "factor-release": "node dist/factor-releases/factor-release.cli.js",
     "draft-reprice": "node --env-file-if-exists=.env dist/activity-records/draft-reprice.cli.js",
+    "single-entry:overlaps": "node --env-file-if-exists=.env dist/central-reporting/single-entry-overlaps.cli.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --passWithNoTests",

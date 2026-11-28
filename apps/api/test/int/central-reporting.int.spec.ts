@@ -10,7 +10,8 @@ import type { StorageService } from '../../src/storage/storage.service';
 import { lifecycleServices, storageStub } from './services';
 import { AccessAdminService } from '../../src/auth/access-admin.service';
 import { SingleEntryPeriodConflictError } from '../../src/central-reporting/central-reporting-errors';
-import { assertSingleEntryPeriod } from '../../src/central-reporting/record-entities';
+import { assertSingleEntryPeriod, lockSingleEntryYears } from '../../src/central-reporting/record-entities';
+import { findSingleEntryOverlaps } from '../../src/central-reporting/single-entry-overlaps';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
   addMember,
@@ -547,6 +548,73 @@ describe('TA026: one party enters a category for a company in a period (task 2.8
     expect(mismatches).toEqual([]);
     expect(await owner.activityRecord.count({ where: { createdBy: reporter } })).toBe(0);
   }, 120_000);
+
+  it('a step writing two years takes their locks in one order: two steps never deadlock (review of the single-entry fix)', async () => {
+    await setOwnCategories(['Electricity', 'Water']);
+    const own = tenant.users.standardUser.id;
+    const second = await site('Int-test second site');
+    const input = (reportingYear: number, periodValue: string, locationId: string | null): Prisma.ActivityRecordUncheckedCreateInput => ({
+      subsidiaryId: S(), locationId, reportingYear, reportingPeriod: 'monthly', periodValue, category: 'Electricity',
+      scope: 2, activityValue: 1, activityUnit: 'kWh', calculation: { tCo2e: 0 }, createdBy: own, status: ActivityRecordStatus.draft,
+    });
+    const years = [2026, 2027].map((reportingYear) => ({ subsidiaryId: S(), category: 'Electricity', reportingYear }));
+    // A writes December 2026 then January 2027; B the other way round, at another facility.
+    const run = async (prelock: boolean) => {
+      const a = connect();
+      const b = connect();
+      const aFirst = deferred();
+      const bFirst = deferred();
+      try {
+        const pA = a.$transaction(async (tx) => {
+          if (prelock) await lockSingleEntryYears(tx, years);
+          await tx.activityRecord.create({ data: input(2026, 'December', null) });
+          aFirst.resolve();
+          if (!prelock) await bFirst.promise;
+          await tx.activityRecord.create({ data: input(2027, 'January', null) });
+        }, { timeout: 20_000 });
+        pA.catch(() => aFirst.resolve());
+        await aFirst.promise;
+        const pB = b.$transaction(async (tx) => {
+          if (prelock) await lockSingleEntryYears(tx, [...years].reverse());
+          await tx.activityRecord.create({ data: input(2027, 'January', second) });
+          bFirst.resolve();
+          await tx.activityRecord.create({ data: input(2026, 'December', second) });
+        }, { timeout: 20_000 });
+        pB.catch(() => bFirst.resolve());
+        return (await Promise.allSettled([pA, pB])).map(stateOf);
+      } finally {
+        await a.$disconnect();
+        await b.$disconnect();
+      }
+    };
+    // Without the locks taken up front, the trigger's per-year locks are taken in opposite orders: one is aborted.
+    expect((await run(false)).sort()).toEqual(['40P01', 'ok']);
+    await owner.activityRecord.deleteMany({ where: { subsidiaryId: S(), category: 'Electricity', reportingYear: { in: [2026, 2027] } } });
+    // With them, B waits for A, and both commit.
+    expect(await run(true)).toEqual(['ok', 'ok']);
+    expect(await owner.activityRecord.count({ where: { subsidiaryId: S(), category: 'Electricity', reportingYear: { in: [2026, 2027] } } })).toBe(4);
+  }, 60_000);
+
+  it('reads a pair stored before overlapping periods were judged, and writes nothing (the pre-pilot read)', async () => {
+    await setOwnCategories(['Water']);
+    const reporter = await reporterAt(['Electricity']);
+    const second = await site('Int-test second site');
+    const quarter = await record(reporter, { reportingPeriod: 'quarterly', periodValue: 'Q2', locationId: second });
+    // A month entered by an account that was no party then (a super_admin), made a standard user since:
+    // the pair a record entered before the overlap rule leaves behind.
+    const later = await addMember(owner, tenant, UserRole.super_admin, { grants: [S()] });
+    const month = await record(later.id, { periodValue: 'May', status: ActivityRecordStatus.approved });
+    await owner.profile.update({ where: { id: later.id }, data: { role: UserRole.standard_user } });
+    const before = await owner.activityRecord.count();
+    const report = await findSingleEntryOverlaps(runtime);
+    expect(report.overlaps.filter((o) => o.subsidiaryId === S())).toEqual([{
+      subsidiaryId: S(), category: 'Electricity', reportingYear: 2026,
+      companyUserRecord: { id: month.id, period: 'monthly May', status: 'approved' },
+      centralReporterRecord: { id: quarter.id, period: 'quarterly Q2', status: 'draft' },
+    }]);
+    expect(report.approvedPairs).toBeGreaterThanOrEqual(1);
+    expect(await owner.activityRecord.count()).toBe(before);
+  });
 
   it("the API's own check refuses an overlapping period before the database does", async () => {
     await setOwnCategories(['Electricity', 'Water']);
