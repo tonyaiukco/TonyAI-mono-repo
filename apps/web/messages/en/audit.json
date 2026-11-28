@@ -13,7 +13,8 @@
     "reprice": "Figure recalculated",
     "reject": "Returned",
     "self_approve": "Self-approved",
-    "role_model_change": "Role model changed"
+    "role_model_change": "Role model changed",
+    "read": "Invoice read"
   },
   "entriesOne": "{count} entry",
   "entriesMany": "{count} entries",

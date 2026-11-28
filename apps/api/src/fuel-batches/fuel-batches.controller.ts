@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { EvidenceService } from '../evidence/evidence.service';
-import type { BulkSubmitFuelBatchesResultDTO, FuelBatchDetailDTO, FuelBatchDTO, FuelBatchMetadataDTO, FuelBatchRowDTO } from '@tonyai/shared-types';
+import type { BulkSubmitFuelBatchesResultDTO, EvidenceAssistantDTO, FuelBatchDetailDTO, FuelBatchDTO, FuelBatchMetadataDTO, FuelBatchRowDTO } from '@tonyai/shared-types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
@@ -8,6 +8,7 @@ import { ApproveActivityRecordDto, StartReviewActivityRecordDto } from '../activ
 import { RejectActivityRecordDto } from '../activity-records/dto/reject-activity-record.dto';
 import { BulkSubmitFuelBatchesDto, FuelBatchFiltersDto, FuelBatchRowsQueryDto, SubmitFuelBatchDto, UpdateFuelBatchDeclarationsDto, WithdrawFuelBatchDto } from './dto/fuel-batch.dto';
 import { FuelBatchesService } from './fuel-batches.service';
+import { EvidenceAssistantService } from '../evidence-assistant/evidence-assistant.service';
 
 /** Fuel batches: the review unit (inc28-fuel-bulk D9, D10). */
 @Controller('fuel-batches')
@@ -15,7 +16,18 @@ export class FuelBatchesController {
   constructor(
     private readonly batches: FuelBatchesService,
     private readonly evidence: EvidenceService,
+    private readonly assistant: EvidenceAssistantService,
   ) {}
+
+  /**
+   * The evidence assistant's comparison (inc29-evidence-assistant, D6, D7):
+   * the batch's invoice beside its rows, per fuel. A read in the READ group;
+   * scoped as the batch is (404 outside it), `{ enabled: false }` when off.
+   */
+  @Get(':id/evidence-assistant')
+  evidenceAssistant(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string): Promise<EvidenceAssistantDTO> {
+    return this.assistant.forBatch(user, id);
+  }
 
   /** A file taken off the batch: every record of it at once (D11). */
   @Delete(':id/evidence/:evidenceId')

@@ -60,9 +60,11 @@ export interface AuditActionLabels {
   self_approve: string;
   /** One account carried over to the four-role model (no actor). */
   role_model_change: string;
+  /** inc29-evidence-assistant: a file read when its comparison was first asked for. */
+  read: string;
 }
 
-const WORDED_ACTIONS = ['reprice', 'reject', 'self_approve', 'role_model_change'] as const;
+const WORDED_ACTIONS = ['reprice', 'reject', 'self_approve', 'role_model_change', 'read'] as const;
 
 /** Use the localized label of an action the page words, and keep the caller's display of other actions. */
 export function auditActionLabel(action: string, labels: AuditActionLabels, fallbackLabel = action): string {

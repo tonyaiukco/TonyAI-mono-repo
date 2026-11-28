@@ -27,6 +27,9 @@ import {
   type Locale,
 } from "@/lib/types";
 import { formatLitres } from "./common";
+import { EvidenceAssistantPanel } from "./evidence-assistant-panel";
+import { splitSummary, type AssistantKey } from "@/lib/evidence-assistant-view";
+import type { EvidenceSplitDTO } from "@/lib/types";
 
 const ROW_PAGE = 50;
 
@@ -43,14 +46,18 @@ export function BatchSheet({
   takeIntoReview = false,
   onClose,
   onChanged,
+  onOpenBatch,
 }: {
   batchId: string | null;
   viewer: Viewer | null;
   takeIntoReview?: boolean;
   onClose: () => void;
   onChanged: () => void;
+  /** The review queue: open another package of the same invoice (the evidence assistant's siblings). */
+  onOpenBatch?: (id: string) => void;
 }) {
   const t = useTranslations("fuelFiles");
+  const tAssistant = useTranslations("evidenceAssistant");
   const tMonths = useTranslations("periods.values");
   const tStatus = useTranslations("recordStatus.label");
   const tTypes = useTranslations("dataEntry.activityTypes");
@@ -61,6 +68,8 @@ export function BatchSheet({
   const [busy, setBusy] = useState(false);
   const [reason, setReason] = useState("");
   const [variance, setVariance] = useState("");
+  /** What the last upload's split did, for its uploader (inc29 D10); cleared with the batch. */
+  const [split, setSplit] = useState<EvidenceSplitDTO | null>(null);
   const [declared, setDeclared] = useState<{ usage?: FuelUsage; fuel?: FileFuel; year?: number; month?: number }>({});
   const file = useRef<HTMLInputElement>(null);
   /** The submissions this sheet has taken into review, by batch and submission (a resubmission is a new one). */
@@ -97,6 +106,7 @@ export function BatchSheet({
     setRows(null);
     setReason("");
     setVariance("");
+    setSplit(null);
     if (!batchId) return;
     const id = batchId;
     (async () => {
@@ -234,6 +244,16 @@ export function BatchSheet({
               </Table>
             </section>
 
+            {/* The review queue's evidence assistant (inc29 D10): its own request, after the batch;
+                the actions below never wait for it. Asked again when the files or the submission change. */}
+            {takeIntoReview && (
+              <EvidenceAssistantPanel
+                batchId={batch.id}
+                version={`${batch.submittedAt ?? ""}|${batch.evidence.map((e) => e.id).join(",")}`}
+                onOpenBatch={onOpenBatch}
+              />
+            )}
+
             <section className="space-y-2">
               <h3 className="text-sm font-medium">{t("batches.files")}</h3>
               {batch.evidence.length === 0 ? (
@@ -263,7 +283,13 @@ export function BatchSheet({
                     onClick={() => {
                       const chosen = file.current?.files?.[0];
                       if (!chosen) return;
-                      void run(() => api.uploadFuelBatchEvidence(batch.id, chosen), t("batches.attached")).then(() => {
+                      const token0 = opening.current;
+                      const id = batch.id;
+                      void run(async () => {
+                        const uploaded = await api.uploadFuelBatchEvidence(id, chosen);
+                        if (opening.current === token0) setSplit(uploaded.split ?? null);
+                        return uploaded;
+                      }, t("batches.attached")).then(() => {
                         if (file.current) file.current.value = "";
                       });
                     }}>
@@ -272,6 +298,7 @@ export function BatchSheet({
                   </Button>
                 </div>
               )}
+              {split && <SplitSummary split={split} t={tAssistant as unknown as (key: AssistantKey, values?: Record<string, string | number>) => string} locale={locale} />}
             </section>
 
             {rows && (
@@ -406,5 +433,24 @@ export function BatchSheet({
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** A split upload's summary for its uploader (inc29-evidence-assistant, D10). */
+function SplitSummary({ split, t, locale }: { split: EvidenceSplitDTO; t: (key: AssistantKey, values?: Record<string, string | number>) => string; locale: Locale }) {
+  const words = splitSummary(split, { t, locale });
+  return (
+    <div className="space-y-1 rounded-md border bg-muted/40 p-2 text-sm" data-testid="evidence-split-summary">
+      <p>{words.attached}</p>
+      {words.heading && (
+        <>
+          <p className="text-muted-foreground">{words.heading}</p>
+          <ul className="list-inside list-disc text-xs">
+            {words.notAttached.map((line) => <li key={line} className="font-mono">{line}</li>)}
+          </ul>
+        </>
+      )}
+      {words.failed && <p className="text-amber-700">{words.failed}</p>}
+    </div>
   );
 }

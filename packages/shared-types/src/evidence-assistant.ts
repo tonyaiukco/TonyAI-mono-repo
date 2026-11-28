@@ -6,9 +6,15 @@ export const EVIDENCE_READING_STATUSES = [
 ] as const;
 export type EvidenceReadingStatus = (typeof EVIDENCE_READING_STATUSES)[number];
 
+/**
+ * Why a comparison shows no invoice. `reader_busy` (another file is being read)
+ * and `reader_unavailable` (the reader's isolation is not proven here, or it
+ * failed) are never stored: a later request tries again. A `timed_out` is
+ * stored only when the read ran with its whole time limit (owner, 2026-11-28).
+ */
 export const EVIDENCE_ASSISTANT_UNREAD_REASONS = [
   'no_evidence', 'no_text', 'encrypted', 'unreadable', 'unreadable_row',
-  'limit_exceeded', 'timed_out', 'reader_busy', 'unknown_series',
+  'limit_exceeded', 'timed_out', 'reader_busy', 'reader_unavailable', 'unknown_series',
   'no_matching_invoice', 'several_matching_invoices', 'tanker',
 ] as const;
 export type EvidenceAssistantUnreadReason = (typeof EVIDENCE_ASSISTANT_UNREAD_REASONS)[number];
@@ -17,9 +23,18 @@ export type EvidenceAssistantUnreadReason = (typeof EVIDENCE_ASSISTANT_UNREAD_RE
 export const EVIDENCE_ASSISTANT_LINE_STATES = ['consistent', 'possible_difference'] as const;
 export type EvidenceAssistantLineState = (typeof EVIDENCE_ASSISTANT_LINE_STATES)[number];
 
+/**
+ * The two invoice series the reader knows (C10): `OZK…` Petrol Ofisi card
+ * invoices and `DAU…` Duman invoices for Shell — decision 5's "two known
+ * layouts". The API's `invoice-layout.ts` reads by this list; anything else is
+ * `unknown_series`.
+ */
+export const EVIDENCE_INVOICE_SERIES = ['OZK', 'DAU'] as const;
+export type EvidenceInvoiceSeries = (typeof EVIDENCE_INVOICE_SERIES)[number];
+
 export interface EvidenceAssistantInvoiceDTO {
   invoiceNo: string;
-  series: 'OZK' | 'DAU';
+  series: EvidenceInvoiceSeries;
   periodText: string | null;
   /** ISO dates, set only when the invoice prints a date range. */
   periodFrom: string | null;
@@ -58,7 +73,16 @@ type EvidenceAssistantComparisonDTO = EvidenceAssistantComparisonBase & (
   | { level: 'package'; lines: EvidenceAssistantLineDTO[] }
   | {
       level: 'invoice';
-      lines: (EvidenceAssistantLineDTO & { invoiceLevelLitres: string | null })[];
+      lines: (EvidenceAssistantLineDTO & {
+        /**
+         * The figure compared at invoice level (B10): the sum of every live row
+         * of the invoice for this fuel, in all its packages, other accounts' and
+         * associates' excluded rows included. Not the invoice's own figure
+         * (`invoiceLitres`) and not this package's (`packageLitres`): a panel
+         * labels it as the invoice's rows in all packages.
+         */
+        invoiceLevelLitres: string | null;
+      })[];
       shared: {
         accounts: number;
         /** Only siblings the caller can read. */

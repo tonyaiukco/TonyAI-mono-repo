@@ -1,0 +1,59 @@
+{
+  "title": "Kanıt Asistanı",
+  "notADecision": "Size yardımcı bir karşılaştırma, karar değil: hiçbir adımı engellemez, karar sizindir.",
+  "loading": "Fatura okunuyor…",
+  "tolerance": "Tolerans ±%{percent}",
+  "states": {
+    "consistent": "tutarlı görünüyor",
+    "possible_difference": "olası fark (> tolerans — bir bakın)",
+    "periodShift": "dönem kayması — komşu faturayla dengeleniyor",
+    "unread": "güvenle okunamadı",
+    "noEvidence": "kanıt eklenmedi"
+  },
+  "manualCheck": "lütfen manuel kontrol edin",
+  "line": "Fatura: {invoice} L {fuel} ({number}, {period}) | Paket: {package} L",
+  "lineNoInvoice": "Fatura: {fuel} satırı yok ({number}, {period}) | Paket: {package} L",
+  "lineNoPackage": "Fatura: {invoice} L {fuel} ({number}, {period}) | Paket: {fuel} yok",
+  "invoiceLevel": "Bu faturanın tüm paketlerdeki satırları: {litres} L {fuel}",
+  "fuels": {
+    "diesel": "motorin",
+    "petrol": "benzin"
+  },
+  "otherLines": "Faturadaki diğer satırlar (karşılaştırılmaz)",
+  "otherLine": "{product}: {litres} litre",
+  "buyer": "Alıcı, faturada yazdığı gibi (yalnız gösterim, kontrol edilmez): {name}",
+  "buyerTaxId": "VKN {taxId}",
+  "sharedNote": "Bu fatura {count} hesap arasında bölünmüş",
+  "siblings": "Bu faturanın diğer paketleri",
+  "sibling": "{account} · {company} · {sequence}. paket",
+  "noVisibleSiblings": "Bu faturanın diğer paketleri erişiminizde değil.",
+  "filePages": "Dosya: {name}, sayfa {from}–{to}",
+  "filePage": "Dosya: {name}, sayfa {page}",
+  "unreadReasons": {
+    "no_text": "PDF'te metin yok (tarama ya da fotoğraf).",
+    "encrypted": "PDF parolayla korunuyor.",
+    "unreadable": "Dosya okunamadı.",
+    "unreadable_row": "Faturanın bir satırı ürünüyle birlikte okunamadı.",
+    "limit_exceeded": "Dosya okuyucunun sınırlarını aşıyor.",
+    "timed_out": "Dosyanın okunması çok uzun sürdü.",
+    "reader_busy": "Başka bir fatura okunuyor: paketi birazdan yeniden açın.",
+    "reader_unavailable": "Okuyucu bu ortamda kullanılamıyor.",
+    "unknown_series": "Fatura bilinen bir seriden değil (OZK, DAU).",
+    "no_matching_invoice": "Ekli dosyaların hiçbirinde bu paketin faturası yok.",
+    "several_matching_invoices": "Ekli dosyalarda bu paket için birden fazla fatura var.",
+    "tanker": "Tanker faturaları okunmaz.",
+    "failed": "Asistan yanıt vermedi."
+  },
+  "split": {
+    "attachedOne": "Faturaya göre bölündü: 1 pakete eklendi.",
+    "attachedMany": "Faturaya göre bölündü: {count} pakete eklendi.",
+    "notAttached": "Şu faturalar eklenmedi:",
+    "reasons": {
+      "no_eligible_batch": "bu numarayı taşıyan açık bir paketiniz yok",
+      "manual_attachment_required": "PDF'i kendi paketine ekleyin",
+      "unverified_part": "sayfaları doğrulanamadı",
+      "attachment_failed": "ekleme başarısız oldu"
+    },
+    "failed": "Bazı paketlere faturaları eklenemedi: tamamlamak için aynı PDF'i yeniden ekleyin."
+  }
+}

@@ -152,6 +152,7 @@ describe('auditActionLabel — the actions the page words itself', () => {
     reject: 'Returned',
     self_approve: 'Self-approved',
     role_model_change: 'Role model changed',
+    read: 'Invoice read',
   };
   it('words a reject as a return (WP5) and a reprice by its label', () => {
     expect(auditActionLabel('reject', labels)).toBe('Returned');
@@ -160,6 +161,8 @@ describe('auditActionLabel — the actions the page words itself', () => {
   it('words a self-approval and the role-model carry-over by their labels (inc26-roles-approval-chain)', () => {
     expect(auditActionLabel('self_approve', labels, 'self approve')).toBe('Self-approved');
     expect(auditActionLabel('role_model_change', labels, 'role model change')).toBe('Role model changed');
+    // inc29-evidence-assistant: a file read at its first comparison.
+    expect(auditActionLabel('read', labels, 'read')).toBe('Invoice read');
   });
   it('gives a self-approval the trail\'s words for it, in both languages', () => {
     for (const locale of ['en', 'tr'] as const) {

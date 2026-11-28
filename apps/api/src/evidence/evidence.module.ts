@@ -2,9 +2,10 @@ import { Module } from '@nestjs/common';
 import { EvidenceController } from './evidence.controller';
 import { EvidenceService } from './evidence.service';
 import { StorageModule } from '../storage/storage.module';
+import { EvidenceAssistantModule } from '../evidence-assistant/evidence-assistant.module';
 
 @Module({
-  imports: [StorageModule],
+  imports: [StorageModule, EvidenceAssistantModule],
   controllers: [EvidenceController],
   providers: [EvidenceService],
   // Exported for activity-records: deleting a record cascades its evidence

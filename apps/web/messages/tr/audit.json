@@ -13,7 +13,8 @@
     "reprice": "Emisyon yeniden hesaplandı",
     "reject": "İade edildi",
     "self_approve": "Kendi kaydını onayladı",
-    "role_model_change": "Rol modeli değişti"
+    "role_model_change": "Rol modeli değişti",
+    "read": "Fatura okundu"
   },
   "entriesOne": "{count} kayıt",
   "entriesMany": "{count} kayıt",

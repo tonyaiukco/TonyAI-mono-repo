@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  Optional,
   ForbiddenException,
   type HttpException,
   Injectable,
@@ -18,6 +19,10 @@ import {
   type CursorPage,
   type EvidenceDTO,
   type EvidenceDetachDTO,
+  type EvidenceSourceDTO,
+  type EvidenceSplitDTO,
+  type FuelBatchEvidenceUploadDTO,
+  FUEL_BATCH_OPEN_STATUSES,
   type EvidenceLinkRefusal,
   type EvidenceLinkRefusedDTO,
   mayAuthorRecords,
@@ -57,6 +62,7 @@ import {
 } from '../common/keyset-cursor';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { type CheckedEvidenceFile, checkEvidenceFile, downloadName } from './file-content';
+import { UploadReadingService, readingSummary, type InvoicePart, type ReadingRow } from '../evidence-assistant/upload-reading';
 
 export { EVIDENCE_BUCKET };
 const SIGNED_URL_TTL_SECONDS = 60;
@@ -156,6 +162,14 @@ function lockedRefusal(refusal: HttpException, seen: ActivityRecord | undefined,
  *  - deleting the file outright (`remove`) needs EVERY record it backs to be
  *    editable.
  */
+/** Rolls back an attach whose part the batch already holds (inc29 D5): the existing file is the answer. */
+class PartAlreadyAttached extends Error {
+  constructor(readonly existing: EvidenceWithLinks) {
+    super('part already attached');
+    this.name = 'PartAlreadyAttached';
+  }
+}
+
 /** A batch's files change by its author while it is a draft or returned (D11). */
 function assertOpenBatchAuthor(user: RequestUser, batch: { status: string; createdBy: string }): void {
   if (batch.createdBy !== user.id) {
@@ -175,6 +189,8 @@ export class EvidenceService {
     private readonly storage: StorageService,
     private readonly audit: AuditService,
     private readonly intents: StorageIntentsService,
+    // inc29-evidence-assistant: reads and splits a batch's PDF; absent, files are stored unread.
+    @Optional() private readonly uploadReading?: UploadReadingService,
   ) {}
 
   private readonly limits = readRuntimeConfig();
@@ -188,6 +204,9 @@ export class EvidenceService {
       sizeBytes: e.sizeBytes,
       uploadedBy: e.uploadedBy,
       createdAt: e.createdAt.toISOString(),
+      ...(e.sourceSha256 !== null && e.sourcePageFrom !== null && e.sourcePageTo !== null
+        ? { source: { sha256: e.sourceSha256, pageFrom: e.sourcePageFrom, pageTo: e.sourcePageTo } }
+        : {}),
       linkedRecords: e.links.map(({ activityRecord: r }) => ({
         id: r.id,
         // The column is TEXT; the vocabulary is enforced on write, as
@@ -363,7 +382,7 @@ export class EvidenceService {
     const record = await this.loadRecordScoped(user, recordId);
     await this.assertCanMutate(user, record);
     const checked = checkEvidenceFile(file);
-    return this.store(user, [record], file, checked);
+    return this.store(user, [record], file.buffer, checked);
   }
 
   /**
@@ -425,7 +444,7 @@ export class EvidenceService {
     }
 
     const checked = checkEvidenceFile(file);
-    return this.store(user, ids.map((id) => byId.get(id)!), file, checked);
+    return this.store(user, ids.map((id) => byId.get(id)!), file.buffer, checked);
   }
 
   /**
@@ -433,18 +452,82 @@ export class EvidenceService {
    * for every live record of a fuel batch, by its author, while the batch is
    * a draft or returned — under the batch's row lock, audited on the batch.
    */
-  async uploadForFuelBatch(user: RequestUser, fuelBatchId: string, file: Express.Multer.File): Promise<EvidenceDTO> {
+  async uploadForFuelBatch(user: RequestUser, fuelBatchId: string, file: Express.Multer.File): Promise<FuelBatchEvidenceUploadDTO> {
     this.assertRole(user);
     const batch = await this.prisma.fuelBatch.findFirst({ where: { AND: [{ id: fuelBatchId }, fuelBatchScopeWhere(user)] } });
     if (!batch) throw new ResourceNotFoundError('fuel_batch_not_found');
     assertOpenBatchAuthor(user, batch);
-    const records = await this.prisma.activityRecord.findMany({
-      where: { fuelBatchId: batch.id, status: { not: 'voided' } },
-      orderBy: { id: 'asc' },
-    });
+    const records = await this.liveBatchRecords(batch.id);
     if (records.length === 0) throw new ResourceNotFoundError('fuel_batch_not_found');
     const checked = checkEvidenceFile(file);
-    return this.store(user, records, file, checked, batch.id);
+    // inc29 (D4, D5): read before anything is stored, with no lock or
+    // transaction open; whatever the reader answers, the upload goes on.
+    const plan = this.uploadReading
+      ? await this.uploadReading.plan(batch, checked.mimeType, file.buffer, checked.sha256)
+      : ({ kind: 'whole', reading: null } as const);
+    if (plan.kind === 'whole') {
+      return (await this.storeFile(user, records, file.buffer, checked, { fuelBatchId: batch.id, reading: plan.reading })).dto;
+    }
+    // The selected batch's own invoice first; its failure fails the upload as any upload's would.
+    const primary = await this.storePart(user, records, batch.id, plan.primary, checked.fileName, plan.sourceSha256);
+    const split: EvidenceSplitDTO = {
+      invoices: plan.invoices,
+      attached: [{ invoiceNo: plan.primary.invoiceNo, fuelBatchId: batch.id }],
+      notAttached: [...plan.notAttached],
+      failedTargets: [],
+    };
+    // Every OZK part, the selected invoice's included, to the uploader's other
+    // open batches that bear its number (D5 step 3): one stored file each,
+    // through the same write path. Only eligible batches the uploader can read
+    // are named; one that fails is reported for a retry.
+    for (const part of [plan.primary, ...plan.others]) {
+      if (part.series !== 'OZK') continue;
+      const targets = await this.prisma.fuelBatch.findMany({
+        where: {
+          AND: [
+            fuelBatchScopeWhere(user),
+            { source: 'petrol_ofisi', invoiceRef: { equals: part.invoiceNo, mode: 'insensitive' } },
+            { createdBy: user.id, status: { in: [...FUEL_BATCH_OPEN_STATUSES] }, id: { not: batch.id } },
+          ],
+        },
+        orderBy: { id: 'asc' },
+      });
+      let attached = part === plan.primary;
+      let failed = false;
+      for (const target of targets) {
+        try {
+          const targetRecords = await this.liveBatchRecords(target.id);
+          if (targetRecords.length === 0) continue;
+          await this.storePart(user, targetRecords, target.id, part, checked.fileName, plan.sourceSha256);
+          split.attached.push({ invoiceNo: part.invoiceNo, fuelBatchId: target.id });
+          attached = true;
+        } catch (error) {
+          failed = true;
+          this.logger.warn(`Split part not attached to a batch: ${error instanceof Error ? error.name : 'Error'}`);
+          split.failedTargets.push({ invoiceNo: part.invoiceNo, fuelBatchId: target.id, reason: 'attachment_failed' });
+        }
+      }
+      if (!attached) split.notAttached.push({ invoiceNo: part.invoiceNo, reason: failed ? 'attachment_failed' : 'no_eligible_batch' });
+    }
+    return { ...primary, split };
+  }
+
+  private liveBatchRecords(fuelBatchId: string): Promise<ActivityRecord[]> {
+    return this.prisma.activityRecord.findMany({ where: { fuelBatchId, status: { not: 'voided' } }, orderBy: { id: 'asc' } });
+  }
+
+  /** One invoice's part on one batch: a file of the batch's company, naming its source (D5 step 2). */
+  private async storePart(
+    user: RequestUser,
+    records: ActivityRecord[],
+    fuelBatchId: string,
+    part: InvoicePart,
+    fileName: string,
+    sourceSha256: string,
+  ): Promise<EvidenceDTO> {
+    const checked: CheckedEvidenceFile = { mimeType: 'application/pdf', fileName, sha256: part.sha256 };
+    const source: EvidenceSourceDTO = { sha256: sourceSha256, pageFrom: part.pageFrom, pageTo: part.pageTo };
+    return (await this.storeFile(user, records, part.bytes, checked, { fuelBatchId, reading: part.reading, source })).dto;
   }
 
   /**
@@ -532,14 +615,41 @@ export class EvidenceService {
    * bytes of a committed row in that case). A crash anywhere leaves the
    * intent for the sweeper (`StorageIntentsService`).
    */
-  private async store(
+  private async store(user: RequestUser, records: ActivityRecord[], bytes: Buffer, checked: CheckedEvidenceFile): Promise<EvidenceDTO> {
+    return (await this.storeFile(user, records, bytes, checked, {})).dto;
+  }
+
+  /**
+   * `store()` with a batch upload's extras (inc29-evidence-assistant, D4, D5):
+   * the file's first reading, inserted in the same transaction so a file and
+   * its reading commit together; a part's source (the uploaded PDF's digest and
+   * pages); and, for a part, idempotence — a batch already holding a file with
+   * the same source and pages gains nothing (checked before the upload, and
+   * again under the batch lock, where a concurrent attach of the same split is
+   * decided), and the staged object goes.
+   */
+  private async storeFile(
     user: RequestUser,
     records: ActivityRecord[],
-    file: Express.Multer.File,
+    bytes: Buffer,
     checked: CheckedEvidenceFile,
-    fuelBatchId: string | null = null,
-  ): Promise<EvidenceDTO> {
+    extra: { fuelBatchId?: string; reading?: ReadingRow | null; source?: EvidenceSourceDTO },
+  ): Promise<{ dto: EvidenceDTO; reused: boolean }> {
+    const fuelBatchId = extra.fuelBatchId ?? null;
     const subsidiaryId = records[0].subsidiaryId;
+    const sameSource = extra.source
+      ? {
+          subsidiaryId,
+          sourceSha256: extra.source.sha256,
+          sourcePageFrom: extra.source.pageFrom,
+          sourcePageTo: extra.source.pageTo,
+          links: { some: { activityRecordId: { in: records.map((r) => r.id) } } },
+        }
+      : null;
+    if (sameSource) {
+      const existing = await this.prisma.evidence.findFirst({ where: sameSource, include: WITH_LINKED_RECORDS });
+      if (existing) return { dto: this.toDTO(existing), reused: true };
+    }
     // Opaque object key: <subsidiaryId>/<uuid>-<sanitised name>.
     //
     // `\w` is ASCII-only, so Turkish letters collapse to `_` here. That is fine
@@ -557,7 +667,7 @@ export class EvidenceService {
       organisationId: user.organisationId,
     });
     try {
-      await this.storage.upload(EVIDENCE_BUCKET, storagePath, file.buffer, checked.mimeType);
+      await this.storage.upload(EVIDENCE_BUCKET, storagePath, bytes, checked.mimeType);
     } catch (error) {
       // Before the row's transaction: no row can own the bytes, even if the
       // sweeper took the intent while they were on their way ("LP3-04 PR D
@@ -591,17 +701,37 @@ export class EvidenceService {
           const refusal = this.refusalFor(user, record, locked.has(record.id), fuelBatchId);
           if (refusal) throw lockedRefusal(refusal, seen.get(record.id), record);
         }
+        // Under the batch lock: a concurrent attach of the same part has committed or not.
+        if (sameSource) {
+          const existing = await tx.evidence.findFirst({ where: sameSource, include: WITH_LINKED_RECORDS });
+          if (existing) throw new PartAlreadyAttached(existing);
+        }
         const row = await tx.evidence.create({
           data: {
             subsidiaryId,
             storagePath,
             fileName: checked.fileName,
             mimeType: checked.mimeType,
-            sizeBytes: file.size,
+            sizeBytes: bytes.length,
             sha256: checked.sha256,
             uploadedBy: user.id,
+            ...(extra.source
+              ? { sourceSha256: extra.source.sha256, sourcePageFrom: extra.source.pageFrom, sourcePageTo: extra.source.pageTo }
+              : {}),
           },
         });
+        if (extra.reading) {
+          await tx.evidenceReading.create({
+            data: {
+              evidenceId: row.id,
+              subsidiaryId,
+              readerVersion: extra.reading.readerVersion,
+              status: extra.reading.status,
+              pageCount: extra.reading.pageCount,
+              invoices: extra.reading.invoices as unknown as Prisma.InputJsonValue,
+            },
+          });
+        }
         await tx.activityRecordEvidence.createMany({
           data: records.map((r) => ({
             activityRecordId: r.id,
@@ -620,7 +750,14 @@ export class EvidenceService {
             action: 'create',
             entity: 'evidence',
             entityId: stored.id,
-            diff: { after: this.auditSnapshot(stored) },
+            // The reading's outcome only: what it read (numbers, figures, the
+            // buyer) stays in `evidence_readings`, never in the trail (C7, D9).
+            diff: {
+              after: {
+                ...this.auditSnapshot(stored),
+                ...(extra.reading ? { reading: readingSummary(extra.reading) } : {}),
+              },
+            },
           },
           tx,
         );
@@ -635,6 +772,7 @@ export class EvidenceService {
       }, LIFECYCLE_TX);
     } catch (error) {
       await this.intents.abandonUpload(intentId, ref, error, { subsidiaryId, organisationId: user.organisationId });
+      if (error instanceof PartAlreadyAttached) return { dto: this.toDTO(error.existing), reused: true };
       // A record deleted between the checks and the link: the link's foreign
       // key refuses it (P2003). That is the same answer as a record that was
       // never there, not a server error.
@@ -643,7 +781,7 @@ export class EvidenceService {
       }
       throw asLostRace(error);
     }
-    return this.toDTO(created);
+    return { dto: this.toDTO(created), reused: false };
   }
 
   async signedUrl(

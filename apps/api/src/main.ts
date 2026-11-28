@@ -12,6 +12,9 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { configurePool, readRuntimeConfig } from './common/runtime-config';
 import { RuntimeLimits } from './common/runtime-limits';
 import { readRegistrationConfig } from './users/registration-config';
+import { readEvidenceAssistantConfig } from './evidence-assistant/evidence-assistant-config';
+import { READER_VERSION } from './evidence-assistant/invoice-layout';
+import { READER_LIMITS } from './evidence-assistant/reader-limits';
 
 async function bootstrap() {
   // Sentry first, before Nest builds the app — a no-op unless SENTRY_DSN is
@@ -26,6 +29,8 @@ async function bootstrap() {
   // And on a registration code of the wrong shape, or registration enabled
   // over a placeholder KVKK notice the environment has not allowed.
   const registration = readRegistrationConfig();
+  // And on an evidence assistant switch or tolerance of the wrong shape (D8).
+  const evidenceAssistant = readEvidenceAssistantConfig();
   const runtime = readRuntimeConfig();
   configurePool(runtime);
   const logger = new JsonLogger();
@@ -49,6 +54,14 @@ async function bootstrap() {
     enabled: registration !== null,
     consentVersion: registration?.consentVersion ?? null,
     consentIsPlaceholder: registration?.consentIsPlaceholder ?? null,
+  });
+  // Stated at every boot: whether fuel invoices are read and compared, at what
+  // tolerance, by which reader and within which limits (inc29, D8).
+  logger.event('info', 'evidence_assistant_policy', {
+    enabled: evidenceAssistant.enabled,
+    tolerancePercent: evidenceAssistant.tolerancePercent,
+    readerVersion: READER_VERSION,
+    limits: READER_LIMITS,
   });
   // Stated at every boot, so "placeholders are off here" is a log line an
   // operator can point at rather than an absence of evidence (LP3-03, K3).

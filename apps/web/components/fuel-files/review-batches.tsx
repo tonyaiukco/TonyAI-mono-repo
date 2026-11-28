@@ -150,6 +150,7 @@ export function ReviewBatches({
         viewer={viewer}
         takeIntoReview
         onClose={() => setOpen(null)}
+        onOpenBatch={(id) => setOpen(id)}
         onChanged={() => {
           void load();
           onChanged();
