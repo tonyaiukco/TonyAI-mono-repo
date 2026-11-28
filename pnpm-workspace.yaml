@@ -29,3 +29,9 @@ allowBuilds:
   # platform binary that pnpm already installed as an optional dependency;
   # verified that lint resolves `@tonyai/*` workspace imports with it OFF.
   unrs-resolver: false
+
+# pdfjs-dist (WP10's invoice reader) lists @napi-rs/canvas as an optional
+# dependency for rendering. The reader extracts text only and never renders,
+# so the 30 MB native addon stays out of the install and the image.
+ignoredOptionalDependencies:
+  - '@napi-rs/canvas'

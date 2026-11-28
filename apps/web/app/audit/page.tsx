@@ -134,6 +134,9 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   // no actor. Not a person's act and not a change of access in use; a reader
   // looks for it only to date the roles shown before it.
   role_model_change: "bg-sky-500/15 text-sky-700 border-sky-500/30",
+  // Slate, the neutral: the evidence assistant read a file at its first
+  // comparison (inc29). Not an act on the inventory: no record, row or status.
+  read: "bg-slate-500/15 text-slate-700 border-slate-500/30",
 };
 
 const NEUTRAL_ACTION = "bg-slate-500/15 text-slate-700 border-slate-500/30";
@@ -191,6 +194,7 @@ export default function AuditPage() {
     reject: t("actions.reject"),
     self_approve: t("actions.self_approve"),
     role_model_change: t("actions.role_model_change"),
+    read: t("actions.read"),
   };
   const displayAction = (action: string) => auditActionLabel(action, actionLabels, humanise(action));
   const locale = useLocale();

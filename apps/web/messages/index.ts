@@ -34,6 +34,7 @@ import enRecordTrail from "./en/recordTrail.json";
 import enSubsidiaries from "./en/subsidiaries.json";
 import enOnboarding from "./en/onboarding.json";
 import enFuelFiles from "./en/fuelFiles.json";
+import enEvidenceAssistant from "./en/evidenceAssistant.json";
 import trAuth from "./tr/auth.json";
 import trBoundary from "./tr/boundary.json";
 import trCategories from "./tr/categories.json";
@@ -69,6 +70,7 @@ import trRecordTrail from "./tr/recordTrail.json";
 import trSubsidiaries from "./tr/subsidiaries.json";
 import trOnboarding from "./tr/onboarding.json";
 import trFuelFiles from "./tr/fuelFiles.json";
+import trEvidenceAssistant from "./tr/evidenceAssistant.json";
 
 /**
  * The UI catalogues (LP3-01): one JSON file per namespace per locale, so two
@@ -116,6 +118,8 @@ import trFuelFiles from "./tr/fuelFiles.json";
  *   onboarding    the masterkey's setup wizard and its gate (inc26-central-reporter-onboarding)
  *   fuelFiles     the Fuel files page, the review queue's batches and the batch sheet; fuel, usage and
  *                 row-state words (inc28-fuel-bulk)
+ *   evidenceAssistant  the review queue's invoice comparison beside a fuel package, and a split upload's
+ *               summary (inc29-evidence-assistant; Turkish state labels verbatim from INC-2.9 §5, INC-2.8 §7)
  *   emissions   the Emissions screen — its tabs, the record drawer and the withdrawal (`lib/void-view.ts`) (LP4-04)
  */
 const en = {
@@ -154,6 +158,7 @@ const en = {
   subsidiaries: enSubsidiaries,
   onboarding: enOnboarding,
   fuelFiles: enFuelFiles,
+  evidenceAssistant: enEvidenceAssistant,
 };
 
 export type Messages = typeof en;
@@ -194,6 +199,7 @@ const tr: Messages = {
   subsidiaries: trSubsidiaries,
   onboarding: trOnboarding,
   fuelFiles: trFuelFiles,
+  evidenceAssistant: trEvidenceAssistant,
 };
 
 export const MESSAGES: Readonly<Record<Locale, Messages>> = { en, tr };

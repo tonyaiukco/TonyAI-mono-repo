@@ -11,6 +11,7 @@ from runtime_limits import expected_env, validate_limits
 from drain_api import drain, settle, revisions
 from mail_settings import verify_mail_environment
 from registration_settings import verify_registration_environment
+from evidence_assistant_settings import verify_evidence_assistant_environment
 from public_hosts import web_origins
 
 
@@ -45,6 +46,7 @@ def verify(inputs, read=az):
         container = properties['template']['containers'][0]
         verify_mail_environment(container.get('env', []), foundation, release, kind)
         verify_registration_environment(container.get('env', []), foundation, release, kind)
+        verify_evidence_assistant_environment(container.get('env', []), release, kind)
         expected_image = foundation['registry_name'] + '.azurecr.io/tonyai/' + kind + '@' + release[kind + '_digest']
         if container.get('image') != expected_image:
             raise SafeFailure('Deployed image differs from selected release.')

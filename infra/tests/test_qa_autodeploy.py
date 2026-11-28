@@ -1077,6 +1077,38 @@ class InputsExportTests(unittest.TestCase):
                 self.assertIn(EXPECTED[name], str(caught.exception))
                 self.assertNotIn('aB3x9', str(caught.exception))
 
+    def test_api_without_evidence_assistant_settings_omits_the_block(self):
+        self.assertNotIn('evidence_assistant', self.export()['release'])
+
+    def test_live_evidence_assistant_switch_is_carried_so_an_exported_binding_stays_off(self):
+        from evidence_assistant_settings import verify_evidence_assistant_environment
+        for switch, tolerance, expected in (('off', '1', {'enabled': False, 'tolerance_percent': 1}),
+                                            ('on', '1.25', {'enabled': True, 'tolerance_percent': 1.25})):
+            with self.subTest(switch=switch, tolerance=tolerance):
+                self.setUp()
+                env = self.azure.apps['api']['properties']['template']['containers'][0]['env']
+                env += [{'name': 'EVIDENCE_ASSISTANT', 'value': switch},
+                        {'name': 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT', 'value': tolerance}]
+                written = self.export()
+                self.assertEqual(written['release'].get('evidence_assistant'), expected)
+                qa.validate_release(written)
+                # What the verifier holds the live API to is what the export wrote.
+                verify_evidence_assistant_environment(env, written['release'], 'api')
+
+    def test_incomplete_or_malformed_live_evidence_assistant_settings_refuse(self):
+        cases = {
+            'only the switch': ([{'name': 'EVIDENCE_ASSISTANT', 'value': 'off'}], 'settings are incomplete'),
+            'only the tolerance': ([{'name': 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT', 'value': '1'}], 'settings are incomplete'),
+            'a malformed switch': ([{'name': 'EVIDENCE_ASSISTANT', 'value': 'no'}, {'name': 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT', 'value': '1'}], 'switch is malformed'),
+            'a malformed tolerance': ([{'name': 'EVIDENCE_ASSISTANT', 'value': 'off'}, {'name': 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT', 'value': '1.255'}], 'tolerance is malformed'),
+            'a secret reference': ([{'name': 'EVIDENCE_ASSISTANT', 'secretRef': 'database-url'}, {'name': 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT', 'value': '1'}], 'plain values'),
+        }
+        for name, (items, message) in cases.items():
+            with self.subTest(case=name):
+                self.setUp()
+                self.azure.apps['api']['properties']['template']['containers'][0]['env'] += items
+                self.assert_refused_without_file(message)
+
     def test_incomplete_mail_or_missing_runtime_limit_refuses(self):
         env = self.azure.apps['api']['properties']['template']['containers'][0]['env']
         env[:] = [item for item in env if item['name'] != 'MAIL_FROM']

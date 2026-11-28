@@ -7115,6 +7115,11 @@ export const AUDIT_ACTIONS = [
   /** inc26-roles-approval-chain: the migration carried an account to the new
    *  role model; no actor, the role before and after. `entity: 'profile'`. */
   'role_model_change',
+  /** inc29-evidence-assistant (D4, D9): a file with no reading by the current
+   *  reader was read when its comparison was asked for. The diff names the
+   *  reading's outcome (status, pages, reader version) and the batch — never
+   *  the invoice's number, figures or buyer. `entity: 'evidence'`. */
+  'read',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

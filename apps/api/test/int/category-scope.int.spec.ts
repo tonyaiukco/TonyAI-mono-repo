@@ -182,9 +182,9 @@ describe('a standard user granted Electricity alone (INC-2.6 §1, task 8.5)', ()
     expect(await listed(narrow)).toEqual([electricity, own, ownDraft].sort());
   });
 
-  it('reads a Fuel record by id, and its evidence, exactly as an unknown one; Electricity and its own as they are', async () => {
+  it('reads a Fuel record by id, its evidence and its evidence assistant, exactly as an unknown one; Electricity and its own as they are', async () => {
     const missing = randomUUID();
-    for (const path of [(id: string) => `/activity-records/${id}`, (id: string) => `/activity-records/${id}/evidence`, (id: string) => `/activity-records/${id}/audit-trail`]) {
+    for (const path of [(id: string) => `/activity-records/${id}`, (id: string) => `/activity-records/${id}/evidence`, (id: string) => `/activity-records/${id}/audit-trail`, (id: string) => `/activity-records/${id}/evidence-assistant`]) {
       const foreign = await call(narrow, 'GET', path(fuel));
       const unknown = await call(narrow, 'GET', path(missing));
       expect(foreign.status, path(fuel)).toBe(404);

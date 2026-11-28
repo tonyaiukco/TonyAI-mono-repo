@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EVIDENCE_ASSISTANT_LINE_STATES,
   EVIDENCE_ASSISTANT_UNREAD_REASONS,
+  EVIDENCE_INVOICE_SERIES,
   EVIDENCE_READING_STATUSES,
   EVIDENCE_SPLIT_NOT_ATTACHED_REASONS,
 } from './index';
@@ -18,9 +19,13 @@ describe('evidence assistant contract', () => {
     expect(EVIDENCE_ASSISTANT_LINE_STATES).toEqual(['consistent', 'possible_difference']);
     expect(EVIDENCE_ASSISTANT_UNREAD_REASONS).toEqual([
       'no_evidence', 'no_text', 'encrypted', 'unreadable', 'unreadable_row',
-      'limit_exceeded', 'timed_out', 'reader_busy', 'unknown_series',
+      'limit_exceeded', 'timed_out', 'reader_busy', 'reader_unavailable', 'unknown_series',
       'no_matching_invoice', 'several_matching_invoices', 'tanker',
     ]);
+  });
+
+  it('pins the two known invoice series (C10)', () => {
+    expect(EVIDENCE_INVOICE_SERIES).toEqual(['OZK', 'DAU']);
   });
 
   it('pins split refusal reasons', () => {

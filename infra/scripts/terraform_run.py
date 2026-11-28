@@ -46,7 +46,7 @@ def validate_release(inputs):
     from public_hosts import validate_public_hosts
     validate_public_hosts(foundation.get('public_hosts'))
     expected = {'source_sha', 'release_id', 'supabase_project_ref', 'api_digest', 'web_digest', 'database_secret_version', 'backend_secret_version', 'storage_cleanup_hold', 'storage_sweep_interval_seconds'}
-    if set(release) - {'runtime_limits', 'mail', 'registration'} != expected:
+    if set(release) - {'runtime_limits', 'mail', 'registration', 'evidence_assistant'} != expected:
         raise SafeFailure('Release has missing or unknown fields; secret values are prohibited.')
     patterns = {'source_sha': r'[a-f0-9]{40}', 'release_id': r'[a-z][a-z0-9-]{0,29}',
                 'supabase_project_ref': r'[a-z]{20}', 'api_digest': r'sha256:[a-f0-9]{64}',
@@ -65,6 +65,8 @@ def validate_release(inputs):
     validate_mail(release)
     from registration_settings import validate_registration
     validate_registration(foundation, release)
+    from evidence_assistant_settings import validate_evidence_assistant
+    validate_evidence_assistant(release)
     return foundation, release
 
 

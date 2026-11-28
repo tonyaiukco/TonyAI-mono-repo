@@ -535,6 +535,12 @@ def export_inputs(foundation, candidate, project, out, read, verifier=None, read
     registration = live_registration(foundation, apps['api'])
     if registration is not None:
         release['registration'] = registration
+    # The assistant's switch as the live API holds it: a binding exported while
+    # it is off must stay off (inc29-evidence-assistant, D8).
+    from evidence_assistant_settings import live_evidence_assistant
+    assistant = live_evidence_assistant(live_env(apps['api']))
+    if assistant is not None:
+        release['evidence_assistant'] = assistant
     release['runtime_limits'] = live_runtime_limits(apps['api'])
     inputs = {'foundation': foundation, 'release': release}
     bind_at(candidate, inputs, sha, read_git)

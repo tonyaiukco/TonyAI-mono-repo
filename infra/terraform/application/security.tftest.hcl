@@ -500,6 +500,239 @@ run "registration_code_value_refused" {
   expect_failures = [var.release]
 }
 
+# The evidence assistant (inc29-evidence-assistant task 10.1, D8): absent means no
+# setting; present, both values are emitted exactly, off explicitly; a tolerance
+# the API would refuse at boot is refused at plan.
+run "evidence_assistant_absent_is_unconfigured" {
+  command = plan
+  assert {
+    condition     = alltrue([for e in local.api_env : !contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)])
+    error_message = "A release that names no evidence assistant settings must give the API none."
+  }
+}
+run "evidence_assistant_off_is_explicit_and_exact" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      evidence_assistant             = { enabled = false, tolerance_percent = 1.25 }
+    }
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT"] == ["off"] && [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"] == ["1.25"]
+    error_message = "Both evidence assistant settings must reach the API exactly as released."
+  }
+  assert {
+    condition     = alltrue([for e in azapi_resource.app["api"].body.properties.template.containers[0].env : !can(e.secretRef) if contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)]) && alltrue([for e in azapi_resource.app["web"].body.properties.template.containers[0].env : !contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)])
+    error_message = "The evidence assistant settings are plain values on the API only, never on the web."
+  }
+}
+run "evidence_assistant_on_with_a_whole_tolerance" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      evidence_assistant             = { enabled = true, tolerance_percent = 1 }
+    }
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT"] == ["on"] && [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"] == ["1"]
+    error_message = "Both evidence assistant settings must reach the API exactly as released."
+  }
+  assert {
+    condition     = alltrue([for e in azapi_resource.app["api"].body.properties.template.containers[0].env : !can(e.secretRef) if contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)]) && alltrue([for e in azapi_resource.app["web"].body.properties.template.containers[0].env : !contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)])
+    error_message = "The evidence assistant settings are plain values on the API only, never on the web."
+  }
+}
+run "evidence_assistant_tolerance_bounds" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      evidence_assistant             = { enabled = true, tolerance_percent = 100 }
+    }
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT"] == ["on"] && [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"] == ["100"]
+    error_message = "Both evidence assistant settings must reach the API exactly as released."
+  }
+  assert {
+    condition     = alltrue([for e in azapi_resource.app["api"].body.properties.template.containers[0].env : !can(e.secretRef) if contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)]) && alltrue([for e in azapi_resource.app["web"].body.properties.template.containers[0].env : !contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)])
+    error_message = "The evidence assistant settings are plain values on the API only, never on the web."
+  }
+}
+run "evidence_assistant_tolerance_zero" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      evidence_assistant             = { enabled = false, tolerance_percent = 0 }
+    }
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT"] == ["off"] && [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"] == ["0"]
+    error_message = "Both evidence assistant settings must reach the API exactly as released."
+  }
+  assert {
+    condition     = alltrue([for e in azapi_resource.app["api"].body.properties.template.containers[0].env : !can(e.secretRef) if contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)]) && alltrue([for e in azapi_resource.app["web"].body.properties.template.containers[0].env : !contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)])
+    error_message = "The evidence assistant settings are plain values on the API only, never on the web."
+  }
+}
+run "evidence_assistant_tolerance_shortest_form" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      evidence_assistant             = { enabled = true, tolerance_percent = 1.15 }
+    }
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT"] == ["on"] && [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"] == ["1.15"]
+    error_message = "Both evidence assistant settings must reach the API exactly as released."
+  }
+  assert {
+    condition     = alltrue([for e in azapi_resource.app["api"].body.properties.template.containers[0].env : !can(e.secretRef) if contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)]) && alltrue([for e in azapi_resource.app["web"].body.properties.template.containers[0].env : !contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)])
+    error_message = "The evidence assistant settings are plain values on the API only, never on the web."
+  }
+}
+run "evidence_assistant_tolerance_trailing_zero" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      evidence_assistant             = { enabled = true, tolerance_percent = 1.10 }
+    }
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT"] == ["on"] && [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"] == ["1.1"]
+    error_message = "Both evidence assistant settings must reach the API exactly as released."
+  }
+  assert {
+    condition     = alltrue([for e in azapi_resource.app["api"].body.properties.template.containers[0].env : !can(e.secretRef) if contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)]) && alltrue([for e in azapi_resource.app["web"].body.properties.template.containers[0].env : !contains(["EVIDENCE_ASSISTANT", "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT"], e.name)])
+    error_message = "The evidence assistant settings are plain values on the API only, never on the web."
+  }
+}
+run "evidence_assistant_over_precision_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      evidence_assistant             = { enabled = false, tolerance_percent = 1.255 }
+    }
+  }
+  expect_failures = [var.release]
+}
+run "evidence_assistant_above_range_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      evidence_assistant             = { enabled = false, tolerance_percent = 100.5 }
+    }
+  }
+  expect_failures = [var.release]
+}
+run "evidence_assistant_negative_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      evidence_assistant             = { enabled = false, tolerance_percent = -1 }
+    }
+  }
+  expect_failures = [var.release]
+}
+run "evidence_assistant_switch_null_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      evidence_assistant             = { enabled = null, tolerance_percent = 1 }
+    }
+  }
+  expect_failures = [var.release]
+}
+
 run "mail_host_refused" {
   command = plan
   variables {

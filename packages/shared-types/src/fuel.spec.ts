@@ -9,6 +9,8 @@ import {
   fuelRowState,
   fuelUsagesFor,
   MANUAL_FUELS,
+  manualLitresFuel,
+  assistantRecordFuel,
   parseShellInvoiceRef,
   recogniseFuel,
   shellHalfMonth,
@@ -123,6 +125,31 @@ describe('fuelRecordTarget (D6)', () => {
     expect(fuelUsagesFor('petrol')).toEqual(['on_road', 'off_road', 'stationary']);
     expect(fuelUsagesFor('lpg')).toEqual(['on_road', 'stationary']);
     expect(fuelUsagesFor('marine_gas_oil')).toEqual(['marine']);
+  });
+});
+
+describe('manualLitresFuel (inc29-evidence-assistant C6)', () => {
+  it('knows a fuel in litres by its D6 pair, and nothing else', () => {
+    expect(manualLitresFuel({ category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres' })).toBe('diesel');
+    expect(manualLitresFuel({ category: 'Mobile Combustion', activityType: 'off_road_petrol', activityUnit: 'litres' })).toBe('petrol');
+    expect(manualLitresFuel({ category: 'Fuel', activityType: 'diesel', activityUnit: 'litres' })).toBe('diesel');
+    expect(manualLitresFuel({ category: 'Mobile Combustion', activityType: 'on_road_lpg', activityUnit: 'litres' })).toBe('lpg');
+    expect(manualLitresFuel({ category: 'Fuel', activityType: 'lpg', activityUnit: 'kg' })).toBeNull();
+    expect(manualLitresFuel({ category: 'Mobile Combustion', activityType: 'marine_gas_oil', activityUnit: 'kg' })).toBeNull();
+    expect(manualLitresFuel({ category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'kg' })).toBeNull();
+    expect(manualLitresFuel({ category: 'Fuel', activityType: 'on_road_diesel', activityUnit: 'litres' })).toBeNull();
+    expect(manualLitresFuel({ category: 'Mobile Combustion', activityType: null, activityUnit: 'litres' })).toBeNull();
+  });
+
+});
+
+describe('assistantRecordFuel (inc29-evidence-assistant C6)', () => {
+  it('compares a manual diesel or petrol record in litres, and nothing else', () => {
+    expect(assistantRecordFuel({ fuelBatchId: null, category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres' })).toBe('diesel');
+    expect(assistantRecordFuel({ category: 'Fuel', activityType: 'petrol', activityUnit: 'litres' })).toBe('petrol');
+    expect(assistantRecordFuel({ fuelBatchId: 'b', category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres' })).toBeNull();
+    expect(assistantRecordFuel({ fuelBatchId: null, category: 'Mobile Combustion', activityType: 'on_road_lpg', activityUnit: 'litres' })).toBeNull();
+    expect(assistantRecordFuel({ fuelBatchId: null, category: 'Fuel', activityType: 'lpg', activityUnit: 'kg' })).toBeNull();
   });
 });
 

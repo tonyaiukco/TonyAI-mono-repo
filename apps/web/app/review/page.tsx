@@ -64,6 +64,7 @@ import {
   entityLabel,
   isCalculated,
   LOCALE_FORMAT_TAGS,
+  assistantRecordFuel,
   mayReadRecordTrail,
   PENDING_REVIEW_STATUSES,
   unitSymbol,
@@ -76,6 +77,7 @@ import {
 } from "@/lib/types";
 import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
+import { EvidenceAssistantPanel } from "@/components/fuel-files/evidence-assistant-panel";
 import { useActorWords, useEntityWords, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatComputedAmount, formatNumber, formatReadAmount } from "@/lib/i18n/number";
 import { reviewCalorificBasis, reviewRecordFilters, reviewReferences, reviewReportingEntity, reviewSelfGeneration, waitingLabel } from "@/lib/review-view";
@@ -1262,6 +1264,19 @@ export default function ReviewPage() {
                   testId="review-evidence-load-more"
                 />
               </div>
+
+              {/* The evidence assistant for a manual fuel record in litres, as a package of one record
+                  (inc29-evidence-assistant C6): on its own request, so approve and return never wait for it;
+                  asked again when the record is resubmitted or its files change. A batch's record is compared on its batch. */}
+              {selected.status !== "voided" &&
+                assistantRecordFuel({ fuelBatchId: selected.fuelBatchId, category: selected.category, activityType: selected.activityType ?? null, activityUnit: selected.activityUnit }) !== null && (
+                  <EvidenceAssistantPanel
+                    source={{ kind: "record", id: selected.id }}
+                    // Not `updatedAt`: taking the record into review changes it, and a second
+                    // request racing the first would find the one reader busy.
+                    version={`${selected.submittedAt ?? ""}|${selected.evidenceCount}`}
+                  />
+                )}
 
               {canApprove && (
               <div className="space-y-2 border-t pt-4">

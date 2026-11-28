@@ -120,6 +120,8 @@ describe("the catalogues", () => {
       'onboarding.superAdmins.row',
       // Brand names, a fuel spelled alike, and a unit format (inc28-fuel-bulk).
       ...['sources.shell', 'sources.petrol_ofisi', 'fuels.lpg', 'litres', 'batches.line'].map((key) => `fuelFiles.${key}`),
+      // A fuel spelled alike (inc29-evidence-assistant, the manual record's line).
+      'evidenceAssistant.fuels.lpg',
       ...['lpg', 'cng', 'lng', 'R-22', 'HFC-227ea', 'R-32', 'R-134a', 'R-404A', 'R-407C', 'R-407F',
         'R-410A', 'R-448A', 'R-449A', 'R-1234yf'].map((key) => `dataEntry.activityTypes.${key}`),
       // A unit, a file kind, a format with no words (LP4-03 PR B).

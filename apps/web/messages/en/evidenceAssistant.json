@@ -1,0 +1,62 @@
+{
+  "title": "Evidence assistant",
+  "notADecision": "A comparison to help you, not a decision: it blocks nothing, and you decide.",
+  "loading": "Reading the invoice…",
+  "tolerance": "Tolerance ±{percent}%",
+  "states": {
+    "consistent": "looks consistent",
+    "possible_difference": "possible difference (> tolerance — take a look)",
+    "periodShift": "period shift — balanced by the neighbouring invoice",
+    "unread": "could not be read reliably",
+    "noEvidence": "no evidence attached"
+  },
+  "manualCheck": "please check manually",
+  "line": "Invoice: {invoice} L {fuel} ({number}, {period}) | Package: {package} L",
+  "lineNoInvoice": "Invoice: no {fuel} line ({number}, {period}) | Package: {package} L",
+  "lineNoPackage": "Invoice: {invoice} L {fuel} ({number}, {period}) | Package: no {fuel}",
+  "invoiceLevel": "This invoice's rows in all packages: {litres} L {fuel}",
+  "fuels": {
+    "diesel": "diesel",
+    "petrol": "petrol",
+    "lpg": "LPG",
+    "marine_gas_oil": "marine gas oil"
+  },
+  "otherLines": "Other lines on the invoice (not compared)",
+  "otherLine": "{product}: {litres} litres",
+  "buyer": "Buyer as printed (display only, never checked): {name}",
+  "buyerTaxId": "Tax number {taxId}",
+  "sharedNote": "This invoice is split across {count} accounts",
+  "siblings": "Other packages of this invoice",
+  "sibling": "{account} · {company} · package {sequence}",
+  "noVisibleSiblings": "No other package of this invoice is open to you.",
+  "filePages": "File: {name}, pages {from}–{to}",
+  "filePage": "File: {name}, page {page}",
+  "unreadReasons": {
+    "no_text": "The PDF holds no text (a scan or a photo).",
+    "encrypted": "The PDF is protected by a password.",
+    "unreadable": "The file could not be read.",
+    "unreadable_row": "A row of the invoice could not be read together with its product.",
+    "limit_exceeded": "The file is beyond the reader's limits.",
+    "timed_out": "Reading the file took too long.",
+    "reader_busy": "Another invoice is being read: open the package again in a moment.",
+    "reader_unavailable": "The reader is not available in this environment.",
+    "unknown_series": "The invoice is not of a known series (OZK, DAU).",
+    "no_matching_invoice": "None of the attached files holds this package's invoice.",
+    "several_matching_invoices": "The attached files hold more than one invoice for this package.",
+    "tanker": "Tanker invoices are not read.",
+    "failed": "The assistant did not answer."
+  },
+  "split": {
+    "keptWhole": "This package already holds the whole PDF and keeps it.",
+    "attachedOne": "Split by invoice: attached to 1 package.",
+    "attachedMany": "Split by invoice: attached to {count} packages.",
+    "notAttached": "These invoices were not attached:",
+    "reasons": {
+      "no_eligible_batch": "no open package of yours bears this number",
+      "manual_attachment_required": "attach the PDF to its own package",
+      "unverified_part": "its pages could not be checked",
+      "attachment_failed": "attaching failed"
+    },
+    "failed": "Some packages could not receive their invoice: attach the same PDF again to finish."
+  }
+}

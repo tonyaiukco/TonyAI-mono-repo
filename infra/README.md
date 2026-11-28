@@ -124,6 +124,12 @@ the code with `release_secrets.py store --name registration-code`, which accepts
 only the shape the API accepts; `config.registration_secret_ready` grants the API
 identity Secrets User on that one secret. Without the block a release plans no
 change and registration stays off (runbook 03 §3.6).
+The evidence assistant's emergency switch and tolerance are an optional
+`release.evidence_assistant` block (`enabled`, `tolerance_percent`: 0 to 100, at most
+two decimals), plain values the API reads as `EVIDENCE_ASSISTANT` and
+`EVIDENCE_ASSISTANT_TOLERANCE_PERCENT`. Without it the API's defaults apply (on, 1%);
+`qa_autodeploy.py inputs` carries the live block into an exported manifest, and the
+readback holds the API to it (the tolerance by value; runbook 03 §3.7).
 The SMTP role has only the [three documented authentication actions](https://learn.microsoft.com/azure/communication-services/quickstarts/email/send-email-smtp/smtp-authentication)
 and is assignable and assigned only on the hosted Communication resource, never the
 subscription or group. Azure supports [resource-instance assignable scopes](https://learn.microsoft.com/azure/role-based-access-control/role-definitions#assignablescopes);

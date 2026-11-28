@@ -126,7 +126,7 @@ Infrastructure and runbooks: [`infra/README.md`](infra/README.md).
 
 #### Prerequisites
 
-- Node.js ≥ 22.12 and pnpm (`corepack enable` uses the pinned version)
+- Node.js ≥ 22.13 and pnpm (`corepack enable` uses the pinned version)
 - Docker Desktop, running
 - Supabase CLI with a qualified database image
   ([image gate](infra/runbooks/10-qa-clean-replacement.md#database-image-qualification-before-r2))
