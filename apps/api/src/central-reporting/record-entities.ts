@@ -71,7 +71,8 @@ export interface PeriodSlot {
 /**
  * Single entry, what is entered (§4.2, §5.3; design D5): refuses a record of
  * `party` when a record of the other party, not voided, exists for the same
- * company, category and period — whatever its facility or activity type, and
+ * company, category and an overlapping period (the same one, the year with any
+ * of its periods, a month with its quarter) — whatever its facility or activity type, and
  * whoever may read it (the answer names only the side and the request's own
  * values). `excludeId`: the record being edited. TA026 holds the same rule,
  * under its own lock, for every writer and for two writes racing.
@@ -90,8 +91,23 @@ export async function assertSingleEntryPeriod(
      WHERE r.subsidiary_id = ${slot.subsidiaryId}::uuid
        AND r.category = ${slot.category}
        AND r.reporting_year = ${slot.reportingYear}
-       AND r.reporting_period = ${slot.reportingPeriod}
-       AND r.period_value = ${slot.periodValue}
+       -- The same period or one that overlaps it, as TA026 judges it: the year
+       -- with any of its periods, a month with its quarter.
+       AND (
+             (r.reporting_period = ${slot.reportingPeriod} AND r.period_value = ${slot.periodValue})
+             OR r.reporting_period = 'annual'
+             OR ${slot.reportingPeriod} = 'annual'
+             OR (r.reporting_period = 'monthly' AND ${slot.reportingPeriod} = 'quarterly'
+                 AND CASE WHEN r.period_value IN ('January', 'February', 'March') THEN 'Q1'
+                        WHEN r.period_value IN ('April', 'May', 'June') THEN 'Q2'
+                        WHEN r.period_value IN ('July', 'August', 'September') THEN 'Q3'
+                        WHEN r.period_value IN ('October', 'November', 'December') THEN 'Q4' END = ${slot.periodValue})
+             OR (r.reporting_period = 'quarterly' AND ${slot.reportingPeriod} = 'monthly'
+                 AND CASE WHEN ${slot.periodValue}::text IN ('January', 'February', 'March') THEN 'Q1'
+                        WHEN ${slot.periodValue}::text IN ('April', 'May', 'June') THEN 'Q2'
+                        WHEN ${slot.periodValue}::text IN ('July', 'August', 'September') THEN 'Q3'
+                        WHEN ${slot.periodValue}::text IN ('October', 'November', 'December') THEN 'Q4' END = r.period_value)
+           )
        AND r.status::text <> 'voided'
        AND (${excludeId}::uuid IS NULL OR r.id <> ${excludeId}::uuid)
        AND CASE ${party}::text

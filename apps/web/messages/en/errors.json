@@ -184,7 +184,7 @@
     "geography_without_factors": "No emission factor set in this environment can price {geography}. Choose a geography the factor library covers.",
     "central_reporter_needs_main_entity": "A central reporter keeps exactly one main company outside the grant, and this change would leave them with none or several. Nothing was changed.",
     "single_entry_conflict": "These categories are already open to the company's own standard users, so they cannot also be opened to a central reporter. Nothing was changed.",
-    "single_entry_period_conflict": "The company's own users already entered {category} for {period} {year}, so a central reporter cannot enter it for this company in that period.",
+    "single_entry_period_conflict": "The company's own users already entered {category} for {period} {year}, or a period overlapping it, so a central reporter cannot enter it for this company in that period.",
     "fuel_file_source_required": "Choose the fuel file's source: Shell, Petrol Ofisi or tanker deliveries.",
     "fuel_file_usage_required": "Choose how the fuel in this file was used: on-road, off-road, or stationary or generator.",
     "fuel_file_declarations_incomplete": "The delivery on row {row} has no fuel, usage, year or month chosen. Every delivery to be stored needs all four. Nothing was stored.",
@@ -228,7 +228,7 @@
       "central_reporter": "These categories are already open to a central reporter at this company, so they cannot also be opened to its own standard users. Nothing was changed."
     },
     "single_entry_period_conflict": {
-      "central_reporter": "A central reporter already entered {category} for {period} {year} for this company, so its own users cannot enter it in that period."
+      "central_reporter": "A central reporter already entered {category} for {period} {year}, or a period overlapping it, for this company, so its own users cannot enter it in that period."
     }
   },
   "bulkOutcomes": {

@@ -82,7 +82,7 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     expect(request.user?.categoryGrants).toEqual({});
     // Never the organisation-wide query: the new super_admin is scoped.
     expect(prisma.subsidiary.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: ['sub-1', 'sub-3'] }, organisationId: 'org-1' } }),
+      expect.objectContaining({ where: { id: { in: ['sub-1', 'sub-3'] }, organisationId: 'org-1' }, orderBy: { id: 'asc' } }),
     );
   });
 
@@ -150,7 +150,7 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     await guard.canActivate(context);
     expect(prisma.subsidiary.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.subsidiary.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { organisationId: 'org-1' } }),
+      expect.objectContaining({ where: { organisationId: 'org-1' }, orderBy: { id: 'asc' } }),
     );
     expect(request.user?.accessibleSubsidiaryIds).toEqual(['s1', 's2']);
     expect(request.user?.categoryGrants).toEqual({});

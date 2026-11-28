@@ -70,7 +70,7 @@ export class SingleEntryPeriodConflictError extends ConflictException {
     super(
       errorBody(
         'single_entry_period_conflict',
-        `${side === 'company_users' ? "The company's own users" : 'A central reporter'} already entered ${period.category} for ${period.periodValue} ${period.reportingYear} at this company, so ${
+        `${side === 'company_users' ? "The company's own users" : 'A central reporter'} already entered ${period.category} for ${period.periodValue} ${period.reportingYear}, or a period overlapping it, at this company, so ${
           side === 'company_users' ? 'a central reporter' : 'its own users'
         } cannot enter it in that period.`,
         { side, category: period.category, year: period.reportingYear, period: period.periodValue },

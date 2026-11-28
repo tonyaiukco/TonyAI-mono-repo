@@ -44,14 +44,14 @@ describe('the period refusal in the reader\'s language', () => {
 
   it('on save, in English and Turkish, by its side', () => {
     expect(describeFor('en')(refusal).title).toBe(
-      "The company's own users already entered Mobile Combustion for March 2026, so a central reporter cannot enter it for this company in that period.",
+      "The company's own users already entered Mobile Combustion for March 2026, or a period overlapping it, so a central reporter cannot enter it for this company in that period.",
     );
     const tr = describeFor('tr')(refusal).title;
     expect(tr).toContain(MESSAGES.tr.categories['Mobile Combustion']);
     expect(tr).toContain('2026');
     expect(tr).not.toContain('{');
     const other = describeFor('en')(new ApiError('English', 409, 'single_entry_period_conflict', { ...params, side: 'central_reporter' })).title;
-    expect(other).toBe('A central reporter already entered Mobile Combustion for March 2026 for this company, so its own users cannot enter it in that period.');
+    expect(other).toBe('A central reporter already entered Mobile Combustion for March 2026, or a period overlapping it, for this company, so its own users cannot enter it in that period.');
   });
 
   it("in the bulk panel's row results: the same sentence from the row's params; any other row keeps the server's", () => {

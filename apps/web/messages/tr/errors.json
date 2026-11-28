@@ -184,7 +184,7 @@
     "geography_without_factors": "Bu ortamdaki hiçbir emisyon faktörü seti {geography} için hesaplama yapamıyor. Faktör kütüphanesinin kapsadığı bir coğrafya seçin.",
     "central_reporter_needs_main_entity": "Merkezi raportör, grant dışında tam olarak bir ana şirket tutar; bu değişiklik ona hiç ana şirket ya da birden fazla ana şirket bırakırdı. Hiçbir şey değiştirilmedi.",
     "single_entry_conflict": "Bu kategoriler zaten şirketin kendi standart kullanıcılarına açık, bu yüzden bir merkezi raportöre de açılamaz. Hiçbir şey değiştirilmedi.",
-    "single_entry_period_conflict": "Şirketin kendi kullanıcıları {period} {year} için {category} verisini zaten girdi, bu yüzden bir merkezi raportör bu dönemde bu şirket için bu kategoriyi giremez.",
+    "single_entry_period_conflict": "Şirketin kendi kullanıcıları {period} {year} ya da onunla örtüşen bir dönem için {category} verisini zaten girdi, bu yüzden bir merkezi raportör bu dönemde bu şirket için bu kategoriyi giremez.",
     "fuel_file_source_required": "Yakıt dosyasının kaynağını seçin: Shell, Petrol Ofisi ya da tanker teslimatları.",
     "fuel_file_usage_required": "Bu dosyadaki yakıtın kullanımını seçin: karayolu, arazi ya da sabit veya jeneratör.",
     "fuel_file_declarations_incomplete": "{row}. satırdaki teslimat için yakıt, kullanım, yıl veya ay seçilmemiş. Kaydedilecek her teslimat için dördü de seçilmelidir. Hiçbir şey kaydedilmedi.",
@@ -228,7 +228,7 @@
       "central_reporter": "Bu kategoriler bu şirkette zaten bir merkezi raportöre açık, bu yüzden şirketin kendi standart kullanıcılarına da açılamaz. Hiçbir şey değiştirilmedi."
     },
     "single_entry_period_conflict": {
-      "central_reporter": "Bir merkezi raportör {period} {year} için bu şirketin {category} verisini zaten girdi, bu yüzden şirketin kendi kullanıcıları bu dönemde bu kategoriyi giremez."
+      "central_reporter": "Bir merkezi raportör {period} {year} ya da onunla örtüşen bir dönem için bu şirketin {category} verisini zaten girdi, bu yüzden şirketin kendi kullanıcıları bu dönemde bu kategoriyi giremez."
     }
   },
   "bulkOutcomes": {

@@ -9,6 +9,8 @@ import { BulkUploadService } from '../../src/bulk-upload/bulk-upload.service';
 import type { StorageService } from '../../src/storage/storage.service';
 import { lifecycleServices, storageStub } from './services';
 import { AccessAdminService } from '../../src/auth/access-admin.service';
+import { SingleEntryPeriodConflictError } from '../../src/central-reporting/central-reporting-errors';
+import { assertSingleEntryPeriod } from '../../src/central-reporting/record-entities';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
   addMember,
@@ -445,6 +447,117 @@ describe('TA026: one party enters a category for a company in a period (task 2.8
         status: ActivityRecordStatus.draft,
       },
     }))).state).toBe('TA026');
+  });
+
+  // Overlapping periods (INC-2.6 §4.2; review of WP10, 2026-11-28): a month
+  // and its quarter, and the year with any of its periods, are one period for
+  // single entry — two parties never both count it.
+  it("refuses the other party's quarter over a month, a month inside a quarter, and the year over either", async () => {
+    await setOwnCategories(['Electricity', 'Water']);
+    const { own, reporter } = await parties();
+    const second = await site('Int-test second site');
+    await record(own, { periodValue: 'February' });
+    await setOwnCategories(['Water']);
+    await runtime.userSubsidiaryAccess.update({ where: { userId_subsidiaryId: { userId: reporter, subsidiaryId: S() } }, data: { categories: ['Electricity'] } });
+    for (const [reportingPeriod, periodValue] of [['quarterly', 'Q1'], ['annual', 'Annual']] as const) {
+      const r = await refused(record(reporter, { reportingPeriod, periodValue, locationId: second }));
+      expect(r.state, `${reportingPeriod} ${periodValue}`).toBe('TA026');
+      expect(r.message).toContain('side=company_users');
+    }
+    // Another quarter does not overlap February: it is the reporter's.
+    await record(reporter, { reportingPeriod: 'quarterly', periodValue: 'Q2', locationId: second });
+    // And back: the reporter's Q2 closes its months, and the year, to the company's own users.
+    await runtime.userSubsidiaryAccess.update({ where: { userId_subsidiaryId: { userId: reporter, subsidiaryId: S() } }, data: { categories: ['Fuel'] } });
+    await setOwnCategories(['Electricity', 'Water']);
+    for (const [reportingPeriod, periodValue] of [['monthly', 'May'], ['annual', 'Annual']] as const) {
+      const r = await refused(record(own, { reportingPeriod, periodValue }));
+      expect(r.state, `${reportingPeriod} ${periodValue}`).toBe('TA026');
+      expect(r.message).toContain('side=central_reporter');
+    }
+    await record(own, { reportingPeriod: 'monthly', periodValue: 'July' });
+  });
+
+  for (const order of ['month first', 'quarter first'] as const) {
+    it(`stores exactly one of two parties' records racing for a month and its quarter (${order})`, async () => {
+      await setOwnCategories(['Water']);
+      const reporter = await reporterAt(['Electricity']);
+      const second = await site('Int-test second site');
+      const input = (createdBy: string, locationId: string | null, reportingPeriod: string, periodValue: string): Prisma.ActivityRecordUncheckedCreateInput => ({
+        subsidiaryId: S(), locationId, reportingYear: 2026, reportingPeriod, periodValue, category: 'Electricity',
+        scope: 2, activityValue: 100, activityUnit: 'kWh', calculation: { tCo2e: 0, factorId: 'int-test-placeholder' },
+        createdBy, status: ActivityRecordStatus.draft,
+      });
+      const month = (tx: Prisma.TransactionClient) => tx.activityRecord.create({ data: input(tenant.users.standardUser.id, null, 'monthly', 'May') });
+      const quarter = (tx: Prisma.TransactionClient) => tx.activityRecord.create({ data: input(reporter, second, 'quarterly', 'Q2') });
+      const [first, secondResult] = order === 'month first' ? await race(month, quarter) : await race(quarter, month);
+      expect(stateOf(first)).toBe('ok');
+      expect(stateOf(secondResult)).toBe('TA026');
+      expect(await owner.activityRecord.count({ where: { subsidiaryId: S(), category: 'Electricity', reportingYear: 2026 } })).toBe(1);
+    });
+  }
+
+  it('judges every pair of the 17 periods alike in the trigger and in the API check (the overlap matrix)', async () => {
+    const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4'];
+    type Period = { reportingPeriod: 'monthly' | 'quarterly' | 'annual'; periodValue: string };
+    const ALL: Period[] = [
+      ...MONTHS.map((periodValue) => ({ reportingPeriod: 'monthly' as const, periodValue })),
+      ...QUARTERS.map((periodValue) => ({ reportingPeriod: 'quarterly' as const, periodValue })),
+      { reportingPeriod: 'annual', periodValue: 'Annual' },
+    ];
+    // The months a period covers: overlap is a shared month (the ground truth, written apart from the predicate).
+    const months = (p: Period) => p.reportingPeriod === 'annual' ? MONTHS
+      : p.reportingPeriod === 'quarterly' ? MONTHS.slice(QUARTERS.indexOf(p.periodValue) * 3, QUARTERS.indexOf(p.periodValue) * 3 + 3)
+      : [p.periodValue];
+    const overlaps = (a: Period, b: Period) => months(a).some((m) => months(b).includes(m));
+
+    // The company's own user stores each period in a year of its own.
+    await setOwnCategories(['Electricity', 'Water']);
+    const { own, reporter } = await parties();
+    const yearOf = (i: number) => 2030 + i;
+    for (const [i, p] of ALL.entries()) await record(own, { reportingYear: yearOf(i), ...p });
+    await setOwnCategories(['Water']);
+    await runtime.userSubsidiaryAccess.update({ where: { userId_subsidiaryId: { userId: reporter, subsidiaryId: S() } }, data: { categories: ['Electricity'] } });
+    const second = await site('Int-test second site');
+
+    // A write the trigger judges, always rolled back: 'ok' or its SQLSTATE.
+    const ROLLBACK = new Error('rollback');
+    const trial = async (data: Partial<Prisma.ActivityRecordUncheckedCreateInput>) => {
+      try {
+        await runtime.$transaction(async (tx) => {
+          await tx.activityRecord.create({ data: { subsidiaryId: S(), locationId: second, category: 'Electricity', scope: 2, activityValue: 1, activityUnit: 'kWh', calculation: { tCo2e: 0 }, createdBy: reporter, status: ActivityRecordStatus.draft, ...data } as Prisma.ActivityRecordUncheckedCreateInput });
+          throw ROLLBACK;
+        });
+      } catch (e) {
+        return e === ROLLBACK ? 'ok' : sqlstate(e);
+      }
+      return 'ok';
+    };
+    const mismatches: string[] = [];
+    for (const [i, stored] of ALL.entries()) {
+      for (const asked of ALL) {
+        const expected = overlaps(stored, asked) ? 'refused' : 'ok';
+        const api = await assertSingleEntryPeriod(runtime, 'central_reporter', { subsidiaryId: S(), category: 'Electricity', reportingYear: yearOf(i), ...asked })
+          .then(() => 'ok', (e: unknown) => (e instanceof SingleEntryPeriodConflictError ? 'refused' : String(e)));
+        const db = await trial({ reportingYear: yearOf(i), ...asked });
+        const dbAnswer = db === 'TA026' ? 'refused' : db;
+        if (api !== expected || dbAnswer !== expected) mismatches.push(`${stored.periodValue} vs ${asked.periodValue}: expected ${expected}, API ${api}, trigger ${dbAnswer}`);
+      }
+    }
+    expect(mismatches).toEqual([]);
+    expect(await owner.activityRecord.count({ where: { createdBy: reporter } })).toBe(0);
+  }, 120_000);
+
+  it("the API's own check refuses an overlapping period before the database does", async () => {
+    await setOwnCategories(['Electricity', 'Water']);
+    const { own } = await parties();
+    await record(own, { periodValue: 'November' });
+    const slot = { subsidiaryId: S(), category: 'Electricity', reportingYear: 2026 };
+    for (const [reportingPeriod, periodValue] of [['quarterly', 'Q4'], ['annual', 'Annual'], ['monthly', 'November']] as const) {
+      await expect(assertSingleEntryPeriod(runtime, 'central_reporter', { ...slot, reportingPeriod, periodValue })).rejects.toBeInstanceOf(SingleEntryPeriodConflictError);
+    }
+    await expect(assertSingleEntryPeriod(runtime, 'central_reporter', { ...slot, reportingPeriod: 'quarterly', periodValue: 'Q3' })).resolves.toBeUndefined();
+    await expect(assertSingleEntryPeriod(runtime, 'central_reporter', { ...slot, reportingYear: 2025, reportingPeriod: 'annual', periodValue: 'Annual' })).resolves.toBeUndefined();
   });
 });
 
