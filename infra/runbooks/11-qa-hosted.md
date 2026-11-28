@@ -847,6 +847,29 @@ Runbook 05's order, with these hosted specifics. Run from a clean checkout at th
    cannot pass as a refusal. Confirm that nothing references the old version, disable it, then
    `gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`.
 
+### Single entry over overlapping periods: the pre-pilot read
+
+Migration `20261128200000_single_entry_overlapping_periods` makes single entry
+(INC-2.6 §4.2) treat overlapping periods as one, but it judges a record only when
+it is entered or its identity moves — never on a status step — so a pair stored
+before it (a company user's month and a central reporter's quarter or year of the
+same company and category) can still be submitted and approved, and an approved
+pair counts twice. Read hosted QA once, after the deploy that carries the
+migration and before the pilot's acceptance. Read-only, no switches:
+
+```bash
+az containerapp exec -g tonyai-qatmp-apps -n tonyaiqt-staging-api --command "node /app/apps/api/dist/central-reporting/single-entry-overlaps.cli.js"
+```
+
+From a shell with no TTY, wrap it as for any `containerapp exec`
+(`script -q /dev/null … < /dev/null`). The answer is JSON. `"pairs": 0` (exit 0)
+is the acceptance evidence: record the count, the revision and the time. Each pair
+it names (exit 2) is settled with the owner through the record lifecycle, never in
+the database: a draft or a returned record is corrected or deleted by its author,
+a submitted one returned, an approved one voided with a reason — whichever of the
+two parties should not have entered the period — and the read is run again until it
+answers 0.
+
 ### Switching the evidence assistant off on hosted QA
 
 Runbook 03 §3.7 is the whole procedure; QA has no specifics beyond it. The assistant
