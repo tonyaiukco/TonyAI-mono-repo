@@ -323,3 +323,59 @@ describe('readInvoices: the re-review’s cases (qa-auditor re-review of PR B)',
     expect(result.pageOwner).toEqual(['OZK0000000000001', null]);
   });
 });
+
+describe('readInvoices: the pre-merge review’s cases (review of PR B)', () => {
+  it('sees a second invoice number printed on the same baseline, and neither reads nor routes the page (P1)', () => {
+    const sideBySide = page({ no: 'OZK0000000000001', extra: [item('Fatura No:', 320, 750), item('OZK0000000000002', 390, 750)] });
+    const result = readInvoices([sideBySide, page({ no: 'OZK0000000000003' })]);
+    expect(result.pageOwner).toEqual([null, 'OZK0000000000003']);
+    expect(result.routable).toBe(false);
+    expect(result.invoices.filter((i) => i.unreadReason === 'unreadable').map((i) => i.invoiceNo).sort()).toEqual([
+      'OZK0000000000001', 'OZK0000000000002',
+    ]);
+    // A part cut from such a page fails its read-back: it holds two numbers.
+    expect(readInvoices([sideBySide]).invoices).toHaveLength(2);
+  });
+
+  it('leaves the invoice unread when a fuel row has an empty quantity cell', () => {
+    expect(one({ rows: [['Motorin Med', '100,00'], ['Motorin Med', null, '4.210,00']] })).toMatchObject({ unreadReason: 'unreadable_row', lines: [] });
+  });
+
+  it('leaves it unread when a product row prices an amount but prints no litres', () => {
+    expect(one({ rows: [['Motorin Med', '100,00'], ['Teslimat bedeli', null, '250,00']] })).toMatchObject({ unreadReason: 'unreadable_row' });
+  });
+
+  it('still reads a table whose wrapped product text carries no fuel and no figure', () => {
+    expect(one({ rows: [['Motorin Med', '100,00'], ['(Kükürtsüz)', null]] })).toMatchObject({ unreadReason: null, lines: [{ litres: '100.00' }] });
+  });
+
+  it('leaves an invoice unread, and the document unsplit, when its page marks show a missing page', () => {
+    const result = readInvoices([
+      page({ no: 'OZK0000000000001', rows: [['Motorin Med', '10,00']], total: false, mark: 'Sayfa 1/2' }),
+      page({ no: 'OZK0000000000002', mark: 'Sayfa 1/1' }),
+    ]);
+    expect(result.invoices[0]).toMatchObject({ invoiceNo: 'OZK0000000000001', unreadReason: 'unreadable', lines: [] });
+    expect(result.invoices[1]).toMatchObject({ unreadReason: null });
+    expect(result.routable).toBe(false);
+    expect(one({ rows: [['Motorin Med', '10,00']], mark: 'Sayfa 1/2' })).toMatchObject({ unreadReason: 'unreadable' });
+  });
+
+  it('leaves it unread when one page of the invoice has a mark and another has none', () => {
+    const result = readInvoices([
+      page({ no: 'OZK0000000000001', rows: [['Motorin Med', '10,00']], total: false, mark: 'Sayfa 1/2' }),
+      page({ no: 'OZK0000000000001', rows: [['Motorin Med', '5,00']] }),
+    ]);
+    expect(result.invoices[0]).toMatchObject({ unreadReason: 'unreadable' });
+  });
+
+  it('reads a complete 1/1 and a complete 1/2, 2/2', () => {
+    expect(one({ rows: [['Motorin Med', '10,00']], mark: 'Sayfa 1/1' })).toMatchObject({ unreadReason: null });
+    const result = readInvoices([
+      page({ no: 'OZK0000000000001', rows: [['Motorin Med', '10,00']], total: false, mark: 'Sayfa 1/2' }),
+      page({ no: 'OZK0000000000001', rows: [['Motorin Med', '5,00']], mark: 'Sayfa 2/2' }),
+      page({ no: 'OZK0000000000002', mark: 'Sayfa 1/1' }),
+    ]);
+    expect(result.invoices[0]).toMatchObject({ unreadReason: null, lines: [{ litres: '15.00' }] });
+    expect(result.routable).toBe(true);
+  });
+});

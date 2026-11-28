@@ -179,6 +179,8 @@ test('in the review queue: the shared invoice is consistent with its note, and t
   const sheet = await openInQueue(page, batches.shared, 'OZK0000000000001');
   await expect(sheet.getByRole('button', { name: enFuel.batches.approve, exact: true })).toBeVisible();
   await expect(sheet.getByTestId('evidence-assistant')).toContainText(enAssistant.loading);
+  // While it waits, the panel points to the manual check.
+  await expect(sheet.getByTestId('evidence-assistant')).toContainText(enAssistant.manualCheck);
   release();
   const panel = sheet.getByTestId('evidence-assistant');
   await expect(panel.getByTestId('evidence-assistant-line-diesel')).toContainText('Invoice: 312.8 L diesel (OZK…001, 01–15.03) | Package: 312.8 L');

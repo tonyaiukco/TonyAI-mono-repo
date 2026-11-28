@@ -26,7 +26,7 @@
   "sharedNote": "Bu fatura {count} hesap arasında bölünmüş",
   "siblings": "Bu faturanın diğer paketleri",
   "sibling": "{account} · {company} · {sequence}. paket",
-  "noVisibleSiblings": "Bu faturanın diğer paketleri erişiminizde değil.",
+  "noVisibleSiblings": "Bu faturanın açabileceğiniz başka paketi yok.",
   "filePages": "Dosya: {name}, sayfa {from}–{to}",
   "filePage": "Dosya: {name}, sayfa {page}",
   "unreadReasons": {

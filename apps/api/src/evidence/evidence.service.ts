@@ -623,10 +623,12 @@ export class EvidenceService {
    * `store()` with a batch upload's extras (inc29-evidence-assistant, D4, D5):
    * the file's first reading, inserted in the same transaction so a file and
    * its reading commit together; a part's source (the uploaded PDF's digest and
-   * pages); and, for a part, idempotence — a batch already holding a file with
-   * the same source and pages gains nothing (checked before the upload, and
-   * again under the batch lock, where a concurrent attach of the same split is
-   * decided), and the staged object goes.
+   * pages); and idempotence per uploaded PDF on a batch — a batch already
+   * holding the same part, or the uploaded PDF itself whole, gains no part of
+   * it, and one holding a part cut from a PDF gains no whole copy of it (one
+   * upload split while an identical one found the reader busy; review of PR B,
+   * P2). It is checked before the upload, and again under the batch lock,
+   * where a concurrent attach is decided; the staged object goes.
    */
   private async storeFile(
     user: RequestUser,
@@ -637,15 +639,19 @@ export class EvidenceService {
   ): Promise<{ dto: EvidenceDTO; reused: boolean }> {
     const fuelBatchId = extra.fuelBatchId ?? null;
     const subsidiaryId = records[0].subsidiaryId;
-    const sameSource = extra.source
+    const onRecords = { links: { some: { activityRecordId: { in: records.map((r) => r.id) } } } };
+    const sameSource: Prisma.EvidenceWhereInput | null = extra.source
       ? {
           subsidiaryId,
-          sourceSha256: extra.source.sha256,
-          sourcePageFrom: extra.source.pageFrom,
-          sourcePageTo: extra.source.pageTo,
-          links: { some: { activityRecordId: { in: records.map((r) => r.id) } } },
+          ...onRecords,
+          OR: [
+            { sourceSha256: extra.source.sha256, sourcePageFrom: extra.source.pageFrom, sourcePageTo: extra.source.pageTo },
+            { sha256: extra.source.sha256, sourceSha256: null },
+          ],
         }
-      : null;
+      : fuelBatchId !== null
+        ? { subsidiaryId, ...onRecords, sourceSha256: checked.sha256 }
+        : null;
     if (sameSource) {
       const existing = await this.prisma.evidence.findFirst({ where: sameSource, include: WITH_LINKED_RECORDS });
       if (existing) return { dto: this.toDTO(existing), reused: true };

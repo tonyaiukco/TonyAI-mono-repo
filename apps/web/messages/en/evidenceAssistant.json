@@ -26,7 +26,7 @@
   "sharedNote": "This invoice is split across {count} accounts",
   "siblings": "Other packages of this invoice",
   "sibling": "{account} · {company} · package {sequence}",
-  "noVisibleSiblings": "The other packages of this invoice are not in your access.",
+  "noVisibleSiblings": "No other package of this invoice is open to you.",
   "filePages": "File: {name}, pages {from}–{to}",
   "filePage": "File: {name}, page {page}",
   "unreadReasons": {

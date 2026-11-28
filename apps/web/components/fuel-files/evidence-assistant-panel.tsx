@@ -75,7 +75,13 @@ export function EvidenceAssistantPanel({
 function Body({ answer, copy, onOpenBatch }: { answer: Answer; copy: { t: (key: AssistantKey, values?: Record<string, string | number>) => string; locale: Locale }; onOpenBatch?: (id: string) => void }) {
   const t = useTranslations("evidenceAssistant");
   if (answer.kind === "loading") {
-    return <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("loading")}</p>;
+    // While it reads, the reviewer is pointed to the manual check, as for any unread answer (D7).
+    return (
+      <div className="space-y-1">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("loading")}</p>
+        <p className="text-sm font-medium">{t("manualCheck")}</p>
+      </div>
+    );
   }
   if (answer.kind === "failed" || !answer.dto.enabled || answer.dto.unread) {
     const reason = answer.kind === "failed" || !answer.dto.enabled ? "failed" : answer.dto.unread!.reason;

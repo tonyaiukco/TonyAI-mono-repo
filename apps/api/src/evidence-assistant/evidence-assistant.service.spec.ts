@@ -136,3 +136,53 @@ describe('Petrol Ofisi neighbours and the reading store (qa-auditor review of PR
     }));
   });
 });
+
+describe('the pre-merge review’s cases (review of PR B)', () => {
+  const shellBatch = { ...batch, source: 'shell', invoiceRef: '2025-03-1' };
+  const dau = {
+    invoiceNo: 'DAU0000000000244', series: 'DAU', periodText: '01.03.2025 - 15.03.2025', periodFrom: '2025-03-01', periodTo: '2025-03-15',
+    buyerName: null, buyerTaxId: null, pageFrom: 1, pageTo: 1, unreadReason: null, lines: [{ product: 'Motorin Med', fuel: 'diesel', litres: '10.00' }],
+  };
+  const readFile = { id: 'f1', fileName: 'a.pdf', mimeType: 'application/pdf', storagePath: 'p1', sourceSha256: null, sourcePageFrom: null, sourcePageTo: null, readings: [{ status: 'read', pageCount: 1, invoices: [dau] }] };
+  const pendingFile = { id: 'f2', fileName: 'b.pdf', mimeType: 'application/pdf', storagePath: 'p2', sourceSha256: null, sourcePageFrom: null, sourcePageTo: null, readings: [] };
+
+  it('answers no comparison while a PDF of the package is still unread: it may hold a second invoice of the half-month', async () => {
+    const { svc } = service({ batch: shellBatch, files: [readFile, pendingFile] });
+    expect(await svc.forBatch(superAdmin, batch.id)).toEqual({ enabled: true, tolerancePercent: 1, unread: { reason: 'reader_busy' } });
+  });
+
+  const withSession = (remaining: () => number) => vi.fn(async (_ms: number, fn: (s: unknown) => Promise<unknown>) => fn({
+    remainingMs: remaining,
+    text: vi.fn(async () => ({ kind: 'transient', reason: 'timed_out' })),
+  }));
+
+  it('starts no download once the request’s budget is spent', async () => {
+    const { svc, reader, storage } = service({ batch: shellBatch, files: [pendingFile, { ...pendingFile, id: 'f3', storagePath: 'p3' }] });
+    (reader as unknown as { withSession: unknown }).withSession = withSession(() => 0);
+    expect(await svc.forBatch(superAdmin, batch.id)).toMatchObject({ unread: { reason: 'timed_out' } });
+    expect(storage.download).not.toHaveBeenCalled();
+  });
+
+  it('cuts a download under way at the budget, aborting it, and releases the reader', async () => {
+    const { svc, reader, storage } = service({ batch: shellBatch, files: [pendingFile] });
+    (reader as unknown as { withSession: unknown }).withSession = withSession(() => 30);
+    let signal: AbortSignal | undefined;
+    (storage.download as unknown as ReturnType<typeof vi.fn>).mockImplementation((_b: string, _p: string, s?: AbortSignal) => {
+      signal = s;
+      return new Promise(() => undefined);
+    });
+    const started = Date.now();
+    expect(await svc.forBatch(superAdmin, batch.id)).toMatchObject({ unread: { reason: 'timed_out' } });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('matches the invoice number without regard to case when listing the invoice’s other batches', async () => {
+    const { svc, prisma } = service({});
+    await (svc as unknown as { siblings(u: RequestUser, b: string, i: object): Promise<unknown> })
+      .siblings(superAdmin, batch.id, { organisationId: batch.organisationId, source: 'petrol_ofisi', invoiceRef: 'ozk0000000000001', fuelAccountId: null });
+    expect(prisma.fuelBatch.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { AND: [fuelBatchScopeWhere(superAdmin), expect.objectContaining({ invoiceRef: { equals: 'ozk0000000000001', mode: 'insensitive' } })] },
+    }));
+  });
+});

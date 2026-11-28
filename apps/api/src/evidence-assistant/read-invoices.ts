@@ -56,8 +56,8 @@ export interface ReadInvoicesResult {
   pageOwner: (string | null)[];
   /**
    * Whether the document may be split and its parts routed: two or more
-   * invoices, every page owned, each invoice's pages contiguous, no unknown or
-   * ambiguous invoice header (D2).
+   * invoices, every page owned, each invoice's pages contiguous and, where it
+   * prints page marks, complete, no unknown or ambiguous invoice header (D2).
    */
   routable: boolean;
 }
@@ -181,6 +181,8 @@ function words(row: Row): Array<{ from: number; to: number; x: number }> {
   return out;
 }
 
+const INVOICE_LABEL = new RegExp(LABELS.invoiceNo.source, `${LABELS.invoiceNo.flags.replace('g', '')}g`);
+
 function pageFacts(page: ReaderPage): PageFacts {
   const rows = rowsOf(page);
   const numbers: string[] = [];
@@ -189,8 +191,11 @@ function pageFacts(page: ReaderPage): PageFacts {
   let header: PageFacts['header'] = null;
   let headers = 0;
   for (const row of rows) {
-    const at = after(row, LABELS.invoiceNo);
-    if (at >= 0) {
+    // Every `Fatura No` of the row, not only the first: two invoices printed
+    // side by side share a baseline, and a page printing two numbers is no
+    // single invoice's (review of PR B, P1).
+    for (const match of row.folded.matchAll(INVOICE_LABEL)) {
+      const at = match.index + match[0].length;
       const token = slice(row, at).split(' ')[0] ?? '';
       const upper = token.replace(/[:.]$/, '');
       if (INVOICE_NUMBER.test(upper)) {
@@ -305,12 +310,19 @@ function readFigures(pages: PageFacts[]): Figures {
         ended = true;
         continue;
       }
-      if (qty === '') continue;
       // Past a total, only a row shaped like a fuel row (a product and a
       // number) says the table went on; a footer's `Yalnız`, IBAN or tax line
       // does not (qa-auditor re-review, P2).
       if (ended) {
-        if (product !== '' && readQuantity({ column: 0, kind: 'text', value: qty }) !== null) return { unread: 'unreadable_row' };
+        if (qty !== '' && product !== '' && readQuantity({ column: 0, kind: 'text', value: qty }) !== null) return { unread: 'unreadable_row' };
+        continue;
+      }
+      if (qty === '') {
+        // A product row whose quantity cell is empty — a fuel's name, or a
+        // figure right of the column — is a row whose litres were not read:
+        // the invoice is not read rather than read short (review of PR B, P2).
+        const priced = words(row).some((w) => w.x >= header.right && readQuantity({ column: 0, kind: 'text', value: slice(row, w.from, w.to) }) !== null);
+        if (product !== '' && (recogniseFuel(product) !== null || priced)) return { unread: 'unreadable_row' };
         continue;
       }
       // A quantity whose product is not on its own row: never borrowed from a neighbour.
@@ -340,6 +352,19 @@ function readFigures(pages: PageFacts[]): Figures {
   }
   for (const entry of others.values()) lines.push({ product: entry.product, fuel: null, litres: sumDecimals(entry.litres) });
   return { lines };
+}
+
+/**
+ * Whether the invoice's printed page marks say a page of it is not here: a
+ * page of it without a mark when another has one, a count that is not the
+ * number of its pages, or marks not `1/n` to `n/n` in order. An invoice that
+ * prints no mark at all is not checked (review of PR B, P2).
+ */
+function sequenceBroken(facts: PageFacts[], own: number[]): boolean {
+  const marks = own.map((i) => facts[i]!.pageMark);
+  if (marks.every((m) => m === null)) return false;
+  const n = marks[0]?.n;
+  return own.length !== n || marks.some((m, j) => m === null || m.n !== n || m.k !== j + 1);
 }
 
 /**
@@ -414,6 +439,7 @@ export function readInvoices(pages: ReaderPage[]): ReadInvoicesResult {
   }));
 
   let contiguous = true;
+  let complete = true;
   const invoices: ReadInvoice[] = order.map((invoiceNo) => {
     const own = pagesOf.get(invoiceNo)!;
     const isContiguous = own.length > 0 && own[own.length - 1]! - own[0]! === own.length - 1;
@@ -423,6 +449,8 @@ export function readInvoices(pages: ReaderPage[]): ReadInvoicesResult {
     const next = own.length > 0 ? own[own.length - 1]! + 1 : -1;
     const spill = next >= 0 && next < facts.length && pageOwner[next] === null && mayHoldRows(facts, own, next);
     if (!isContiguous) contiguous = false;
+    const broken = own.length > 0 && sequenceBroken(facts, own);
+    if (broken) complete = false;
     const series = invoiceNo.slice(0, 3);
     const base = {
       invoiceNo,
@@ -432,14 +460,14 @@ export function readInvoices(pages: ReaderPage[]): ReadInvoicesResult {
     };
     const details = readDetails(own.map((i) => facts[i]!));
     if (!isInvoiceSeries(series)) return { ...base, ...details, unreadReason: 'unknown_series', lines: [] };
-    if (!isContiguous || onAmbiguousPage || spill) return { ...base, ...details, unreadReason: 'unreadable', lines: [] };
+    if (!isContiguous || onAmbiguousPage || spill || broken) return { ...base, ...details, unreadReason: 'unreadable', lines: [] };
     const figures = readFigures(own.map((i) => facts[i]!));
     if ('unread' in figures) return { ...base, ...details, unreadReason: figures.unread, lines: [] };
     return { ...base, ...details, unreadReason: null, lines: figures.lines };
   });
 
   const routable =
-    invoices.length >= 2 && !ambiguous && contiguous && pageOwner.every((o) => o !== null) &&
+    invoices.length >= 2 && !ambiguous && contiguous && complete && pageOwner.every((o) => o !== null) &&
     invoices.every((inv) => isInvoiceSeries(inv.series));
   return { invoices, pageOwner, routable };
 }

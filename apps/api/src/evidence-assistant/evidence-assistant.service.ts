@@ -87,12 +87,16 @@ export class EvidenceAssistantService {
     const files = await this.packageFiles(batch.id);
     if (files.length === 0) return unread('no_evidence');
     const transient = await this.readUnreadFiles(user, batch.id, files);
+    // A PDF of the package still unread may hold another invoice of it, and so
+    // turn one match into several: no answer from the others meanwhile
+    // (review of PR B, P2).
+    if (transient) return unread(transient);
 
     const found: Array<{ invoice: ReadInvoice; file: PackageFile }> = [];
     for (const file of files) for (const invoice of file.reading?.invoices ?? []) found.push({ invoice, file });
     const matches = packageInvoices(batch, found.map((f) => f.invoice));
     if (matches.length > 1) return unread('several_matching_invoices');
-    if (matches.length === 0) return unread(transient ?? this.noMatchReason(files));
+    if (matches.length === 0) return unread(this.noMatchReason(files));
     const match = found.find((f) => f.invoice === matches[0])!;
     if (match.invoice.unreadReason) return unread(match.invoice.unreadReason);
 
@@ -160,7 +164,14 @@ export class EvidenceAssistantService {
     try {
       const outcome = await this.runtime.reader.withSession(READER_LIMITS.requestMs, async (session) => {
         for (const file of pending) {
-          const reading = await this.readOne(session, file);
+          // The request's one budget bounds the downloads too: none is
+          // started past it, and one under way is cut at it (review of PR B, P2).
+          const left = session.remainingMs();
+          if (left <= 0) {
+            transient ??= 'timed_out';
+            break;
+          }
+          const reading = await this.readOne(session, file, left);
           if ('transient' in reading) {
             transient ??= reading.transient;
             continue;
@@ -176,12 +187,31 @@ export class EvidenceAssistantService {
     return transient;
   }
 
-  private async readOne(session: ReaderSession, file: PackageFile): Promise<ReadingRow | { transient: TransientReason }> {
-    const bytes = await this.storage.download(EVIDENCE_BUCKET, file.storagePath);
+  private async readOne(session: ReaderSession, file: PackageFile, budgetMs: number): Promise<ReadingRow | { transient: TransientReason }> {
+    const bytes = await this.downloadWithin(file.storagePath, budgetMs);
+    if (bytes === null) return { transient: 'timed_out' };
     const text = await session.text(bytes);
     if (text.kind === 'transient') return { transient: text.reason };
     if (text.kind === 'unread') return readingRow(text.status, text.pageCount);
     return readingRow('read', text.pageCount, readInvoices(text.pages).invoices);
+  }
+
+  /** The file's bytes, or null once `budgetMs` has passed (the download is aborted). */
+  private async downloadWithin(storagePath: string, budgetMs: number): Promise<Buffer | null> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), budgetMs);
+    const download = this.storage.download(EVIDENCE_BUCKET, storagePath, controller.signal);
+    // Settled after the race is lost: never an unhandled rejection.
+    download.catch(() => undefined);
+    const aborted = new Promise<null>((resolve) => controller.signal.addEventListener('abort', () => resolve(null), { once: true }));
+    try {
+      return await Promise.race([download, aborted]);
+    } catch (error) {
+      if (controller.signal.aborted) return null;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -261,10 +291,15 @@ export class EvidenceAssistantService {
     return toLitres(rows);
   }
 
+  /**
+   * An invoice number is matched without regard to case everywhere it keys
+   * the invoice — routing a part, totalling the invoice, listing its batches
+   * — so the three never disagree (review of PR B, P2).
+   */
   private identityWhere(identity: InvoiceIdentity): Prisma.Sql {
     return identity.fuelAccountId
-      ? Prisma.sql`fuel_account_id = ${identity.fuelAccountId}::uuid AND invoice_ref = ${identity.invoiceRef}`
-      : Prisma.sql`organisation_id = ${identity.organisationId}::uuid AND source = ${identity.source} AND invoice_ref = ${identity.invoiceRef}`;
+      ? Prisma.sql`fuel_account_id = ${identity.fuelAccountId}::uuid AND upper(invoice_ref) = upper(${identity.invoiceRef})`
+      : Prisma.sql`organisation_id = ${identity.organisationId}::uuid AND source = ${identity.source} AND upper(invoice_ref) = upper(${identity.invoiceRef})`;
   }
 
   /**
@@ -296,7 +331,7 @@ export class EvidenceAssistantService {
             id: { not: fuelBatchId },
             organisationId: identity.organisationId,
             source: identity.source,
-            invoiceRef: identity.invoiceRef,
+            invoiceRef: { equals: identity.invoiceRef, mode: 'insensitive' },
             status: { not: 'withdrawn' },
             ...(identity.fuelAccountId ? { fuelAccountId: identity.fuelAccountId } : {}),
           },
@@ -328,7 +363,7 @@ export class EvidenceAssistantService {
     const out: Litres[] = [];
     for (const ref of refs) {
       const neighbour = await this.prisma.fuelBatch.findMany({
-        where: { AND: [fuelBatchScopeWhere(user), { fuelAccountId: batch.fuelAccountId, invoiceRef: ref, status: { not: 'withdrawn' } }] },
+        where: { AND: [fuelBatchScopeWhere(user), { fuelAccountId: batch.fuelAccountId, invoiceRef: { equals: ref, mode: 'insensitive' }, status: { not: 'withdrawn' } }] },
         orderBy: { id: 'asc' },
       });
       if (neighbour.length === 0) continue;
@@ -346,10 +381,10 @@ export class EvidenceAssistantService {
   private async petrolOfisiNeighbours(fuelAccountId: string, invoiceRef: string): Promise<string[]> {
     const states = [...FUEL_INVOICE_ROW_STATES];
     const invoices = await this.prisma.$queryRaw<Array<{ invoice_ref: string; first: Date | null }>>`
-      SELECT invoice_ref, min(transaction_at) AS first FROM fuel_rows
+      SELECT upper(invoice_ref) AS invoice_ref, min(transaction_at) AS first FROM fuel_rows
       WHERE fuel_account_id = ${fuelAccountId}::uuid AND state = ANY(${states}::text[])
-      GROUP BY invoice_ref ORDER BY min(transaction_at) ASC NULLS LAST, invoice_ref ASC`;
-    const at = invoices.findIndex((i) => i.invoice_ref === invoiceRef);
+      GROUP BY upper(invoice_ref) ORDER BY min(transaction_at) ASC NULLS LAST, upper(invoice_ref) ASC`;
+    const at = invoices.findIndex((i) => i.invoice_ref === invoiceRef.toUpperCase());
     const mine = invoices[at];
     // An order that a tie decides is no order (D6: skip ambiguous ordering).
     const tied = (first: Date) => invoices.filter((i) => i.first?.getTime() === first.getTime()).length > 1;

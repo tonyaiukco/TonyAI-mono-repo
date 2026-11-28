@@ -428,4 +428,68 @@ describe('sending the other invoices to their own packages (task 7.3)', () => {
     for (const path of written) expect(kept.has(path) || removed.has(path), path).toBe(true);
     expect(await owner.storageIntent.count({ where: { kind: 'upload', objectPath: { in: written } } })).toBe(0);
   }, 120_000);
+
+  it('an identical upload that finds the reader busy adds no whole copy beside the split one (review of PR B, P2)', async () => {
+    await account('PO-A', tenant.subsidiaryId, 'petrol_ofisi');
+    const user = await masterkey();
+    const batches = await poBatches(user, [['PO-A', 'OZK0000000000001'], ['PO-A', 'OZK0000000000002']]);
+    const [first] = batches.get('OZK0000000000001')!;
+    const [second] = batches.get('OZK0000000000002')!;
+    const storage = storageStub();
+    // The production reader, held by the first upload until the second has
+    // been refused by it: the second is stored whole, unread.
+    let entered!: () => void;
+    const holding = new Promise<void>((r) => { entered = r; });
+    let refused!: () => void;
+    const afterRefusal = new Promise<void>((r) => { refused = r; });
+    let calls = 0;
+    const held = Object.create(reader) as PdfReaderService;
+    held.withSession = (async (ms: number, fn: (s: ReaderSession) => Promise<unknown>) => {
+      calls += 1;
+      if (calls === 1) return reader.withSession(ms, async (s) => { entered(); await afterRefusal; return fn(s); });
+      await holding;
+      const outcome = await reader.withSession(ms, fn);
+      refused();
+      return outcome;
+    }) as PdfReaderService['withSession'];
+    // Both pass the check before the upload, then meet under the batch lock.
+    let arrived = 0;
+    let meet!: () => void;
+    const met = new Promise<void>((r) => { meet = r; });
+    storage.upload.mockImplementation(async () => {
+      arrived += 1;
+      if (arrived === 2) meet();
+      if (arrived <= 2) await met;
+    });
+    const source = fixture('ozk-three.pdf');
+    const sha = createHash('sha256').update(source).digest('hex');
+    const [a, b] = await Promise.all([1, 2].map(() => evidenceWith({ storage, reader: held }).evidence.uploadForFuelBatch(user, first!, pdf(source))));
+    expect([a!.split, b!.split].filter(Boolean)).toHaveLength(1);
+    expect(a!.id).toBe(b!.id);
+    const files = await filesOf(first!);
+    expect(files).toHaveLength(1);
+    expect(files[0]!.sha256 === sha || files[0]!.sourceSha256 === sha).toBe(true);
+    expect(await owner.auditLog.count({ where: { entity: 'fuel_batch', action: 'attach', entityId: first! } })).toBe(1);
+    // The other invoice's batch still gets its own part.
+    expect(await filesOf(second!)).toHaveLength(1);
+    const kept = new Set((await owner.evidence.findMany({ where: { subsidiaryId: tenant.subsidiaryId } })).map((e) => e.storagePath));
+    const removed = new Set(storage.remove.mock.calls.flatMap((c) => c[1] as string[]));
+    for (const path of storage.upload.mock.calls.map((c) => c[1] as string)) expect(kept.has(path) || removed.has(path), path).toBe(true);
+  }, 120_000);
+
+  it('a part is not added to a batch already holding the uploaded PDF whole, nor the PDF whole beside its part', async () => {
+    await account('PO-A', tenant.subsidiaryId, 'petrol_ofisi');
+    const user = await masterkey();
+    const batches = await poBatches(user, [['PO-A', 'OZK0000000000001'], ['PO-A', 'OZK0000000000002']]);
+    const [first] = batches.get('OZK0000000000001')!;
+    const [second] = batches.get('OZK0000000000002')!;
+    const source = fixture('ozk-three.pdf');
+    const whole = await evidenceWith({ enabled: false }).evidence.uploadForFuelBatch(user, first!, pdf(source));
+    const split = await evidenceWith().evidence.uploadForFuelBatch(user, first!, pdf(source));
+    expect(split.id).toBe(whole.id);
+    expect(await filesOf(first!)).toHaveLength(1);
+    expect(await filesOf(second!)).toHaveLength(1);
+    const again = await evidenceWith({ enabled: false }).evidence.uploadForFuelBatch(user, second!, pdf(source));
+    expect((await filesOf(second!)).map((f) => f.id)).toEqual([again.id]);
+  }, 120_000);
 });

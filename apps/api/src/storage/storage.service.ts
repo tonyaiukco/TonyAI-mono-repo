@@ -84,9 +84,12 @@ export class StorageService {
     return downloadAs ? withDownloadName(data.signedUrl, downloadAs) : data.signedUrl;
   }
 
-  /** The object's bytes — for verifying them against a stored hash, never for serving them. */
-  async download(bucket: string, path: string): Promise<Buffer> {
-    const { data, error } = await this.client.storage.from(bucket).download(path);
+  /**
+   * The object's bytes — for verifying them against a stored hash or reading
+   * them on the server, never for serving them. `signal` aborts the download.
+   */
+  async download(bucket: string, path: string, signal?: AbortSignal): Promise<Buffer> {
+    const { data, error } = await this.client.storage.from(bucket).download(path, undefined, signal ? { signal } : undefined);
     if (isNotFound(error)) throw new StorageObjectMissingError(bucket, path);
     if (error || !data) {
       throw new InternalServerErrorException(

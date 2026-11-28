@@ -233,6 +233,27 @@ describe('the invoice level (B10; qa-auditor review of PR B)', () => {
     expect(dto.shared).toEqual({ accounts: 1, siblings: [expect.objectContaining({ id: both[1]!.id, sequence: 2 })] });
   }, 120_000);
 
+  it('totals and lists a shared invoice whose number two files print in different case (review of PR B, P2)', async () => {
+    await account('PO-C1', tenant.subsidiaryId, 'petrol_ofisi');
+    await account('PO-C2', tenant.otherSubsidiaryId, 'petrol_ofisi');
+    const user = await masterkey();
+    const header = ['Satış ID', 'Filo Kod Adı', 'Filo', 'Tarih', 'Tip', 'Miktar', 'Fatura Numarası'];
+    for (const [id, code, litres, ref] of [['S-78-1', 'PO-C1', 10, 'OZK0000000000078'], ['S-78-2', 'PO-C2', 20, 'ozk0000000000078']] as const) {
+      const buffer = xlsx({ sheetData: [sheetRow(1, header), sheetRow(2, [id, code, 'Fleet', '03.03.2025 08:00', 'Motorin', litres, ref])].join('') });
+      const up = await fuel().files.apply(user, xlsxFile(buffer), { source: 'petrol_ofisi', usage: 'on_road', fileSha256: sha(buffer) });
+      await fuel().formation.formBatches(user, up.id);
+    }
+    const mine = await batchOf('OZK0000000000078');
+    const other = await batchOf('ozk0000000000078', tenant.otherSubsidiaryId);
+    const { evidence, compare } = wired();
+    const invoice = await invoicesPdf([{ ...singleInvoice(), invoiceNo: 'OZK0000000000078', lines: [{ product: 'Motorin Med', litres: '30.00' }] }]);
+    await evidence.uploadForFuelBatch(user, mine, pdf(invoice));
+    const dto = comparison(await compare.forBatch(user, mine));
+    if (dto.level !== 'invoice') throw new Error(dto.level);
+    expect(dto.lines).toEqual([{ fuel: 'diesel', invoiceLitres: '30.00', packageLitres: '10', invoiceLevelLitres: '30', state: 'consistent', periodShift: false }]);
+    expect(dto.shared).toEqual({ accounts: 2, siblings: [expect.objectContaining({ id: other })] });
+  }, 120_000);
+
   it('leaves rows still waiting in the tray out of the sum', async () => {
     await petrolOfisi(false);
     const a = await batchOf('OZK0000000000001');
