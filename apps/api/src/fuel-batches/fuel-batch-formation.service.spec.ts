@@ -216,6 +216,20 @@ describe('FuelBatchFormationService — one group, one batch (task 6.3)', () => 
     expect(periodLocks.every((l) => l.order < firstRowLock)).toBe(true);
   });
 
+  it('takes single entry’s year locks for every year a group writes, in one order, before its first record (review of the single-entry fix)', async () => {
+    const h = harness('petrol_ofisi', [
+      // Petrol sorts after diesel, so the records go 2026 then 2025: the year locks still go 2025 then 2026, first.
+      { account_id: 'acc-a', invoice_ref: 'OZK-Y', usage: 'on_road', company: A, rows: [{ ...row('1', 'petrol', 12, '10'), year: 2025 }, { ...row('2', 'diesel', 1, '20'), year: 2026 }] },
+    ]);
+    await h.service.formBatches(holder, UPLOAD);
+    const yearLocks = h.tx.$executeRaw.mock.calls
+      .map((call, i) => ({ sql: sqlOf(call[0]), values: call.slice(1), order: h.tx.$executeRaw.mock.invocationCallOrder[i]! }))
+      .filter((c) => c.sql.includes("hashtext('tonyai.single_entry_period')"));
+    expect(yearLocks.map((l) => l.values)).toEqual([[A, 'Mobile Combustion', 2025], [A, 'Mobile Combustion', 2026]]);
+    const firstCreate = h.records.createInTransaction.mock.invocationCallOrder[0]!;
+    expect(yearLocks.every((l) => l.order < firstCreate)).toBe(true);
+  });
+
   it('refuses a caller who holds none of the upload’s rows', async () => {
     const h = harness('petrol_ofisi', []);
     (h.service as unknown as { prisma: { fuelRow: { count: () => Promise<number> } } }).prisma.fuelRow.count = async () => 0;

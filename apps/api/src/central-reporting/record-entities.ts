@@ -1,5 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
-import type { Prisma } from '@tonyai/db';
+import { Prisma } from '@tonyai/db';
 import {
   can,
   isCategory,
@@ -68,10 +68,60 @@ export interface PeriodSlot {
   periodValue: string;
 }
 
+/** A month's quarter, in SQL (calendar quarters, as TA026 maps them). */
+const quarterOf = (month: Prisma.Sql) => Prisma.sql`CASE WHEN ${month} IN ('January', 'February', 'March') THEN 'Q1'
+  WHEN ${month} IN ('April', 'May', 'June') THEN 'Q2'
+  WHEN ${month} IN ('July', 'August', 'September') THEN 'Q3'
+  WHEN ${month} IN ('October', 'November', 'December') THEN 'Q4' END`;
+
+/**
+ * Whether two periods of one year overlap, in SQL, as trigger TA026 judges it
+ * (migration `20261128200000_single_entry_overlapping_periods`): the same
+ * period, the year with any of its periods, a month with its quarter. One
+ * fragment for the API's check and the operator's overlap read.
+ */
+export function periodsOverlap(a: { period: Prisma.Sql; value: Prisma.Sql }, b: { period: Prisma.Sql; value: Prisma.Sql }): Prisma.Sql {
+  return Prisma.sql`(
+    (${a.period} = ${b.period} AND ${a.value} = ${b.value})
+    OR ${a.period} = 'annual'
+    OR ${b.period} = 'annual'
+    OR (${a.period} = 'monthly' AND ${b.period} = 'quarterly' AND ${quarterOf(a.value)} = ${b.value})
+    OR (${a.period} = 'quarterly' AND ${b.period} = 'monthly' AND ${quarterOf(b.value)} = ${a.value})
+  )`;
+}
+
+/** A (company, category, year): TA026's lock key since migration `20261128200000`. */
+export interface SingleEntryYear {
+  subsidiaryId: string;
+  category: string;
+  reportingYear: number;
+}
+
+/**
+ * Takes TA026's advisory lock for every (company, category, year) a step will
+ * write, once each and in one fixed order, before its first insert. The
+ * trigger takes the same lock at each insert, and a transaction re-taking a
+ * lock it holds does not wait — so a step writing records of two years (a
+ * December and a January) never holds one year's lock while waiting on the
+ * other's held by a step writing them the other way round (40P01; review of
+ * the single-entry fix, 2026-11-28). The key is computed in SQL exactly as the
+ * trigger computes it.
+ */
+export async function lockSingleEntryYears(db: Db, years: readonly SingleEntryYear[]): Promise<void> {
+  const distinct = new Map<string, SingleEntryYear>();
+  for (const y of years) distinct.set(`${y.subsidiaryId}|${y.category}|${y.reportingYear}`, y);
+  for (const [, y] of [...distinct.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    await db.$executeRaw`SELECT pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtext('tonyai.single_entry_period'),
+      pg_catalog.hashtext(pg_catalog.concat_ws('|', ${y.subsidiaryId}::uuid, ${y.category}::text, ${y.reportingYear}::int)))`;
+  }
+}
+
 /**
  * Single entry, what is entered (§4.2, §5.3; design D5): refuses a record of
  * `party` when a record of the other party, not voided, exists for the same
- * company, category and period — whatever its facility or activity type, and
+ * company, category and an overlapping period (the same one, the year with any
+ * of its periods, a month with its quarter) — whatever its facility or activity type, and
  * whoever may read it (the answer names only the side and the request's own
  * values). `excludeId`: the record being edited. TA026 holds the same rule,
  * under its own lock, for every writer and for two writes racing.
@@ -90,8 +140,12 @@ export async function assertSingleEntryPeriod(
      WHERE r.subsidiary_id = ${slot.subsidiaryId}::uuid
        AND r.category = ${slot.category}
        AND r.reporting_year = ${slot.reportingYear}
-       AND r.reporting_period = ${slot.reportingPeriod}
-       AND r.period_value = ${slot.periodValue}
+       -- The same period or one that overlaps it, as TA026 judges it: the year
+       -- with any of its periods, a month with its quarter.
+       AND ${periodsOverlap(
+         { period: Prisma.sql`r.reporting_period`, value: Prisma.sql`r.period_value` },
+         { period: Prisma.sql`${slot.reportingPeriod}::text`, value: Prisma.sql`${slot.periodValue}::text` },
+       )}
        AND r.status::text <> 'voided'
        AND (${excludeId}::uuid IS NULL OR r.id <> ${excludeId}::uuid)
        AND CASE ${party}::text

@@ -28,6 +28,7 @@ import {
   PeriodLockedError,
 } from '../activity-records/errors';
 import { SingleEntryPeriodConflictError } from '../central-reporting/central-reporting-errors';
+import { lockSingleEntryYears } from '../central-reporting/record-entities';
 import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { sumDecimals } from '../fuel-files/decimal';
 import { keepReportingCompany, reportingHeaderFor } from './batch-reporting';
@@ -292,6 +293,13 @@ export class FuelBatchFormationService {
             WHERE a.fuel_batch_id = ${batchId}::uuid AND a.status <> 'voided'
             ORDER BY 1`
         : [];
+      // Single entry's year locks (TA026), every one this group writes, in one
+      // order before the first insert: a group spanning December and January
+      // never waits on one year while holding the other.
+      await lockSingleEntryYears(
+        tx,
+        [...sums.values()].map((sum) => ({ subsidiaryId, category: fuelRecordTarget(sum.fuel, key.usage)!.category, reportingYear: sum.year })),
+      );
       let filesLinked = 0;
       for (const [k, sum] of [...sums.entries()].sort(([a], [b]) => a.localeCompare(b))) {
         const target = fuelRecordTarget(sum.fuel, key.usage)!;

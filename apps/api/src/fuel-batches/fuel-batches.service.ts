@@ -28,7 +28,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import { declareFuelBatchStep, lockPeriodsShared, periodOf } from '../activity-records/lifecycle-lock';
 import { AuthorOnlyRefusedError, RecordChangedError, SubmitRoleRefusedError } from '../activity-records/errors';
-import { lockAuthorAccess } from '../central-reporting/record-entities';
+import { lockAuthorAccess, lockSingleEntryYears } from '../central-reporting/record-entities';
 import { approversFor, awaitingDecisionWhere, deciderFor } from '../activity-records/record-approver';
 import { sumDecimals } from '../fuel-files/decimal';
 import { fuelBatchVerdicts } from './fuel-batch-anomaly';
@@ -650,6 +650,12 @@ export class FuelBatchesService {
     await lockPeriodsShared(tx, periods as never);
     const locked = new Map<string, LiveRecord>();
     for (const record of existing) locked.set(record.id, await this.records.lockSeenRecord(tx, record, user.organisationId));
+    // Single entry's year locks (TA026) for every record this rebuild adds, in
+    // one order before the first insert (see lockSingleEntryYears).
+    await lockSingleEntryYears(
+      tx,
+      [...wanted.values()].map((w) => ({ subsidiaryId: batch.subsidiaryId, category: fuelRecordTarget(w.fuel, usage)!.category, reportingYear: w.year })),
+    );
     // New keys first, given the batch's files, so no file loses its last link to a removed record.
     for (const [key, w] of wanted) {
       if (existing.some((r) => keyOfRecord(r) === key)) continue;

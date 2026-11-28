@@ -167,6 +167,10 @@ export async function readAccess(
         ? await prisma.subsidiary.findMany({
             where: { id: { in: granted }, organisationId: profile.organisationId },
             select: { id: true },
+            // A stable order: the same caller gets the same list on every
+            // request, whatever the table's physical order (Integration on
+            // main, 2026-11-28: `/me` changed only by this order).
+            orderBy: { id: 'asc' },
           })
         : [];
       accessibleSubsidiaryIds = sameOrg.map((s) => s.id);
@@ -186,6 +190,7 @@ export async function readAccess(
       const subs = await prisma.subsidiary.findMany({
         where: { organisationId: profile.organisationId },
         select: { id: true },
+        orderBy: { id: 'asc' },
       });
       accessibleSubsidiaryIds = subs.map((s) => s.id);
     }
