@@ -21,7 +21,7 @@ import { StorageIntentsService } from '../../src/storage/storage-intents.service
 import type { StorageService } from '../../src/storage/storage.service';
 import { dumanInvoices, invoicesPdf, singleInvoice } from '../fixtures/invoices/generate';
 import { row as sheetRow, xlsx } from '../xlsx';
-import { connect, connectOwner, createTenant, type Tenant } from './db';
+import { connect, connectOwner, createRecord, createTenant, type Tenant } from './db';
 import { lifecycleServices, storageStub } from './services';
 import { loadTrReleases } from './tr-releases';
 
@@ -285,6 +285,33 @@ describe('the comparison of a Shell batch (requirements 6, 11)', () => {
         { fuel: 'diesel', invoiceLitres: invoice, packageLitres: pkg, state: 'consistent', periodShift: true },
       ]);
     }
+    // A PDF of the neighbour not yet read may hold a second invoice of its
+    // half-month: no balance from it meanwhile (review of PR B, second round).
+    await wired({ enabled: false }).evidence.uploadForFuelBatch(user, second, pdf(invoicePdf('ozk-single.pdf'), 'pending.pdf'));
+    expect(comparison(await compare.forBatch(user, first)).lines[0]).toMatchObject({ state: 'possible_difference', periodShift: false });
+  }, 120_000);
+
+  it('applies no period shift to an invoice shared by two accounts, whichever batch opens it (review of PR B, second round)', async () => {
+    await account('PO-S1', tenant.subsidiaryId, 'petrol_ofisi');
+    await account('PO-S2', tenant.otherSubsidiaryId, 'petrol_ofisi');
+    const user = await masterkey();
+    const header = ['Satış ID', 'Filo Kod Adı', 'Filo', 'Tarih', 'Tip', 'Miktar', 'Fatura Numarası'];
+    const sales = [['S-81-1', 'PO-S1', '03.03.2025 08:00', 10, 'OZK0000000000081'], ['S-81-2', 'PO-S2', '03.03.2025 09:00', 15, 'OZK0000000000081'], ['S-82-1', 'PO-S1', '20.03.2025 08:00', 15, 'OZK0000000000082']] as const;
+    const buffer = xlsx({ sheetData: [sheetRow(1, header), ...sales.map(([id, code, at, litres, ref], i) => sheetRow(i + 2, [id, code, 'Fleet', at, 'Motorin', litres, ref]))].join('') });
+    const up = await fuel().files.apply(user, xlsxFile(buffer), { source: 'petrol_ofisi', usage: 'on_road', fileSha256: sha(buffer) });
+    await fuel().formation.formBatches(user, up.id);
+    const { evidence, compare } = wired();
+    // 081 prints 30 L against 25 L of rows; S1's next invoice 082 prints 10 L against 15 L: the opposite 5 L.
+    const shared = await invoicesPdf([{ ...singleInvoice(), invoiceNo: 'OZK0000000000081', lines: [{ product: 'Motorin Med', litres: '30.00' }] }]);
+    const next = await invoicesPdf([{ ...singleInvoice(), invoiceNo: 'OZK0000000000082', lines: [{ product: 'Motorin Med', litres: '10.00' }] }]);
+    const a = await batchOf('OZK0000000000081');
+    const b = await batchOf('OZK0000000000081', tenant.otherSubsidiaryId);
+    await evidence.uploadForFuelBatch(user, a, pdf(shared));
+    await evidence.uploadForFuelBatch(user, b, pdf(shared));
+    await evidence.uploadForFuelBatch(user, await batchOf('OZK0000000000082'), pdf(next));
+    for (const id of [a, b]) {
+      expect(comparison(await compare.forBatch(user, id)).lines[0], id).toMatchObject({ invoiceLevelLitres: '25', state: 'possible_difference', periodShift: false });
+    }
   }, 120_000);
 
   it('leaves two invoices of one half-month unread, and a tanker batch', async () => {
@@ -358,5 +385,76 @@ describe('a file read at its comparison (fuel-invoice-reading, D4)', () => {
     await held;
     expect(await owner.evidenceReading.count({ where: { evidenceId: file.id } })).toBe(0);
     expect(comparison(await wired().compare.forBatch(user, single)).invoice.invoiceNo).toBe('OZK0000000000002');
+  }, 120_000);
+});
+
+describe('a manual fuel record compared as a package of one (C6, task 11.1)', () => {
+  const manual = (data: Record<string, unknown> = {}) => createRecord(owner, tenant, {
+    category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres', activityValue: 1200,
+    createdBy: tenant.users.masterkey.id, ...data,
+  });
+  const invoice = (invoiceNo: string, lines: Array<{ product: string; litres: string }>) => ({ ...singleInvoice(), invoiceNo, lines });
+
+  it('shows a 1200-litre diesel record beside its invoice read as 1200.00 litres as consistent; read once and audited', async () => {
+    const user = await masterkey();
+    const record = await manual({ input: { invoice_no: 'OZK0000000000091' } });
+    const { evidence, compare } = wired();
+    const file = await evidence.upload(user, record.id, pdf(await invoicesPdf([invoice('OZK0000000000091', [{ product: 'Motorin Med', litres: '1200.00' }, { product: 'Kurşunsuz 95', litres: '40.00' }])])));
+    // A single-record upload reads nothing (D4): the comparison reads it, once.
+    expect(await owner.evidenceReading.count({ where: { evidenceId: file.id } })).toBe(0);
+    const dto = await compare.forRecord(user, record.id);
+    expect(dto).toMatchObject({
+      enabled: true, tolerancePercent: 1, level: 'package',
+      invoice: { invoiceNo: 'OZK0000000000091', series: 'OZK', file: { id: file.id } },
+      lines: [{ fuel: 'diesel', invoiceLitres: '1200.00', packageLitres: '1200', state: 'consistent', periodShift: false }],
+      otherLines: [{ product: 'Kurşunsuz 95', litres: '40.00' }],
+    });
+    await compare.forRecord(user, record.id);
+    expect(await owner.evidenceReading.count({ where: { evidenceId: file.id, readerVersion: READER_VERSION } })).toBe(1);
+    const reads = await owner.auditLog.findMany({ where: { entity: 'evidence', action: 'read', entityId: file.id } });
+    expect(reads).toHaveLength(1);
+    expect(reads[0]!.diff).toMatchObject({ activityRecordId: record.id });
+  }, 120_000);
+
+  it('takes the invoice its number names, the sole one with no number, and none of two with no number', async () => {
+    const user = await masterkey();
+    const { evidence, compare } = wired();
+    const two = await invoicesPdf([invoice('OZK0000000000092', [{ product: 'Motorin Med', litres: '500.00' }]), invoice('OZK0000000000093', [{ product: 'Motorin Med', litres: '1200.00' }])]);
+    const named = await manual({ input: { invoice_no: 'ozk0000000000093' } });
+    await evidence.upload(user, named.id, pdf(two));
+    expect(await compare.forRecord(user, named.id)).toMatchObject({ invoice: { invoiceNo: 'OZK0000000000093' }, lines: [{ state: 'consistent' }] });
+    // The spec's scenario: two read invoices and no number — not read.
+    const unnamed = await manual({ periodValue: 'February' });
+    await evidence.upload(user, unnamed.id, pdf(two, 'two.pdf'));
+    expect(await compare.forRecord(user, unnamed.id)).toEqual({ enabled: true, tolerancePercent: 1, unread: { reason: 'several_matching_invoices' } });
+    const sole = await manual({ activityValue: 480, periodValue: 'March' });
+    await evidence.upload(user, sole.id, pdf(await invoicesPdf([invoice('OZK0000000000094', [{ product: 'Motorin Med', litres: '500.00' }])])));
+    expect(await compare.forRecord(user, sole.id)).toMatchObject({ lines: [{ invoiceLitres: '500.00', packageLitres: '480', state: 'possible_difference' }] });
+    // An explicit number with no matching reading: the manual check.
+    const missing = await manual({ input: { invoice_no: 'OZK0000000000099' }, periodValue: 'April' });
+    await evidence.upload(user, missing.id, pdf(two, 'other.pdf'));
+    expect(await compare.forRecord(user, missing.id)).toEqual({ enabled: true, tolerancePercent: 1, unread: { reason: 'no_matching_invoice' } });
+  }, 120_000);
+
+  it('gives no comparison to an LPG record in kilograms or a batch’s record, and 404 outside the reader’s scope', async () => {
+    const user = await masterkey();
+    const { evidence, compare } = wired();
+    const lpg = await manual({ category: 'Fuel', activityType: 'lpg', activityUnit: 'kg', activityValue: 300 });
+    await evidence.upload(user, lpg.id, pdf(invoicePdf('ozk-single.pdf')));
+    expect(await compare.forRecord(user, lpg.id)).toEqual({ enabled: false });
+    expect(await owner.evidenceReading.count({ where: { evidence: { subsidiaryId: tenant.subsidiaryId } } })).toBe(0);
+    await petrolOfisi();
+    const batchRecord = await owner.activityRecord.findFirstOrThrow({ where: { fuelBatchId: await batchOf('OZK0000000000001') } });
+    expect(await compare.forRecord(user, batchRecord.id)).toEqual({ enabled: false });
+    // A super_admin granted company A does not reach a record of company B; off, the same 404.
+    const foreign = await manual({ subsidiaryId: tenant.otherSubsidiaryId });
+    for (const assistant of [compare, wired({ enabled: false }).compare]) {
+      expect(errorCodeOf(await assistant.forRecord(tenant.users.superAdmin, foreign.id).catch((e: unknown) => e))).toBe('record_not_found');
+    }
+    // Off, a manual litres record in scope answers { enabled: false } and reads nothing.
+    const mine = await manual({ input: { invoice_no: 'OZK0000000000002' } });
+    await evidence.upload(user, mine.id, pdf(invoicePdf('ozk-single.pdf')));
+    expect(await wired({ enabled: false }).compare.forRecord(user, mine.id)).toEqual({ enabled: false });
+    expect(await owner.evidenceReading.count({ where: { evidence: { subsidiaryId: tenant.subsidiaryId } } })).toBe(0);
   }, 120_000);
 });

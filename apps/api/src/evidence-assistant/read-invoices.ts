@@ -273,14 +273,21 @@ type Figures = { lines: ReadInvoiceLine[] } | { unread: 'unreadable' | 'unreadab
 function readFigures(pages: PageFacts[]): Figures {
   let column: PageFacts['header'] = null;
   const fuels = new Map<FileFuel, { names: string[]; litres: string[] }>();
-  const others = new Map<string, { product: string; litres: string[] }>();
+  // A product the rule does not name is a line of its own per row, as printed (B12).
+  const others: ReadInvoiceLine[] = [];
   let rows = 0;
   for (const [index, page] of pages.entries()) {
     // A second table on a page may have its column elsewhere: not read (qa-auditor re-review, P2).
     if (page.headers > 1) return { unread: 'unreadable' };
     // A page without its own header continues the column of the page before.
     const header = page.header ?? (column ? { ...column, y: Infinity } : null);
-    if (!header) continue;
+    if (!header) {
+      // A page before the first header whose rows look like fuel rows: their
+      // litres cannot be placed, so the invoice is not read rather than read
+      // short (review of PR B, second round, P2).
+      if (page.rows.some(fuelShaped)) return { unread: 'unreadable' };
+      continue;
+    }
     column = header;
     let ended = false;
     for (const row of page.rows) {
@@ -310,18 +317,25 @@ function readFigures(pages: PageFacts[]): Figures {
         ended = true;
         continue;
       }
-      // Past a total, only a row shaped like a fuel row (a product and a
-      // number) says the table went on; a footer's `Yalnız`, IBAN or tax line
-      // does not (qa-auditor re-review, P2).
+      const priced = words(row).some((w) => w.x >= header.right && readQuantity({ column: 0, kind: 'text', value: slice(row, w.from, w.to) }) !== null);
+      // Past a total, a row shaped like a fuel row says the table went on: a
+      // product and a number in the column, or a fuel's name with anything in
+      // the column or a price — read or not (review of PR B, second round,
+      // P2). A footer's `Yalnız`, IBAN or tax line is none of these
+      // (qa-auditor re-review, P2).
       if (ended) {
-        if (qty !== '' && product !== '' && readQuantity({ column: 0, kind: 'text', value: qty }) !== null) return { unread: 'unreadable_row' };
+        // A number in the quantity column, with or without a product beside it
+        // (a fuel row printed as a name row and a figure row), or a fuel's name
+        // with anything in the column or a price (review of PR B, third round, P2).
+        const numberInColumn = qty !== '' && readQuantity({ column: 0, kind: 'text', value: qty }) !== null;
+        const fuelRow = product !== '' && recogniseFuel(product) !== null && (qty !== '' || priced);
+        if (numberInColumn || fuelRow) return { unread: 'unreadable_row' };
         continue;
       }
       if (qty === '') {
         // A product row whose quantity cell is empty — a fuel's name, or a
         // figure right of the column — is a row whose litres were not read:
         // the invoice is not read rather than read short (review of PR B, P2).
-        const priced = words(row).some((w) => w.x >= header.right && readQuantity({ column: 0, kind: 'text', value: slice(row, w.from, w.to) }) !== null);
         if (product !== '' && (recogniseFuel(product) !== null || priced)) return { unread: 'unreadable_row' };
         continue;
       }
@@ -337,10 +351,7 @@ function readFigures(pages: PageFacts[]): Figures {
         entry.litres.push(litres);
         fuels.set(fuel, entry);
       } else {
-        const key = product.split('').map(foldChar).join('');
-        const entry = others.get(key) ?? { product, litres: [] };
-        entry.litres.push(litres);
-        others.set(key, entry);
+        others.push({ product, fuel: null, litres });
       }
     }
   }
@@ -350,8 +361,17 @@ function readFigures(pages: PageFacts[]): Figures {
     const entry = fuels.get(fuel);
     if (entry) lines.push({ product: entry.names.join(' + '), fuel, litres: sumDecimals(entry.litres) });
   }
-  for (const entry of others.values()) lines.push({ product: entry.product, fuel: null, litres: sumDecimals(entry.litres) });
+  lines.push(...others);
   return { lines };
+}
+
+/**
+ * A row with a fuel's name before one of its numbers: a fuel row whose column
+ * is not known. A leading sequence number (`1 Motorin Med 50,00`) does not hide
+ * it (review of PR B, third round).
+ */
+function fuelShaped(row: Row): boolean {
+  return words(row).some((w) => readQuantity({ column: 0, kind: 'text', value: slice(row, w.from, w.to) }) !== null && recogniseFuel(slice(row, 0, w.from)) !== null);
 }
 
 /**

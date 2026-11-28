@@ -452,7 +452,9 @@ python3 infra/scripts/monitoring_readback.py --hours 26
 `inputs` refuses unless both apps serve one source and one revision suffix and the
 images equal the candidate. It adds the live `mail` block (SMTP settings and the
 `smtp-password` version), the live `registration` block when registration is
-enabled (the `registration-code` version and the placeholder allowance) and
+enabled (the `registration-code` version and the placeholder allowance), the live
+`evidence_assistant` block when the API holds the assistant's settings (its switch and
+tolerance; one without the other, or a value not in a release's form, is refused) and
 `runtime_limits`, recomputes the candidate from the
 source commit's git objects, and runs the read-only release verifier before it
 writes. The file is new (never overwritten) and mode 0600. It holds Key Vault
@@ -844,6 +846,18 @@ Runbook 05's order, with these hosted specifics. Run from a clean checkout at th
 9. Try the old password once through Supavisor, reading it from its vault version so that a typo
    cannot pass as a refusal. Confirm that nothing references the old version, disable it, then
    `gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`.
+
+### Switching the evidence assistant off on hosted QA
+
+Runbook 03 §3.7 is the whole procedure; QA has no specifics beyond it. The assistant
+is on by default from the first deploy that carries it, with no release. Switch it
+off only through a release that names `"evidence_assistant": { "enabled": false,
+"tolerance_percent": 1 }` — never by editing the container app by hand: `inputs`
+carries a hand-set pair into the next exported manifest as if it had been released (a
+flip nobody released), and a single hand-set setting makes every export refuse
+("incomplete") until it is removed.
+Approval never waits for the assistant (INC-2.9 §5), so switching it off changes no
+reviewer's work beyond checking the invoice by eye.
 
 ### Enabling self-service registration on hosted QA
 

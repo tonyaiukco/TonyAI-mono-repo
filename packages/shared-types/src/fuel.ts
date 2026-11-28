@@ -167,6 +167,36 @@ export function fuelUsagesFor(fuel: ManualFuel): readonly FuelEntryUsage[] {
   return ([...FUEL_USAGES, FUEL_MARINE_USAGE] as const).filter((usage) => own(pairs, usage));
 }
 
+/**
+ * A manual record's fuel when it is entered in litres (inc29-evidence-assistant C6, INC-2.8 §6; the API's record comparison and the review sheet's panel read this one rule): the
+ * fuel whose D6 pair is the record's category and activity type, priced in
+ * litres. Null for any other record — LPG in kilograms, marine gas oil, another
+ * category.
+ */
+export function manualLitresFuel(record: { category: string; activityType: string | null; activityUnit: string }): ManualFuel | null {
+  if (record.activityUnit !== 'litres' || record.activityType === null) return null;
+  for (const fuel of MANUAL_FUELS) {
+    for (const usage of fuelUsagesFor(fuel)) {
+      const target = fuelRecordTarget(fuel, usage);
+      if (target && target.category === record.category && target.activityType === record.activityType && target.units.includes('litres')) return fuel;
+    }
+  }
+  return null;
+}
+
+/**
+ * The fuel the evidence assistant compares a manual record on (C6): its litres
+ * fuel, when the reader can name that fuel on an invoice — diesel or petrol, the
+ * fuel-name rule's two (INC-2.8 §2). On-road LPG in litres has no invoice rule,
+ * so an LPG figure would be unread, not missing: no comparison rather than a
+ * false "possible difference" (review of PR B, third round). Null otherwise.
+ */
+export function assistantRecordFuel(record: { fuelBatchId?: string | null; category: string; activityType: string | null; activityUnit: string }): FileFuel | null {
+  if (record.fuelBatchId) return null;
+  const fuel = manualLitresFuel(record);
+  return fuel !== null && isFileFuel(fuel) ? fuel : null;
+}
+
 // ── Periods and invoices ────────────────────────────────────────────────────
 
 /** A transaction date as the file writes it, with no time-zone shift (D4). */

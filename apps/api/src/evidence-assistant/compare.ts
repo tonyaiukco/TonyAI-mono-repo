@@ -1,5 +1,5 @@
 import { Prisma } from '@tonyai/db';
-import { FILE_FUELS, type EvidenceAssistantLineState, type FileFuel } from '@tonyai/shared-types';
+import { FILE_FUELS, isFileFuel, type EvidenceAssistantLineState, type FileFuel, type ManualFuel } from '@tonyai/shared-types';
 import { sumDecimals } from '../fuel-files/decimal';
 import type { ReadInvoiceLine } from './read-invoices';
 
@@ -117,4 +117,34 @@ export function compare(input: ComparisonInput): Comparison {
   }
   const otherLines = input.invoiceLines.filter((l) => l.fuel === null).map((l) => ({ product: l.product, litres: l.litres }));
   return { level, lines, otherLines };
+}
+
+/** A manual record's one line (C6): its fuel and litres beside the invoice's line for that fuel. */
+export interface RecordComparison {
+  line: { fuel: ManualFuel; invoiceLitres: string | null; packageLitres: string; state: EvidenceAssistantLineState; periodShift: false };
+  otherLines: { product: string; litres: string }[];
+}
+
+/**
+ * A manual fuel record compared as a package of one record (C6): the record's
+ * own figure beside the invoice's line for its fuel, by the same rule as a
+ * batch's line — equal, else within the tolerance, a fuel on one side only
+ * always a possible difference. No period shift and no invoice level (both
+ * read fuel rows and accounts, which a manual record has not). The invoice's
+ * other lines — another fuel the record does not carry, or a product the fuel
+ * rule does not name — are listed, not compared.
+ */
+export function compareRecord(input: { tolerancePercent: string; invoiceLines: readonly ReadInvoiceLine[]; fuel: ManualFuel; litres: string }): RecordComparison {
+  const invoice = invoiceFuelLitres(input.invoiceLines);
+  const onInvoice = isFileFuel(input.fuel) ? invoice[input.fuel] : undefined;
+  const d = lineDifference(input.litres, onInvoice);
+  let state: EvidenceAssistantLineState = 'possible_difference';
+  if (d !== null) {
+    const diff = dec(d);
+    state = diff.isZero() || diff.abs().lessThanOrEqualTo(dec(input.tolerancePercent).dividedBy(100).times(onInvoice!)) ? 'consistent' : 'possible_difference';
+  }
+  const otherLines = input.invoiceLines
+    .filter((l) => l.fuel === null || l.fuel !== input.fuel)
+    .map((l) => ({ product: l.product, litres: l.litres }));
+  return { line: { fuel: input.fuel, invoiceLitres: onInvoice ?? null, packageLitres: input.litres, state, periodShift: false }, otherLines };
 }

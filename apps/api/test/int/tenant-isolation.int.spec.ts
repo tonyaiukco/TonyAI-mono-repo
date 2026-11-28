@@ -587,6 +587,8 @@ const ID_ROUTES: Route[] = [
   { name: 'POST /activity-records/bulk-submit', method: 'POST', path: () => '/activity-records/bulk-submit', body: (i) => ({ recordIds: [i.recordId] }), own: { role: 'standardUser', ok: differs } },
   // evidence
   { name: 'GET /activity-records/:recordId/evidence', method: 'GET', path: (i) => `/activity-records/${i.recordId}/evidence`, own: { role: 'auditor' } },
+  // The evidence assistant's record comparison (inc29 C6): scoped as the record, its 404 before the on/off switch.
+  { name: 'GET /activity-records/:id/evidence-assistant', method: 'GET', path: (i) => `/activity-records/${i.recordId}/evidence-assistant`, own: { role: 'auditor' } },
   { name: 'POST /activity-records/:recordId/evidence', method: 'POST', path: (i) => `/activity-records/${i.recordId}/evidence`, body: () => pdfForm(), own: { role: 'standardUser', ok: differs } },
   { name: 'POST /evidence', method: 'POST', path: () => '/evidence', body: (i) => pdfForm([i.recordId]), own: { role: 'standardUser', ok: differs } },
   { name: 'DELETE /activity-records/:recordId/evidence/:evidenceId', method: 'DELETE', path: (i) => `/activity-records/${i.recordId}/evidence/${i.evidenceId}`, own: { role: 'standardUser', ok: differs } },

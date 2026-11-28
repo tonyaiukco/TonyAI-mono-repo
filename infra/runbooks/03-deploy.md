@@ -848,3 +848,82 @@ accepted leave their organisation in place. `pnpm onboarding offboard` (runbook 
 Automatic deploys keep these settings: `deploy-qa.yml` changes image digests only,
 from the live template. `qa_autodeploy.py inputs` reads the block back from the live
 API, so a manifest exported after this release already names it.
+
+## 3.7 Evidence assistant switch and tolerance (OpenSpec `inc29-evidence-assistant`, D8)
+
+The evidence assistant reads fuel invoices at a batch upload and compares them in
+the review queue. It is **on unless a release says otherwise** (INC-2.9 §5: on at
+go-live; the setting is an emergency safety only). Off, no file is read or split,
+the comparison route answers `{ "enabled": false }`, the panel is not shown, and
+evidence and every approval step work as before.
+
+The optional `release.evidence_assistant` object in
+`infra/config/application.example.json` holds two plain values, no secret:
+
+- `enabled` — `true` or `false`; the API's `EVIDENCE_ASSISTANT` is `on` or `off`.
+- `tolerance_percent` — a number from 0 to 100 with at most two decimals (`1`,
+  `1.25`); the API's `EVIDENCE_ASSISTANT_TOLERANCE_PERCENT`. `1.255`, `100.5` or a
+  negative number is refused by `terraform_run.py` and again by the application
+  root's variable validation, as the API would refuse it at boot.
+
+Without the object no setting is emitted and the API's defaults apply (on, 1%).
+With it, both settings are always emitted, so the readback compares exact values.
+
+**Switch off** (the assistant misbehaves on hosted QA). Owner sequence, on a clean
+checkout of `main`, as for any owner release:
+
+1. `gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`, then wait until
+   no `QA deploy` or `QA rollback` run is running or queued (runbook 11, "Owner
+   Terraform releases": the check must print nothing). A deploy still running writes
+   its older template back over this release and removes the settings it adds.
+2. Only then write the live manifest with `qa_autodeploy.py inputs` (runbook 11) and
+   give it a new `release_id`. If the export already names `evidence_assistant` (an
+   earlier release did), set its `enabled` to `false` and keep its `tolerance_percent`;
+   a second copy of the block is a duplicate key Terraform refuses at plan. Otherwise add:
+
+   ```json
+   "evidence_assistant": { "enabled": false, "tolerance_percent": 1 }
+   ```
+
+3. `python3 infra/scripts/terraform_run.py application plan --backend <backend file> --inputs <new-manifest>`.
+   Read the plan: the API gains (or changes) the two settings
+   `EVIDENCE_ASSISTANT=off` and `EVIDENCE_ASSISTANT_TOLERANCE_PERCENT`; the revision
+   suffix and `release` tag change; the images and secrets do not.
+4. `bash infra/scripts/deploy-apps.sh --backend <backend file> --inputs <new-manifest>`,
+   then `--verify-only` once the outgoing revision has gone. The readback requires
+   both settings on the API exactly as released, as plain values, and none on the web
+   app; it fails on a setting the release does not name.
+5. **Proof.** The boot line, in the workspace's Logs view:
+
+   ```kusto
+   ContainerAppConsoleLogs
+   | where ContainerAppName endswith "-staging-api"
+   | where TimeGenerated > ago(30m)
+   | where Log has "evidence_assistant_"
+   | project TimeGenerated, Log
+   | take 5
+   ```
+
+   The `evidence_assistant_policy` entry's `enabled` is `false` and its `tolerancePercent` the released value (the
+   API logs JSON on hosted QA). Then, signed in as a reviewer,
+   open a fuel batch in the review queue: no assistant panel is shown, and
+   `GET <api origin>/api/v1/fuel-batches/<id>/evidence-assistant` with that session's
+   token answers `{"enabled":false}`. Re-enable `QA deploy`.
+
+**Switch on again, or change the tolerance:** the same steps, editing the exported
+block to `"enabled": true` (or the new `tolerance_percent`) under a fresh `release_id`.
+On, the policy line's `enabled` is `true`, and the same query shows
+`evidence_assistant_reader available: isolation proven` (it may come first: the reader's
+self-test runs before the API listens); a reader that fails its isolation self-test logs
+`evidence_assistant_reader unavailable` instead and every file is stored unread.
+
+**Back out** (return to the defaults): delete the `evidence_assistant` object the export
+wrote and release that manifest under a fresh `release_id` — never the previous manifest
+unchanged (§3.6 gives the reason). The plan removes both settings; the readback then
+fails on any assistant setting left on the API.
+
+Automatic deploys keep these settings: `deploy-qa.yml` changes image digests only,
+from the live template, and `qa_autodeploy.py inputs` reads the block back from the
+live API (refusing one setting without the other, a secret reference, or a value not
+in a release's form), so a manifest exported after this release names it and the
+assistant stays as the owner left it.

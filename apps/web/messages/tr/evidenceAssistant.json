@@ -17,7 +17,9 @@
   "invoiceLevel": "Bu faturanın tüm paketlerdeki satırları: {litres} L {fuel}",
   "fuels": {
     "diesel": "motorin",
-    "petrol": "benzin"
+    "petrol": "benzin",
+    "lpg": "LPG",
+    "marine_gas_oil": "deniz motorini (MGO)"
   },
   "otherLines": "Faturadaki diğer satırlar (karşılaştırılmaz)",
   "otherLine": "{product}: {litres} litre",
@@ -45,6 +47,7 @@
     "failed": "Asistan yanıt vermedi."
   },
   "split": {
+    "keptWhole": "Bu pakette PDF'in tamamı zaten var ve öyle kalıyor.",
     "attachedOne": "Faturaya göre bölündü: 1 pakete eklendi.",
     "attachedMany": "Faturaya göre bölündü: {count} pakete eklendi.",
     "notAttached": "Şu faturalar eklenmedi:",

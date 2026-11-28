@@ -17,7 +17,9 @@
   "invoiceLevel": "This invoice's rows in all packages: {litres} L {fuel}",
   "fuels": {
     "diesel": "diesel",
-    "petrol": "petrol"
+    "petrol": "petrol",
+    "lpg": "LPG",
+    "marine_gas_oil": "marine gas oil"
   },
   "otherLines": "Other lines on the invoice (not compared)",
   "otherLine": "{product}: {litres} litres",
@@ -45,6 +47,7 @@
     "failed": "The assistant did not answer."
   },
   "split": {
+    "keptWhole": "This package already holds the whole PDF and keeps it.",
     "attachedOne": "Split by invoice: attached to 1 package.",
     "attachedMany": "Split by invoice: attached to {count} packages.",
     "notAttached": "These invoices were not attached:",

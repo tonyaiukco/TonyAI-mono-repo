@@ -17,7 +17,7 @@ import { EVIDENCE_INVOICE_SERIES, type EvidenceInvoiceSeries, type FuelSource } 
  * The reader's version, stored with every reading. Change it with any change to
  * this file or to `read-invoices.ts`, or with a new `pdfjs-dist`.
  */
-export const READER_VERSION = 'inc29.1/pdfjs-6.5.438';
+export const READER_VERSION = 'inc29.2/pdfjs-6.5.438';
 
 export const INVOICE_SERIES = EVIDENCE_INVOICE_SERIES;
 

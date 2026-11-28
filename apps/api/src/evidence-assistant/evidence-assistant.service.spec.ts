@@ -5,7 +5,8 @@ import { fuelBatchScopeWhere } from '../fuel-batches/fuel-batch-scope';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { StorageService } from '../storage/storage.service';
 import { EvidenceAssistantRuntime } from './evidence-assistant-runtime';
-import { EvidenceAssistantService, neighbourShellRef } from './evidence-assistant.service';
+import { recordScopeWhere } from '../activity-records/record-scope';
+import { EvidenceAssistantService, neighbourShellRef, recordInvoiceNo } from './evidence-assistant.service';
 import type { PdfReaderService } from './pdf-reader.service';
 
 /**
@@ -24,10 +25,11 @@ const batch = {
   source: 'petrol_ofisi', invoiceRef: 'OZK0000000000001', fuelAccountId: '00000000-0000-4000-8000-0000000000e1', status: 'submitted',
 };
 
-function service(opts: { batch?: object | null; files?: object[]; enabled?: boolean; refused?: 'reader_busy' | 'reader_unavailable' }) {
+function service(opts: { batch?: object | null; record?: object | null; files?: object[]; enabled?: boolean; refused?: 'reader_busy' | 'reader_unavailable' }) {
   const prisma = {
     fuelBatch: { findFirst: vi.fn(async () => (opts.batch === undefined ? batch : opts.batch)), findMany: vi.fn(async () => []) },
     evidence: { findMany: vi.fn(async () => opts.files ?? []) },
+    activityRecord: { findFirst: vi.fn(async () => opts.record ?? null) },
     $queryRaw: vi.fn(async () => []),
     $transaction: vi.fn(),
   };
@@ -124,8 +126,8 @@ describe('Petrol Ofisi neighbours and the reading store (qa-auditor review of PR
     };
     const { svc, prisma } = service({});
     prisma.$transaction.mockImplementation(async (fn: (t: typeof tx) => unknown) => fn(tx));
-    const out = await (svc as unknown as { storeReading(u: RequestUser, b: string, e: string, r: unknown): Promise<unknown> })
-      .storeReading(superAdmin, batch.id, 'f1', { readerVersion: 'v', status: 'read', pageCount: 1, invoices: [] });
+    const out = await (svc as unknown as { storeReading(u: RequestUser, o: object, e: string, r: unknown): Promise<unknown> })
+      .storeReading(superAdmin, { fuelBatchId: batch.id }, 'f1', { readerVersion: 'v', status: 'read', pageCount: 1, invoices: [] });
     expect(out).toBeNull();
     expect(tx.$queryRaw).not.toHaveBeenCalled();
     expect(tx.evidence.findFirst).toHaveBeenCalledWith(expect.objectContaining({
@@ -184,5 +186,92 @@ describe('the pre-merge review’s cases (review of PR B)', () => {
     expect(prisma.fuelBatch.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { AND: [fuelBatchScopeWhere(superAdmin), expect.objectContaining({ invoiceRef: { equals: 'ozk0000000000001', mode: 'insensitive' } })] },
     }));
+  });
+});
+
+describe('EvidenceAssistantService.forRecord (C6, task 11.1)', () => {
+  it("stores a record's reading only while the record is in the caller's scope and organisation", async () => {
+    const tx = { evidence: { findFirst: vi.fn(async () => null) }, $queryRaw: vi.fn(), evidenceReading: { findUnique: vi.fn() } };
+    const { svc, prisma } = service({});
+    prisma.$transaction.mockImplementation(async (fn: (t: typeof tx) => unknown) => fn(tx));
+    const recordId = '00000000-0000-4000-8000-0000000000d1';
+    const out = await (svc as unknown as { storeReading(u: RequestUser, o: object, e: string, r: unknown): Promise<unknown> })
+      .storeReading(superAdmin, { activityRecordId: recordId }, 'f1', { readerVersion: 'v', status: 'read', pageCount: 1, invoices: [] });
+    expect(out).toBeNull();
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(tx.evidence.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'f1', links: { some: { activityRecordId: recordId, activityRecord: { AND: [recordScopeWhere(superAdmin), { status: { not: 'voided' } }, { subsidiary: { organisationId: superAdmin.organisationId } }] } } } },
+    }));
+  });
+
+  const manual = {
+    id: '00000000-0000-4000-8000-0000000000d1', subsidiary: { organisationId: superAdmin.organisationId }, fuelBatchId: null,
+    category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres', activityValue: 1200, input: { invoice_no: 'OZK0000000000001' },
+  };
+
+  it("reads the record through the caller's record scope, and answers 404 outside it or in another organisation, on or off", async () => {
+    for (const enabled of [true, false]) {
+      const { svc, prisma } = service({ record: null, enabled });
+      await expect(svc.forRecord(superAdmin, manual.id)).rejects.toMatchObject({ response: { code: 'record_not_found' } });
+      expect(prisma.activityRecord.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { AND: [{ id: manual.id }, recordScopeWhere(superAdmin)] } }));
+      const moved = service({ record: { ...manual, subsidiary: { organisationId: 'another' } }, enabled });
+      await expect(moved.svc.forRecord(superAdmin, manual.id)).rejects.toMatchObject({ response: { code: 'record_not_found' } });
+    }
+  });
+
+  it('answers { enabled: false } when off, and for a record it does not compare, reading no file', async () => {
+    for (const [label, record, enabled] of [
+      ['off', manual, false],
+      ['a batch’s record', { ...manual, fuelBatchId: batch.id }, true],
+      ['LPG in kilograms', { ...manual, category: 'Fuel', activityType: 'lpg', activityUnit: 'kg' }, true],
+      ['another category', { ...manual, category: 'Electricity', activityType: 'grid', activityUnit: 'kWh' }, true],
+      ['on-road LPG in litres (no invoice rule names LPG)', { ...manual, activityType: 'on_road_lpg' }, true],
+      ['a voided record', { ...manual, status: 'voided' }, true],
+    ] as const) {
+      const { svc, prisma } = service({ record, enabled });
+      expect(await svc.forRecord(superAdmin, manual.id), label).toEqual({ enabled: false });
+      expect(prisma.evidence.findMany).not.toHaveBeenCalled();
+    }
+  });
+
+  it('answers no_evidence for a manual litres record with no file', async () => {
+    expect(await service({ record: manual }).svc.forRecord(superAdmin, manual.id)).toEqual({ enabled: true, tolerancePercent: 1, unread: { reason: 'no_evidence' } });
+  });
+
+  it('reads the invoice number the record names, trimmed, and nothing from anything else', () => {
+    expect(recordInvoiceNo({ invoice_no: '  OZK0000000000001 ' })).toBe('OZK0000000000001');
+    for (const input of [null, undefined, [], 'OZK1', { invoice_no: '' }, { invoice_no: '   ' }, { invoice_no: 12 }, { invoiceNo: 'OZK1' }]) {
+      expect(recordInvoiceNo(input)).toBeNull();
+    }
+  });
+});
+
+describe('forRecord: which invoice and which answer (qa-auditor review of groups 10–11)', () => {
+  const manual = {
+    id: '00000000-0000-4000-8000-0000000000d2', subsidiary: { organisationId: superAdmin.organisationId }, fuelBatchId: null, status: 'submitted',
+    category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres', activityValue: 100, input: { invoice_no: 'OZK0000000000001' },
+  };
+  const invoice = (unreadReason: string | null, litres = '100.00') => ({
+    invoiceNo: 'OZK0000000000001', series: 'OZK', periodText: null, periodFrom: null, periodTo: null, buyerName: null, buyerTaxId: null,
+    pageFrom: 1, pageTo: 1, unreadReason, lines: unreadReason ? [] : [{ product: 'Motorin Med', fuel: 'diesel', litres }],
+  });
+  const file = (id: string, invoices: object[] | null, mimeType = 'application/pdf') => ({
+    id, fileName: `${id}.pdf`, mimeType, storagePath: id, sourceSha256: null, sourcePageFrom: null, sourcePageTo: null,
+    readings: invoices === null ? [] : [{ status: 'read', pageCount: 1, invoices }],
+  });
+
+  it('compares the copy that was read when an earlier copy of the same invoice was not', async () => {
+    const { svc } = service({ record: manual, files: [file('a', [invoice('unreadable')]), file('b', [invoice(null)])] });
+    expect(await svc.forRecord(superAdmin, manual.id)).toMatchObject({ invoice: { file: { id: 'b' } }, lines: [{ state: 'consistent' }] });
+  });
+
+  it('answers the matched invoice’s own unread reason, never an orange line with no figure', async () => {
+    const { svc } = service({ record: manual, files: [file('a', [invoice('unreadable_row')])] });
+    expect(await svc.forRecord(superAdmin, manual.id)).toEqual({ enabled: true, tolerancePercent: 1, unread: { reason: 'unreadable_row' } });
+  });
+
+  it('answers the reader’s passing reason while a PDF of the record is still unread', async () => {
+    const { svc } = service({ record: manual, files: [file('a', [invoice(null)]), file('b', null)] });
+    expect(await svc.forRecord(superAdmin, manual.id)).toEqual({ enabled: true, tolerancePercent: 1, unread: { reason: 'reader_busy' } });
   });
 });

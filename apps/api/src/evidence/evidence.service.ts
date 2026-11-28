@@ -470,9 +470,13 @@ export class EvidenceService {
     }
     // The selected batch's own invoice first; its failure fails the upload as any upload's would.
     const primary = await this.storePart(user, records, batch.id, plan.primary, checked.fileName, plan.sourceSha256);
+    // The batch already held the uploaded PDF whole: it keeps that file, which
+    // the answer names (no `source`), and it is not reported as receiving a
+    // part (review of PR B, second round, P2).
+    const keptWhole = primary.source === undefined;
     const split: EvidenceSplitDTO = {
       invoices: plan.invoices,
-      attached: [{ invoiceNo: plan.primary.invoiceNo, fuelBatchId: batch.id }],
+      attached: keptWhole ? [] : [{ invoiceNo: plan.primary.invoiceNo, fuelBatchId: batch.id }],
       notAttached: [...plan.notAttached],
       failedTargets: [],
     };
@@ -498,8 +502,10 @@ export class EvidenceService {
         try {
           const targetRecords = await this.liveBatchRecords(target.id);
           if (targetRecords.length === 0) continue;
-          await this.storePart(user, targetRecords, target.id, part, checked.fileName, plan.sourceSha256);
-          split.attached.push({ invoiceNo: part.invoiceNo, fuelBatchId: target.id });
+          const stored = await this.storePart(user, targetRecords, target.id, part, checked.fileName, plan.sourceSha256);
+          // A batch that already held the uploaded PDF whole keeps it: its invoice
+          // is there, but it received no part (review of PR B, third round).
+          if (stored.source !== undefined) split.attached.push({ invoiceNo: part.invoiceNo, fuelBatchId: target.id });
           attached = true;
         } catch (error) {
           failed = true;
@@ -625,9 +631,9 @@ export class EvidenceService {
    * its reading commit together; a part's source (the uploaded PDF's digest and
    * pages); and idempotence per uploaded PDF on a batch — a batch already
    * holding the same part, or the uploaded PDF itself whole, gains no part of
-   * it, and one holding a part cut from a PDF gains no whole copy of it (one
-   * upload split while an identical one found the reader busy; review of PR B,
-   * P2). It is checked before the upload, and again under the batch lock,
+   * it, and one holding a part cut from a PDF, or that PDF whole, gains no
+   * whole copy of it (identical uploads, one split while another found the
+   * reader busy, or both busy; review of PR B, two rounds). It is checked before the upload, and again under the batch lock,
    * where a concurrent attach is decided; the staged object goes.
    */
   private async storeFile(
@@ -650,7 +656,9 @@ export class EvidenceService {
           ],
         }
       : fuelBatchId !== null
-        ? { subsidiaryId, ...onRecords, sourceSha256: checked.sha256 }
+        ? // The same PDF stored whole twice — two uploads that both found the
+          // reader busy — is one file too (review of PR B, second round, P2).
+          { subsidiaryId, ...onRecords, OR: [{ sourceSha256: checked.sha256 }, { sha256: checked.sha256, sourceSha256: null }] }
         : null;
     if (sameSource) {
       const existing = await this.prisma.evidence.findFirst({ where: sameSource, include: WITH_LINKED_RECORDS });

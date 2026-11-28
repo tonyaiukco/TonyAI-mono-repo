@@ -31,6 +31,10 @@
     "registration": {
       "code_secret_version": "<32-lowercase-hex>",
       "allow_placeholder_consent": true
+    },
+    "evidence_assistant": {
+      "enabled": true,
+      "tolerance_percent": 1
     }
   }
 }

@@ -109,7 +109,13 @@ describe("a split upload's summary (D10)", () => {
     expect(words.notAttached[0]).toBe("OZK0000000000006 — bu numarayı taşıyan açık bir paketiniz yok");
     expect(words.failed).toMatch(/aynı PDF'i yeniden ekleyin/);
     const one = splitSummary({ invoices: 23, attached: [{ invoiceNo: "DAU0000000000003", fuelBatchId: "a" }], notAttached: [], failedTargets: [] }, en);
-    expect(one).toEqual({ attached: "Split by invoice: attached to 1 package.", heading: null, notAttached: [], failed: null });
+    expect(one).toEqual({ keptWhole: null, attached: "Split by invoice: attached to 1 package.", heading: null, notAttached: [], failed: null });
+  });
+
+  it("says the package keeps the PDF whole when it already held it, and counts only the packages that received a part", () => {
+    const split = { invoices: 3, attached: [{ invoiceNo: "OZK0000000000002", fuelBatchId: "b" }], notAttached: [], failedTargets: [] };
+    expect(splitSummary(split, en, true)).toMatchObject({ keptWhole: "This package already holds the whole PDF and keeps it.", attached: "Split by invoice: attached to 1 package." });
+    expect(splitSummary({ ...split, attached: [] }, tr, true)).toMatchObject({ keptWhole: "Bu pakette PDF'in tamamı zaten var ve öyle kalıyor.", attached: null });
   });
 });
 

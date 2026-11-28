@@ -3,8 +3,10 @@ import { Prisma } from '@tonyai/db';
 import {
   FILE_FUELS,
   FUEL_INVOICE_ROW_STATES,
+  assistantRecordFuel,
   parseShellInvoiceRef,
   type EvidenceAssistantDTO,
+  type EvidenceAssistantRecordDTO,
   type EvidenceAssistantInvoiceDTO,
   type EvidenceAssistantUnreadReason,
   type EvidenceInvoiceSeries,
@@ -13,13 +15,14 @@ import {
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { ResourceNotFoundError } from '../common/api-error';
+import { recordScopeWhere } from '../activity-records/record-scope';
 import { fuelBatchScopeWhere } from '../fuel-batches/fuel-batch-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { EVIDENCE_BUCKET } from '../storage/buckets';
-import { compare, differences } from './compare';
+import { compare, compareRecord, differences } from './compare';
 import { EvidenceAssistantRuntime } from './evidence-assistant-runtime';
-import { READER_VERSION, isInvoiceSeries } from './invoice-layout';
+import { READER_VERSION, fold, isInvoiceSeries } from './invoice-layout';
 import { packageInvoices } from './package-invoice';
 import type { ReaderSession, TransientReason } from './pdf-reader.service';
 import { READER_LIMITS } from './reader-limits';
@@ -47,6 +50,16 @@ interface InvoiceIdentity {
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** What a reading stored at a comparison is checked against: the batch's, or the manual record's, files. */
+type ReadingOwner = { fuelBatchId: string } | { activityRecordId: string };
+
+/** The invoice number a manual record names (`input.invoice_no`, BUG-16), trimmed; null when it names none. */
+export function recordInvoiceNo(input: unknown): string | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const value = (input as Record<string, unknown>).invoice_no;
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
 
 /** The Shell half-month reference before or after `ref` (`2025-03-1` ↔ `2025-02-2`, `2025-03-2`). */
 export function neighbourShellRef(ref: string, step: -1 | 1): string | null {
@@ -86,7 +99,7 @@ export class EvidenceAssistantService {
 
     const files = await this.packageFiles(batch.id);
     if (files.length === 0) return unread('no_evidence');
-    const transient = await this.readUnreadFiles(user, batch.id, files);
+    const transient = await this.readUnreadFiles(user, { fuelBatchId: batch.id }, files);
     // A PDF of the package still unread may hold another invoice of it, and so
     // turn one match into several: no answer from the others meanwhile
     // (review of PR B, P2).
@@ -104,7 +117,11 @@ export class EvidenceAssistantService {
     const packageLitres = await this.packageLitres(batch.id);
     const live = await this.invoiceRows(identity, batch.id);
     const shared = live.outside > 0;
-    const neighbours = await this.neighbourDifferences(user, batch, identity);
+    // The period-shift rule looks at the account's neighbouring invoice. An
+    // invoice shared by several accounts has one per account, and its
+    // invoice-level comparison must read the same from each of its batches:
+    // the rule is not applied to it (review of PR B, second round, P2).
+    const neighbours = live.accounts <= 1 ? await this.neighbourDifferences(user, batch, identity) : [];
     const comparison = compare({
       tolerancePercent: this.runtime.config.tolerancePercent,
       invoiceLines: match.invoice.lines,
@@ -129,11 +146,76 @@ export class EvidenceAssistantService {
     };
   }
 
+  /**
+   * `GET /activity-records/:id/evidence-assistant` (C6): a manual fuel record
+   * in litres compared as a package of one record, on its own figure. Its
+   * invoice is the read invoice its invoice number names among its files; with
+   * no number, the sole read invoice; two and no number, not read. Any other
+   * record — a batch's (compared on its batch), not in litres, another
+   * category — gets no comparison here: `{ enabled: false }`, as when off, so
+   * no panel is shown. The record's scope first, the assistant on or off.
+   */
+  async forRecord(user: RequestUser, activityRecordId: string): Promise<EvidenceAssistantRecordDTO> {
+    const record = await this.prisma.activityRecord.findFirst({
+      where: { AND: [{ id: activityRecordId }, recordScopeWhere(user)] },
+      include: { subsidiary: { select: { organisationId: true } } },
+    });
+    // A record that moved with its company to another organisation answers as unknown (as `loadScoped`).
+    if (!record || record.subsidiary.organisationId !== user.organisationId) throw new ResourceNotFoundError('record_not_found');
+    if (!this.runtime.enabled) return { enabled: false };
+    // A voided record is not compared, as a batch's voided records are not (review of PR B, third round).
+    const fuel = record.status === 'voided' ? null : assistantRecordFuel(record);
+    if (fuel === null) return { enabled: false };
+    const tolerancePercent = Number(this.runtime.config.tolerancePercent);
+    const unread = (reason: EvidenceAssistantUnreadReason): EvidenceAssistantRecordDTO => ({ enabled: true, tolerancePercent, unread: { reason } });
+
+    const files = await this.filesWhere({ links: { some: { activityRecordId: record.id } } });
+    if (files.length === 0) return unread('no_evidence');
+    const transient = await this.readUnreadFiles(user, { activityRecordId: record.id }, files);
+    // A PDF still unread may hold the invoice: no answer from the others meanwhile.
+    if (transient) return unread(transient);
+
+    const found: Array<{ invoice: ReadInvoice; file: PackageFile }> = [];
+    for (const file of files) for (const invoice of file.reading?.invoices ?? []) found.push({ invoice, file });
+    const named = recordInvoiceNo(record.input);
+    // One invoice printed in two files is one; the copy that was read wins (as `packageInvoices`).
+    const byNumber = new Map<string, { invoice: ReadInvoice; file: PackageFile }>();
+    for (const entry of found) {
+      const key = fold(entry.invoice.invoiceNo.trim());
+      if (named !== null && key !== fold(named)) continue;
+      const held = byNumber.get(key);
+      if (!held || (held.invoice.unreadReason !== null && entry.invoice.unreadReason === null)) byNumber.set(key, entry);
+    }
+    const matches = [...byNumber.values()];
+    if (matches.length > 1) return unread('several_matching_invoices');
+    if (matches.length === 0) return unread(this.noMatchReason(files));
+    const match = matches[0]!;
+    if (match.invoice.unreadReason) return unread(match.invoice.unreadReason);
+    const comparison = compareRecord({
+      tolerancePercent: this.runtime.config.tolerancePercent,
+      invoiceLines: match.invoice.lines,
+      fuel,
+      litres: String(record.activityValue),
+    });
+    return {
+      enabled: true,
+      tolerancePercent,
+      invoice: this.invoiceDTO(match.invoice, match.file),
+      otherLines: comparison.otherLines,
+      level: 'package',
+      lines: [comparison.line],
+    };
+  }
+
   // ── The package's files and their readings ─────────────────────────────────
 
-  private async packageFiles(fuelBatchId: string): Promise<PackageFile[]> {
+  private packageFiles(fuelBatchId: string): Promise<PackageFile[]> {
+    return this.filesWhere({ links: { some: { activityRecord: { fuelBatchId, status: { not: 'voided' } } } } });
+  }
+
+  private async filesWhere(where: Prisma.EvidenceWhereInput): Promise<PackageFile[]> {
     const rows = await this.prisma.evidence.findMany({
-      where: { links: { some: { activityRecord: { fuelBatchId, status: { not: 'voided' } } } } },
+      where,
       include: { readings: { where: { readerVersion: READER_VERSION } } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
@@ -157,7 +239,7 @@ export class EvidenceAssistantService {
    * or read by an earlier reader. One session, one budget; never a neighbour's
    * file. Answers the transient reason of the first file it could not read.
    */
-  private async readUnreadFiles(user: RequestUser, fuelBatchId: string, files: PackageFile[]): Promise<TransientReason | null> {
+  private async readUnreadFiles(user: RequestUser, owner: ReadingOwner, files: PackageFile[]): Promise<TransientReason | null> {
     const pending = files.filter((f) => f.reading === null && f.mimeType === 'application/pdf');
     if (pending.length === 0) return null;
     let transient: TransientReason | null = null;
@@ -176,7 +258,7 @@ export class EvidenceAssistantService {
             transient ??= reading.transient;
             continue;
           }
-          file.reading = await this.storeReading(user, fuelBatchId, file.id, reading);
+          file.reading = await this.storeReading(user, owner, file.id, reading);
         }
       });
       if (outcome && typeof outcome === 'object' && 'refused' in outcome) transient = outcome.refused;
@@ -220,12 +302,21 @@ export class EvidenceAssistantService {
    * caller can read; a concurrent first view that already inserted it wins, and
    * its reading is the answer (no second row, no second audit).
    */
-  private async storeReading(user: RequestUser, fuelBatchId: string, evidenceId: string, reading: ReadingRow): Promise<ReadingRow | null> {
+  private async storeReading(user: RequestUser, owner: ReadingOwner, evidenceId: string, reading: ReadingRow): Promise<ReadingRow | null> {
+    // A record's file: the record still live, in the caller's scope and organisation at the insert (review of groups 10–11).
+    const liveRecord: Prisma.ActivityRecordWhereInput[] = [
+      recordScopeWhere(user),
+      { status: { not: 'voided' } },
+      user.organisationId ? { subsidiary: { organisationId: user.organisationId } } : { id: { in: [] } },
+    ];
+    const link: Prisma.ActivityRecordEvidenceWhereInput = 'fuelBatchId' in owner
+      ? { activityRecord: { status: { not: 'voided' }, fuelBatch: { AND: [{ id: owner.fuelBatchId }, fuelBatchScopeWhere(user)] } } }
+      : { activityRecordId: owner.activityRecordId, activityRecord: { AND: liveRecord } };
     return this.prisma.$transaction(async (tx) => {
       const evidence = await tx.evidence.findFirst({
         where: {
           id: evidenceId,
-          links: { some: { activityRecord: { status: { not: 'voided' }, fuelBatch: { AND: [{ id: fuelBatchId }, fuelBatchScopeWhere(user)] } } } },
+          links: { some: link },
         },
         select: { id: true, subsidiaryId: true },
       });
@@ -240,7 +331,7 @@ export class EvidenceAssistantService {
         const winner = await tx.evidenceReading.findUnique({ where: { evidenceId_readerVersion: { evidenceId, readerVersion: reading.readerVersion } } });
         return winner ? readingRow(winner.status as ReadingRow['status'], winner.pageCount, winner.invoices as unknown as ReadInvoice[]) : null;
       }
-      await this.audit.record(user, { action: 'read', entity: 'evidence', entityId: evidenceId, diff: { reading: readingSummary(reading), fuelBatchId } }, tx);
+      await this.audit.record(user, { action: 'read', entity: 'evidence', entityId: evidenceId, diff: { reading: readingSummary(reading), ...owner } }, tx);
       return reading;
     });
   }
@@ -350,7 +441,8 @@ export class EvidenceAssistantService {
    * Shell by half-month, Petrol Ofisi by first transaction time. A neighbour
    * counts only when the caller can read one of its batches, it has a stored
    * reading by the current reader naming exactly one invoice of it, and the
-   * order is unambiguous. Its files are never read here.
+   * order is unambiguous, and none of its PDFs is still unread. Its files are
+   * never read here. Applied only to an invoice of one account.
    */
   private async neighbourDifferences(
     user: RequestUser,
@@ -368,7 +460,16 @@ export class EvidenceAssistantService {
       });
       if (neighbour.length === 0) continue;
       const invoices: ReadInvoice[] = [];
-      for (const nb of neighbour) for (const file of await this.packageFiles(nb.id)) invoices.push(...(file.reading?.invoices ?? []));
+      let pending = false;
+      for (const nb of neighbour) {
+        for (const file of await this.packageFiles(nb.id)) {
+          // A neighbour's PDF not yet read may hold a second invoice of its
+          // key: no balance from it until it is (review of PR B, second round, P2).
+          if (file.reading === null && file.mimeType === 'application/pdf') pending = true;
+          invoices.push(...(file.reading?.invoices ?? []));
+        }
+      }
+      if (pending) continue;
       const matches = packageInvoices({ source: batch.source, invoiceRef: ref }, invoices);
       if (matches.length !== 1 || matches[0]!.unreadReason) continue;
       const rows = await this.invoiceRows({ ...identity, invoiceRef: ref }, null);

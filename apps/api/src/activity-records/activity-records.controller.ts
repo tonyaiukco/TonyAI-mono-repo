@@ -24,6 +24,8 @@ import {
   ActivityRecordPageQueryDto,
 } from './dto/activity-record-page-query.dto';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
+import type { EvidenceAssistantRecordDTO } from '@tonyai/shared-types';
+import { EvidenceAssistantService } from '../evidence-assistant/evidence-assistant.service';
 
 /**
  * Over HTTP a review decision MUST name the submission it is about
@@ -43,6 +45,7 @@ export class ActivityRecordsController {
   constructor(
     private readonly service: ActivityRecordsService,
     private readonly trail: RecordAuditTrailService,
+    private readonly assistant: EvidenceAssistantService,
   ) {}
 
   /** One `CursorPage` of the caller's records (LP4-05 PR C). */
@@ -75,6 +78,17 @@ export class ActivityRecordsController {
   @Get(':id/audit-trail')
   auditTrail(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.trail.read(user, id);
+  }
+
+  /**
+   * The evidence assistant's comparison for a manual fuel record in litres
+   * (inc29-evidence-assistant, C6): a package of one record. A read in the READ
+   * group; scoped as the record is (404 outside it), `{ enabled: false }` when
+   * off or for a record it does not compare.
+   */
+  @Get(':id/evidence-assistant')
+  evidenceAssistant(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string): Promise<EvidenceAssistantRecordDTO> {
+    return this.assistant.forRecord(user, id);
   }
 
   @Post()

@@ -15,6 +15,9 @@ import {
   bearer,
   cleanupFuelData,
   cleanupFuelFactorFixture,
+  deleteRecordsAsService,
+  E2E_PERIOD,
+  E2E_YEAR,
   getAccessToken,
   listFuelBatches,
   login,
@@ -230,5 +233,76 @@ test('the labels are the documents’ in Turkish', async ({ page, request }) => 
     await expect(sheet.getByTestId('evidence-assistant')).toContainText(trAssistant.title);
   } finally {
     await request.patch(`${API_BASE}/me/preferences`, { headers: bearer(approver), data: { language: 'en' } });
+  }
+});
+
+/**
+ * Task 11.2 (C6): a manual fuel record in litres shows the panel on the record
+ * review sheet, as a package of one record, and the sheet's approve and return
+ * never wait for it; an LPG record in kilograms shows none. Lane:
+ * `SUB.logistics` / quarterly `E2E_YEAR` / Q2, Mobile Combustion and Fuel,
+ * entered by `entry@` (its central reporter grant), decided by `approver@`;
+ * both records are removed in `finally`.
+ */
+test('a manual diesel record shows the panel on its review sheet without holding the actions; LPG in kilograms shows none', async ({ page, request }) => {
+  const entry = await getAccessToken(request, ENTRY_EMAIL);
+  const ids: string[] = [];
+  const manual = async (data: Record<string, unknown>, file: string) => {
+    const created = await request.post(`${API_BASE}/activity-records`, {
+      headers: bearer(entry),
+      data: { subsidiaryId: SUB.logistics, locationId: null, reportingYear: E2E_YEAR, reportingPeriod: E2E_PERIOD, periodValue: 'Q2', varianceReason: null, ...data },
+    });
+    expect(created.ok(), await created.text()).toBe(true);
+    const { id } = (await created.json()) as { id: string };
+    ids.push(id);
+    const upload = await request.post(`${API_BASE}/activity-records/${id}/evidence`, {
+      headers: bearer(entry),
+      multipart: { file: { name: file, mimeType: 'application/pdf', buffer: readFileSync(resolve(INVOICES, file)) } },
+    });
+    expect(upload.ok(), await upload.text()).toBe(true);
+    expect((await request.post(`${API_BASE}/activity-records/${id}/submit`, { headers: bearer(entry) })).ok()).toBe(true);
+    return id;
+  };
+  try {
+    // The single invoice prints 1.168,00 L of diesel; the record says the same.
+    await manual({ category: 'Mobile Combustion', activityType: 'on_road_diesel', activityValue: 1168, activityUnit: 'litres', input: { invoice_no: 'OZK0000000000002' } }, 'ozk-single.pdf');
+    await manual({ category: 'Fuel', activityType: 'lpg', activityValue: 300, activityUnit: 'kg', input: null }, 'ozk-single.pdf');
+
+    await login(page, APPROVER_EMAIL);
+    let asked = 0;
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route('**/activity-records/*/evidence-assistant', async (route) => {
+      asked += 1;
+      await held;
+      await route.continue();
+    });
+    await page.goto('/review');
+    const rows = page.locator('table tbody tr', { hasText: 'TonyAI Logistics' }).filter({ hasText: `Q2 ${E2E_YEAR}` });
+    await rows.filter({ hasText: 'Mobile Combustion' }).click();
+    // Approve and return render while the panel is still waiting, which points to the manual check.
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Return', exact: true })).toBeVisible();
+    const panel = page.getByTestId('evidence-assistant');
+    await expect(panel).toContainText(enAssistant.loading);
+    await expect(panel).toContainText(enAssistant.manualCheck);
+    release();
+    const line = panel.getByTestId('evidence-assistant-line-diesel');
+    await expect(line).toContainText('Invoice: 1,168 L diesel (OZK…002');
+    await expect(line).toContainText('Package: 1,168 L');
+    await expect(line).toContainText(enAssistant.states.consistent);
+    // Asked once: taking the record into review does not ask again (a second request would find the reader busy).
+    expect(asked).toBe(1);
+    await page.keyboard.press('Escape');
+
+    // LPG in kilograms: no panel, and the comparison is never asked for.
+    const before = asked;
+    await rows.filter({ hasText: 'Fuel' }).filter({ hasNotText: 'Mobile Combustion' }).click();
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+    await expect(page.getByTestId('evidence-assistant')).toHaveCount(0);
+    expect(asked).toBe(before);
+    await page.unroute('**/activity-records/*/evidence-assistant');
+  } finally {
+    await deleteRecordsAsService(request, ids);
   }
 });

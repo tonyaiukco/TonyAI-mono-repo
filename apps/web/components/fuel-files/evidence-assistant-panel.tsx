@@ -16,9 +16,12 @@ import {
   unreadWording,
   type AssistantKey,
 } from "@/lib/evidence-assistant-view";
-import type { EvidenceAssistantDTO, Locale } from "@/lib/types";
+import type { EvidenceAssistantDTO, EvidenceAssistantRecordDTO, Locale } from "@/lib/types";
 
-type Answer = { kind: "loading" } | { kind: "failed" } | { kind: "answer"; dto: EvidenceAssistantDTO };
+type Answer = { kind: "loading" } | { kind: "failed" } | { kind: "answer"; dto: EvidenceAssistantDTO | EvidenceAssistantRecordDTO };
+
+/** What the panel compares: a fuel batch (D10), or a manual fuel record in litres as a package of one (C6). */
+export type AssistantSource = { kind: "batch"; id: string } | { kind: "record"; id: string };
 
 /**
  * The evidence assistant beside a fuel package in the review queue
@@ -30,13 +33,15 @@ type Answer = { kind: "loading" } | { kind: "failed" } | { kind: "answer"; dto: 
  *
  * `version` changes whenever the package's files or submission change, so the
  * comparison is asked again (INC-2.6 §1.2: it runs again on the new value).
+ * The same panel shows a manual fuel record's comparison on the record review
+ * sheet (C6): one line, the record's own figure, never a shared-invoice note.
  */
 export function EvidenceAssistantPanel({
-  batchId,
+  source,
   version,
   onOpenBatch,
 }: {
-  batchId: string;
+  source: AssistantSource;
   version: string;
   onOpenBatch?: (id: string) => void;
 }) {
@@ -49,12 +54,13 @@ export function EvidenceAssistantPanel({
   useEffect(() => {
     const token = guard.next();
     setAnswer({ kind: "loading" });
-    api
-      .getFuelBatchEvidenceAssistant(batchId)
+    const request: Promise<EvidenceAssistantDTO | EvidenceAssistantRecordDTO> =
+      source.kind === "batch" ? api.getFuelBatchEvidenceAssistant(source.id) : api.getRecordEvidenceAssistant(source.id);
+    request
       .then((dto) => guard.isLatest(token) && setAnswer({ kind: "answer", dto }))
       .catch(() => guard.isLatest(token) && setAnswer({ kind: "failed" }));
     return () => guard.cancel();
-  }, [batchId, version, guard]);
+  }, [source.kind, source.id, version, guard]);
 
   if (answer.kind === "answer" && !answer.dto.enabled) return null;
 
@@ -121,7 +127,7 @@ function Body({ answer, copy, onOpenBatch }: { answer: Answer; copy: { t: (key: 
         <div>
           <p className="text-xs text-muted-foreground">{t("otherLines")}</p>
           <ul className="text-xs">
-            {dto.otherLines.map((l) => <li key={l.product}>{t("otherLine", { product: l.product, litres: assistantLitres(l.litres, copy.locale) })}</li>)}
+            {dto.otherLines.map((l, i) => <li key={`${i}-${l.product}`}>{t("otherLine", { product: l.product, litres: assistantLitres(l.litres, copy.locale) })}</li>)}
           </ul>
         </div>
       )}

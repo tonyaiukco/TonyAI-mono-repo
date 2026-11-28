@@ -129,9 +129,11 @@ describe('readInvoices: totals per fuel (requirement 4)', () => {
 
   it('keeps a product the rule does not name as a line of its own', () => {
     const inv = one({ rows: [['Motorin', '200,00'], ['AdBlue', '20,00'], ['ADBLUE', '5,5']] });
+    // Each such row stays a line of its own, as printed (B12; review of PR B, second round).
     expect(inv.lines).toEqual([
       { product: 'Motorin', fuel: 'diesel', litres: '200.00' },
-      { product: 'AdBlue', fuel: null, litres: '25.50' },
+      { product: 'AdBlue', fuel: null, litres: '20.00' },
+      { product: 'ADBLUE', fuel: null, litres: '5.5' },
     ]);
   });
 
@@ -377,5 +379,60 @@ describe('readInvoices: the pre-merge review’s cases (review of PR B)', () => 
     ]);
     expect(result.invoices[0]).toMatchObject({ unreadReason: null, lines: [{ litres: '15.00' }] });
     expect(result.routable).toBe(true);
+  });
+});
+
+describe('readInvoices: the second pre-merge review’s cases (review of PR B, second round)', () => {
+  it('leaves an invoice unread when a page before its first quantity header holds a fuel row', () => {
+    const result = readInvoices([
+      page({ header: null, rows: [['Motorin Med', '50,00']], total: false, mark: 'Sayfa 1/2' }),
+      page({ rows: [['Motorin Med', '100,00']], mark: 'Sayfa 2/2' }),
+    ]);
+    expect(result.invoices[0]).toMatchObject({ unreadReason: 'unreadable', lines: [] });
+  });
+
+  it('still reads an invoice whose first page holds only its header facts', () => {
+    const result = readInvoices([
+      page({ header: null, rows: [], total: false, mark: 'Sayfa 1/2' }),
+      page({ rows: [['Motorin Med', '100,00']], mark: 'Sayfa 2/2' }),
+    ]);
+    expect(result.invoices[0]).toMatchObject({ unreadReason: null, lines: [{ litres: '100.00' }] });
+  });
+
+  it('leaves it unread when a fuel row past a subtotal has an unreadable quantity', () => {
+    expect(one({ rows: [['Motorin Med', '100,00'], ['Ara Toplam', '100,00'], ['Motorin Med', '100X00', '4.210,00']], total: false }))
+      .toMatchObject({ unreadReason: 'unreadable_row', lines: [] });
+  });
+
+  it('leaves it unread when a fuel row past a subtotal has an empty quantity but a price', () => {
+    expect(one({ rows: [['Motorin Med', '100,00'], ['Ara Toplam', '100,00'], ['Motorin Med', null, '4.210,00']], total: false }))
+      .toMatchObject({ unreadReason: 'unreadable_row' });
+  });
+});
+
+describe('readInvoices: the third review’s cases (review of PR B, third round)', () => {
+  it('leaves it unread when a fuel row past a subtotal is printed as a name row and a figure row', () => {
+    expect(one({ rows: [['Motorin Med', '100,00'], ['Ara Toplam', '100,00'], ['Motorin Med', null], [null, '50,00']], total: false }))
+      .toMatchObject({ unreadReason: 'unreadable_row', lines: [] });
+  });
+
+  it('leaves it unread when a fuel row past a subtotal has an unreadable quantity and no price', () => {
+    const subtotal = page({ rows: [['Motorin Med', '100,00'], ['Ara Toplam', '100,00']], total: false });
+    subtotal.items.push(item('Motorin Med', 40, 560), item('100X00', 260, 560));
+    expect(readInvoices([subtotal]).invoices[0]).toMatchObject({ unreadReason: 'unreadable_row' });
+  });
+
+  it('sees a fuel row with a leading sequence number on a page before the first header', () => {
+    const first = page({ header: null, rows: [], total: false, mark: 'Sayfa 1/2' });
+    first.items.push(item('1 Motorin Med 50,00', 40, 600));
+    const result = readInvoices([first, page({ rows: [['Motorin Med', '100,00']], mark: 'Sayfa 2/2' })]);
+    expect(result.invoices[0]).toMatchObject({ unreadReason: 'unreadable', lines: [] });
+  });
+
+  it('still reads an invoice whose first page names a fuel in words with no figure', () => {
+    const first = page({ header: null, rows: [], total: false, mark: 'Sayfa 1/2' });
+    first.items.push(item('Motorin teslimatı için açıklama', 40, 600));
+    const result = readInvoices([first, page({ rows: [['Motorin Med', '100,00']], mark: 'Sayfa 2/2' })]);
+    expect(result.invoices[0]).toMatchObject({ unreadReason: null, lines: [{ litres: '100.00' }] });
   });
 });

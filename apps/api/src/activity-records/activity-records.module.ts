@@ -1,12 +1,13 @@
 import { Module } from '@nestjs/common';
 import { CalculationsModule } from '../calculations/calculations.module';
 import { EvidenceModule } from '../evidence/evidence.module';
+import { EvidenceAssistantModule } from '../evidence-assistant/evidence-assistant.module';
 import { ActivityRecordsController } from './activity-records.controller';
 import { ActivityRecordsService } from './activity-records.service';
 import { RecordAuditTrailService } from './record-audit-trail.service';
 
 @Module({
-  imports: [CalculationsModule, EvidenceModule],
+  imports: [CalculationsModule, EvidenceModule, EvidenceAssistantModule],
   controllers: [ActivityRecordsController],
   providers: [ActivityRecordsService, RecordAuditTrailService],
   // Exported for the bulk importer (WP8), which creates records one at a time

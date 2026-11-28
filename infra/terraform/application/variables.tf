@@ -47,6 +47,12 @@ variable "release" {
     registration = optional(object({
       code_secret_version = string, allow_placeholder_consent = bool
     }))
+    # The evidence assistant (inc29-evidence-assistant, D8): its emergency switch
+    # and its tolerance, plain values. Absent: the API's defaults (on, 1%), and no
+    # setting reaches it.
+    evidence_assistant = optional(object({
+      enabled = bool, tolerance_percent = number
+    }))
     runtime_limits       = optional(map(number), {})
     storage_cleanup_hold = bool, storage_sweep_interval_seconds = number
   })
@@ -87,6 +93,15 @@ variable "release" {
     )
     error_message = "Registration needs the exact Key Vault version of its code; the placeholder notice may be allowed on staging only."
   }
+  # The API's own tolerance shape (evidence-assistant-config.ts): a value it
+  # would refuse at boot is refused at plan.
+  validation {
+    condition = var.release.evidence_assistant == null ? true : (
+      var.release.evidence_assistant.enabled != null &&
+      can(regex("^(?:100(?:\\.0{1,2})?|[0-9]{1,2}(?:\\.[0-9]{1,2})?)$", tostring(var.release.evidence_assistant.tolerance_percent)))
+    )
+    error_message = "The evidence assistant needs its switch and a tolerance from 0 to 100 with at most two decimals."
+  }
 }
 # Operational settings are plain values, never Key Vault secrets.
 locals {
@@ -124,6 +139,11 @@ locals {
     { name = "REGISTRATION_CODE", secretRef = "registration-code" },
     { name = "REGISTRATION_ALLOW_PLACEHOLDER_CONSENT", value = tostring(var.release.registration.allow_placeholder_consent) }
   ]
+  # Both always emitted when the block is present, so the readback compares exact values.
+  evidence_assistant_env = var.release.evidence_assistant == null ? [] : [
+    { name = "EVIDENCE_ASSISTANT", value = var.release.evidence_assistant.enabled ? "on" : "off" },
+    { name = "EVIDENCE_ASSISTANT_TOLERANCE_PERCENT", value = tostring(var.release.evidence_assistant.tolerance_percent) }
+  ]
   api_env = concat([
     { name = "NODE_ENV", value = "production" }, { name = "PORT", value = "3001" },
     { name = "NODE_OPTIONS", value = "--max-old-space-size=768" },
@@ -134,7 +154,7 @@ locals {
     { name = "SUPABASE_JWT_SCHEME", value = "jwks" }, { name = "WEB_ORIGIN", value = local.cors_origins },
     { name = "DATABASE_URL", secretRef = "database-url" },
     { name = "SUPABASE_SERVICE_ROLE_KEY", secretRef = "supabase-service-role-key" }
-  ], local.mail_env, local.registration_env, [for k, v in local.runtime_limits : { name = k, value = tostring(v) }])
+  ], local.mail_env, local.registration_env, local.evidence_assistant_env, [for k, v in local.runtime_limits : { name = k, value = tostring(v) }])
   web_env = [
     { name = "NODE_ENV", value = "production" }, { name = "PORT", value = "3000" },
     { name = "HOSTNAME", value = "0.0.0.0" }, { name = "SUPABASE_URL_INTERNAL", value = local.supabase_url }

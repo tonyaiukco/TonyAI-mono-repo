@@ -231,7 +231,7 @@ class RegistrationSettingsTests(unittest.TestCase):
         self.assertIs(example['release']['registration']['allow_placeholder_consent'], True)
         # The allowance it shows is only valid where the example says it is deployed.
         self.assertEqual(example['foundation']['environment'], 'staging')
-        self.assertEqual(set(example['release']) - {'runtime_limits', 'mail', 'registration'}, set(inputs()['release']))
+        self.assertEqual(set(example['release']) - {'runtime_limits', 'mail', 'registration', 'evidence_assistant'}, set(inputs()['release']))
         value = inputs(); value['release']['registration'] = {**example['release']['registration'], 'code_secret_version': 'd' * 32}
         validate_release(value)
 

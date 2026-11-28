@@ -191,10 +191,11 @@ describe('reading a PDF at a batch upload (task 7.1)', () => {
     // Busy: another request holds the one reader for the whole upload.
     let release!: () => void;
     const held = reader.withSession(30_000, () => new Promise<void>((r) => { release = r; }));
-    await evidenceWith().evidence.uploadForFuelBatch(user, batchId!, pdf(fixture('ozk-single.pdf'), 'busy.pdf'));
+    await evidenceWith().evidence.uploadForFuelBatch(user, batchId!, pdf(fixture('ozk-adblue.pdf'), 'busy.pdf'));
     release();
     await held;
-    await evidenceWith({ enabled: false }).evidence.uploadForFuelBatch(user, batchId!, pdf(fixture('ozk-single.pdf'), 'off.pdf'));
+    await evidenceWith({ enabled: false }).evidence.uploadForFuelBatch(user, batchId!, pdf(fixture('ozk-mixed.pdf'), 'off.pdf'));
+    // Three different PDFs: identical bytes would be one file (review of PR B, second round).
     const files = await filesOf(batchId!);
     expect(files.map((f) => [f.fileName, f.readings.length])).toEqual([['failing.pdf', 0], ['busy.pdf', 0], ['off.pdf', 0]]);
     expect(await owner.evidenceReading.count({ where: { evidence: { subsidiaryId: tenant.subsidiaryId } } })).toBe(0);
@@ -477,6 +478,33 @@ describe('sending the other invoices to their own packages (task 7.3)', () => {
     for (const path of storage.upload.mock.calls.map((c) => c[1] as string)) expect(kept.has(path) || removed.has(path), path).toBe(true);
   }, 120_000);
 
+  it('two identical uploads both stored whole leave one file on the batch (review of PR B, second round)', async () => {
+    await account('PO-A', tenant.subsidiaryId, 'petrol_ofisi');
+    const user = await masterkey();
+    const batches = await poBatches(user, [['PO-A', 'OZK0000000000001'], ['PO-A', 'OZK0000000000002']]);
+    const [first] = batches.get('OZK0000000000001')!;
+    const storage = storageStub();
+    let arrived = 0;
+    let meet!: () => void;
+    const met = new Promise<void>((r) => { meet = r; });
+    storage.upload.mockImplementation(async () => {
+      arrived += 1;
+      if (arrived === 2) meet();
+      if (arrived <= 2) await met;
+    });
+    // Both find the reader busy with a third job: each is stored whole.
+    const busy = Object.create(reader) as PdfReaderService;
+    busy.withSession = (async () => ({ refused: 'reader_busy' })) as unknown as PdfReaderService['withSession'];
+    const source = fixture('ozk-three.pdf');
+    const [a, b] = await Promise.all([1, 2].map(() => evidenceWith({ storage, reader: busy }).evidence.uploadForFuelBatch(user, first!, pdf(source))));
+    expect(a!.id).toBe(b!.id);
+    expect(await filesOf(first!)).toHaveLength(1);
+    expect(await owner.auditLog.count({ where: { entity: 'fuel_batch', action: 'attach', entityId: first! } })).toBe(1);
+    const kept = new Set((await owner.evidence.findMany({ where: { subsidiaryId: tenant.subsidiaryId } })).map((e) => e.storagePath));
+    const removed = new Set(storage.remove.mock.calls.flatMap((c) => c[1] as string[]));
+    for (const path of storage.upload.mock.calls.map((c) => c[1] as string)) expect(kept.has(path) || removed.has(path), path).toBe(true);
+  }, 120_000);
+
   it('a part is not added to a batch already holding the uploaded PDF whole, nor the PDF whole beside its part', async () => {
     await account('PO-A', tenant.subsidiaryId, 'petrol_ofisi');
     const user = await masterkey();
@@ -487,9 +515,20 @@ describe('sending the other invoices to their own packages (task 7.3)', () => {
     const whole = await evidenceWith({ enabled: false }).evidence.uploadForFuelBatch(user, first!, pdf(source));
     const split = await evidenceWith().evidence.uploadForFuelBatch(user, first!, pdf(source));
     expect(split.id).toBe(whole.id);
+    // The answer names the whole file it kept, and does not report this batch as receiving a part.
+    expect(split.source).toBeUndefined();
+    expect(split.split!.attached.map((a) => a.fuelBatchId)).not.toContain(first);
+    expect(split.split!.attached.map((a) => a.fuelBatchId)).toContain(second);
     expect(await filesOf(first!)).toHaveLength(1);
     expect(await filesOf(second!)).toHaveLength(1);
     const again = await evidenceWith({ enabled: false }).evidence.uploadForFuelBatch(user, second!, pdf(source));
     expect((await filesOf(second!)).map((f) => f.id)).toEqual([again.id]);
+    // A third batch holding the PDF whole, reached by routing: it keeps the whole file and is not reported as receiving a part.
+    const [third] = (await poBatches(user, [['PO-A', 'OZK0000000000006']])).get('OZK0000000000006')!;
+    const kept = await evidenceWith({ enabled: false }).evidence.uploadForFuelBatch(user, third!, pdf(source));
+    const routed = await evidenceWith().evidence.uploadForFuelBatch(user, first!, pdf(source));
+    expect(routed.split!.attached.map((a) => a.fuelBatchId)).not.toContain(third);
+    expect(routed.split!.notAttached.map((n) => n.invoiceNo)).not.toContain('OZK0000000000006');
+    expect((await filesOf(third!)).map((f) => f.id)).toEqual([kept.id]);
   }, 120_000);
 });

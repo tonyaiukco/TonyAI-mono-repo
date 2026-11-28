@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compare, differences, type ComparisonInput } from './compare';
+import { compare, compareRecord, differences, type ComparisonInput } from './compare';
 import type { ReadInvoiceLine } from './read-invoices';
 
 /**
@@ -99,5 +99,30 @@ describe('compare (D6)', () => {
   it('compares exactly, beyond a float’s precision', () => {
     const result = compare(input({ tolerancePercent: '0', invoiceLines: [diesel('0.3')], packageLitres: { diesel: '0.30000000000000000001' } }));
     expect(result.lines[0]!.state).toBe('possible_difference');
+  });
+});
+
+describe('compareRecord: a manual record as a package of one (C6)', () => {
+  const lines = [
+    { product: 'Motorin Med', fuel: 'diesel' as const, litres: '1200.00' },
+    { product: 'Kurşunsuz 95', fuel: 'petrol' as const, litres: '40.00' },
+    { product: 'AdBlue', fuel: null, litres: '20.00' },
+  ];
+
+  it('puts the record beside the invoice line for its fuel, and lists the other lines uncompared', () => {
+    expect(compareRecord({ tolerancePercent: '1', invoiceLines: lines, fuel: 'diesel', litres: '1200' })).toEqual({
+      line: { fuel: 'diesel', invoiceLitres: '1200.00', packageLitres: '1200', state: 'consistent', periodShift: false },
+      otherLines: [{ product: 'Kurşunsuz 95', litres: '40.00' }, { product: 'AdBlue', litres: '20.00' }],
+    });
+  });
+
+  it('is consistent at the tolerance and a possible difference past it', () => {
+    expect(compareRecord({ tolerancePercent: '1', invoiceLines: lines, fuel: 'diesel', litres: '1212' }).line.state).toBe('consistent');
+    expect(compareRecord({ tolerancePercent: '1', invoiceLines: lines, fuel: 'diesel', litres: '1212.01' }).line.state).toBe('possible_difference');
+  });
+
+  it('is a possible difference when the invoice prints no line of the record’s fuel (LPG included)', () => {
+    expect(compareRecord({ tolerancePercent: '1', invoiceLines: lines.slice(1), fuel: 'diesel', litres: '10' }).line).toMatchObject({ invoiceLitres: null, state: 'possible_difference' });
+    expect(compareRecord({ tolerancePercent: '1', invoiceLines: lines, fuel: 'lpg', litres: '10' }).line).toMatchObject({ fuel: 'lpg', invoiceLitres: null, state: 'possible_difference' });
   });
 });

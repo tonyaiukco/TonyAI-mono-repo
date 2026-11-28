@@ -25,6 +25,12 @@ MUTANTS = [
     ('registration env drift check skipped', 'deploy_apps.py', "        verify_registration_environment(container.get('env', []), foundation, release, kind)", '        pass'),
     ('registration code shape validation skipped', 'registration_settings.py', "    if not isinstance(value, str) or not re.fullmatch(CODE_PATTERN, value):", '    if False:'),
     ('registration placeholder allowed outside staging', 'registration_settings.py', "    if registration['allow_placeholder_consent'] and foundation.get('environment') != 'staging':", '    if False:'),
+    ('evidence assistant env drift check skipped', 'deploy_apps.py', "        verify_evidence_assistant_environment(container.get('env', []), release, kind)", '        pass'),
+    ('evidence assistant release validation skipped', 'terraform_run.py', "    validate_evidence_assistant(release)", '    pass'),
+    ('evidence assistant tolerance range skipped', 'evidence_assistant_settings.py', "    if not re.fullmatch(TOLERANCE_PATTERN, text):", '    if False:'),
+    ('evidence assistant switch type skipped', 'evidence_assistant_settings.py', "    if type(block['enabled']) is not bool:", '    if False:'),
+    ('evidence assistant live form accepted unchecked', 'evidence_assistant_settings.py', "    if tolerance_text(value) != text:", '    if False:'),
+    ('live evidence assistant switch dropped from the export', 'qa_autodeploy.py', "        release['evidence_assistant'] = assistant", '        pass'),
     ('mail password validation skipped', 'mail_settings.py', "    if not isinstance(value, str) or not value.strip() or '\\n' in value or '\\r' in value:", '    if False:'),
     ('completed auth reconciliation skipped', 'supabase_setup.py', '        if reconcile_only:', '        if False:'),
 
@@ -289,7 +295,9 @@ def main():
                              'apps/api/src/common/runtime-config.ts', 'apps/api/Dockerfile', 'apps/web/Dockerfile', 'docker-compose.yml',
                              # The registration tests hold the vault's code shape to the API's own, and
                              # refuse for a vault the development code these two files publish.
-                             'packages/shared-types/src/index.ts', 'apps/api/.env.example', 'scripts/bootstrap.sh'):
+                             'packages/shared-types/src/index.ts', 'apps/api/.env.example', 'scripts/bootstrap.sh',
+                             # The evidence assistant tests hold the release's tolerance shape to the API's.
+                             'apps/api/src/evidence-assistant/evidence-assistant-config.ts'):
                 destination = target.parent / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(root / relative, destination)
@@ -346,6 +354,7 @@ def main():
             pattern = overrides.get(name, pattern)
             if name.startswith('mail '): pattern = 'test_mail_settings.py'
             if name.startswith('registration '): pattern = 'test_registration_settings.py'
+            if name.startswith('evidence assistant '): pattern = 'test_evidence_assistant_settings.py'
             if name.startswith('runtime ') and filename != 'cloud_ops.py': pattern = 'test_runtime_[dl]*.py'
             print(f'[{number}/{len(MUTANTS)}] START: {name} | {pattern}', flush=True)
             control_started = time.monotonic()

@@ -14,6 +14,7 @@ import type {
   EvidenceSplitDTO,
   EvidenceSplitNotAttachedReason,
   Locale,
+  ManualFuel,
 } from "@/lib/types";
 import { formatLitresText } from "@/lib/fuel-upload-view";
 import { formatNumber } from "@/lib/i18n/number";
@@ -32,7 +33,10 @@ export type AssistantKey =
   | "invoiceLevel"
   | "fuels.diesel"
   | "fuels.petrol"
+  | "fuels.lpg"
+  | "fuels.marine_gas_oil"
   | `unreadReasons.${Exclude<EvidenceAssistantUnreadReason, "no_evidence"> | "failed"}`
+  | "split.keptWhole"
   | "split.attachedOne"
   | "split.attachedMany"
   | "split.notAttached"
@@ -78,7 +82,7 @@ export function lineChip(line: Pick<EvidenceAssistantLineDTO, "state" | "periodS
 
 /** `Fatura: 7.502,66 L motorin (DAU…244, 01–15.02) | Paket: 7.502,66 L`. */
 export function lineText(
-  line: Pick<EvidenceAssistantLineDTO, "fuel" | "invoiceLitres" | "packageLitres">,
+  line: Pick<EvidenceAssistantLineDTO<ManualFuel>, "fuel" | "invoiceLitres" | "packageLitres">,
   invoice: EvidenceAssistantInvoiceDTO,
   copy: Copy,
 ): string {
@@ -123,10 +127,17 @@ export function unreadWording(reason: EvidenceAssistantUnreadReason | "failed", 
 }
 
 /** What a split upload did, for the uploader (D10): attached to N packages; these were not. */
-export function splitSummary(split: EvidenceSplitDTO, copy: Copy): { attached: string; notAttached: string[]; heading: string | null; failed: string | null } {
+export function splitSummary(
+  split: EvidenceSplitDTO,
+  copy: Copy,
+  keptWhole = false,
+): { keptWhole: string | null; attached: string | null; notAttached: string[]; heading: string | null; failed: string | null } {
   const packages = new Set(split.attached.map((a) => a.fuelBatchId)).size;
   return {
-    attached: packages === 1 ? copy.t("split.attachedOne") : copy.t("split.attachedMany", { count: formatNumber(packages, copy.locale) }),
+    // The package already held the PDF whole and keeps it: said first, so the
+    // summary never reads as if this package received its pages alone.
+    keptWhole: keptWhole ? copy.t("split.keptWhole") : null,
+    attached: packages === 0 ? null : packages === 1 ? copy.t("split.attachedOne") : copy.t("split.attachedMany", { count: formatNumber(packages, copy.locale) }),
     heading: split.notAttached.length > 0 ? copy.t("split.notAttached") : null,
     notAttached: split.notAttached.map((n) => `${n.invoiceNo} — ${copy.t(`split.reasons.${n.reason}`)}`),
     failed: split.failedTargets.length > 0 ? copy.t("split.failed") : null,
