@@ -312,6 +312,8 @@ describe('the comparison of a Shell batch (requirements 6, 11)', () => {
     for (const id of [a, b]) {
       expect(comparison(await compare.forBatch(user, id)).lines[0], id).toMatchObject({ invoiceLevelLitres: '25', state: 'possible_difference', periodShift: false });
     }
+    // And from the other side: S1's 082, one account's, takes no balance from the shared 081 (review of PR B, fourth round).
+    expect(comparison(await compare.forBatch(user, await batchOf('OZK0000000000082'))).lines[0]).toMatchObject({ invoiceLitres: '10.00', packageLitres: '15', state: 'possible_difference', periodShift: false });
   }, 120_000);
 
   it('leaves two invoices of one half-month unread, and a tanker batch', async () => {

@@ -109,7 +109,8 @@ class EvidenceAssistantReleaseTests(unittest.TestCase):
             source = value if 'evidence_assistant' in value['release'] else release()
             env += [{'name': k, **v} for k, v in evidence_assistant_environment(source['release']).items()]
         if defect == 'switch': next(e for e in env if e['name'] == 'EVIDENCE_ASSISTANT')['value'] = 'on'
-        if defect == 'tolerance': next(e for e in env if e['name'] == 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT')['value'] = '1.250'
+        if defect == 'tolerance': next(e for e in env if e['name'] == 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT')['value'] = '1.26'
+        if defect == 'same-value': next(e for e in env if e['name'] == 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT')['value'] = '1.250'
         if defect == 'missing': env[:] = [e for e in env if e['name'] != 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT']
         if defect == 'web-env':
             state['web']['properties']['template']['containers'][0]['env'].append({'name': 'EVIDENCE_ASSISTANT', 'value': 'off'})
@@ -120,8 +121,9 @@ class EvidenceAssistantReleaseTests(unittest.TestCase):
 
     def test_arm_readback_holds_the_live_api_to_the_release(self):
         value = release()
-        for defect in ('none', 'switch', 'tolerance', 'missing', 'web-env'):
+        for defect in ('none', 'same-value', 'switch', 'tolerance', 'missing', 'web-env'):
             with self.subTest(defect=defect), contextlib.redirect_stdout(io.StringIO()):
+                # 'same-value': 1.250 names the release's number, but the API refuses three decimals, so the readback does too.
                 if defect == 'none': verify(value, self.live(value))
                 else:
                     with self.assertRaises(SafeFailure): verify(value, self.live(value, defect))
@@ -152,14 +154,26 @@ class EvidenceAssistantReleaseTests(unittest.TestCase):
             'above 100': ({**good, 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT': {'value': '100.5'}}, 'tolerance is malformed'),
             'negative': ({**good, 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT': {'value': '-1'}}, 'tolerance is malformed'),
             'no value': ({**good, 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT': {}}, 'tolerance is malformed'),
-            'a trailing zero': ({**good, 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT': {'value': '1.10'}}, 'release form'),
-            'a whole number with decimals': ({**good, 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT': {'value': '100.0'}}, 'release form'),
-            'a leading zero': ({**good, 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT': {'value': '01'}}, 'release form'),
         }
         for name, (env, message) in cases.items():
             with self.subTest(case=name):
                 with self.assertRaises(SafeFailure) as caught: live_evidence_assistant(env)
                 self.assertIn(message, str(caught.exception))
+
+    def test_every_form_the_api_accepts_is_exported_as_its_number_and_reads_back(self):
+        # The spec's one domain: a value the API boots with is never a value the export refuses (fourth round).
+        for text, number in (('1.10', 1.1), ('100.0', 100), ('100.00', 100), ('01', 1), ('0.50', 0.5), ('5', 5), ('99.99', 99.99)):
+            env = {'EVIDENCE_ASSISTANT': {'value': 'off'}, 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT': {'value': text}}
+            with self.subTest(text=text):
+                live = live_evidence_assistant(env)
+                self.assertEqual(live, {'enabled': False, 'tolerance_percent': number})
+                value = inputs(); value['release']['evidence_assistant'] = live
+                validate_release(value)
+                verify_evidence_assistant_environment([{'name': k, **v} for k, v in env.items()], value['release'], 'api')
+        # A different value is still a different value.
+        value = inputs(); value['release']['evidence_assistant'] = block(False, 1.1)
+        with self.assertRaises(SafeFailure):
+            verify_evidence_assistant_environment([{'name': 'EVIDENCE_ASSISTANT', 'value': 'off'}, {'name': 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT', 'value': '1.11'}], value['release'], 'api')
 
     def test_example_manifest_names_the_block_in_the_shape_a_release_accepts(self):
         example = json.loads((ROOT / 'infra/config/application.example.json').read_text())

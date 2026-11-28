@@ -275,3 +275,38 @@ describe('forRecord: which invoice and which answer (qa-auditor review of groups
     expect(await svc.forRecord(superAdmin, manual.id)).toEqual({ enabled: true, tolerancePercent: 1, unread: { reason: 'reader_busy' } });
   });
 });
+
+describe('forRecord: copies and candidates (review of PR B, fourth round)', () => {
+  const base = {
+    id: '00000000-0000-4000-8000-0000000000d3', subsidiary: { organisationId: superAdmin.organisationId }, fuelBatchId: null, status: 'submitted',
+    category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres', activityValue: 1200, input: { invoice_no: 'OZK0000000000001' },
+  };
+  const invoice = (invoiceNo: string, litres: string | null, unreadReason: string | null = null) => ({
+    invoiceNo, series: invoiceNo.slice(0, 3), periodText: null, periodFrom: null, periodTo: null, buyerName: null, buyerTaxId: null,
+    pageFrom: 1, pageTo: 1, unreadReason, lines: litres === null ? [] : [{ product: 'Motorin Med', fuel: 'diesel', litres }],
+  });
+  const file = (id: string, invoices: object[]) => ({
+    id, fileName: `${id}.pdf`, mimeType: 'application/pdf', storagePath: id, sourceSha256: null, sourcePageFrom: null, sourcePageTo: null,
+    readings: [{ status: 'read', pageCount: 1, invoices }],
+  });
+
+  it('answers the manual check when two read copies of its invoice disagree, in either order', async () => {
+    for (const order of [['1200.00', '1800.00'], ['1800.00', '1200.00']]) {
+      const { svc } = service({ record: base, files: order.map((l, i) => file(`f${i}`, [invoice('OZK0000000000001', l)])) });
+      expect(await svc.forRecord(superAdmin, base.id), order.join()).toEqual({ enabled: true, tolerancePercent: 1, unread: { reason: 'several_matching_invoices' } });
+    }
+  });
+
+  it('compares one invoice printed identically in two files', async () => {
+    const { svc } = service({ record: base, files: [file('a', [invoice('OZK0000000000001', '1200.00')]), file('b', [invoice('ozk0000000000001', '1200.00')])] });
+    expect(await svc.forRecord(superAdmin, base.id)).toMatchObject({ lines: [{ state: 'consistent' }] });
+  });
+
+  it('with no number, takes the sole read invoice beside one the reader could not read', async () => {
+    const record = { ...base, input: null };
+    const { svc } = service({ record, files: [file('a', [invoice('OZK0000000000001', '1200.00')]), file('b', [invoice('ABC0000000000009', null, 'unknown_series')])] });
+    expect(await svc.forRecord(superAdmin, base.id)).toMatchObject({ invoice: { invoiceNo: 'OZK0000000000001' }, lines: [{ state: 'consistent' }] });
+    const none = service({ record, files: [file('b', [invoice('ABC0000000000009', null, 'unknown_series')])] });
+    expect(await none.svc.forRecord(superAdmin, base.id)).toMatchObject({ unread: { reason: 'unknown_series' } });
+  });
+});

@@ -454,7 +454,7 @@ images equal the candidate. It adds the live `mail` block (SMTP settings and the
 `smtp-password` version), the live `registration` block when registration is
 enabled (the `registration-code` version and the placeholder allowance), the live
 `evidence_assistant` block when the API holds the assistant's settings (its switch and
-tolerance; one without the other, or a value not in a release's form, is refused) and
+tolerance; one without the other, or a value the API would refuse, is refused) and
 `runtime_limits`, recomputes the candidate from the
 source commit's git objects, and runs the read-only release verifier before it
 writes. The file is new (never overwritten) and mode 0600. It holds Key Vault

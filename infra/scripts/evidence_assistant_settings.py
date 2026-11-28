@@ -59,6 +59,13 @@ def evidence_assistant_environment(release):
             'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT': {'value': tolerance_text(block['tolerance_percent'])}}
 
 
+def same_setting(name, live, expected):
+    """The switch exactly; the tolerance by value, in any form the API accepts (`1.10` is the release's 1.1)."""
+    if name != 'EVIDENCE_ASSISTANT_TOLERANCE_PERCENT':
+        return live == expected
+    return isinstance(live, str) and re.fullmatch(TOLERANCE_PATTERN, live) is not None and Decimal(live) == Decimal(expected)
+
+
 def verify_evidence_assistant_environment(items, release, kind):
     """The live app holds exactly the release's settings: none it does not name, none on the web."""
     expected = evidence_assistant_environment(release) if kind == 'api' else {}
@@ -66,7 +73,7 @@ def verify_evidence_assistant_environment(items, release, kind):
     if len(actual) != len(expected) or {item['name'] for item in actual} != set(expected):
         raise SafeFailure('Unexpected, duplicate or missing evidence assistant environment settings.')
     for item in actual:
-        if item.get('value') != expected[item['name']]['value'] or item.get('secretRef') not in (None, ''):
+        if not same_setting(item['name'], item.get('value'), expected[item['name']]['value']) or item.get('secretRef') not in (None, ''):
             raise SafeFailure('Evidence assistant environment differs from the reviewed release.')
 
 
@@ -74,8 +81,10 @@ def live_evidence_assistant(env):
     """The release block from the live API's settings by name, or None when it holds neither.
 
     Refused when only one is held, when either is not a plain value, or when a
-    value is not in the form a release writes — a hand-set value is carried into
-    a binding only as a release would set it.
+    value is one the API would refuse at boot. A tolerance the API accepts in
+    another form (`1.10`, `100.0`) is carried as its number — the manifest, the
+    export and the API share one domain (`specs/qa-release-operations`; review
+    of PR B, fourth round).
     """
     present = EVIDENCE_ASSISTANT_ENV & set(env)
     if not present:
@@ -91,7 +100,6 @@ def live_evidence_assistant(env):
     if not isinstance(text, str) or not re.fullmatch(TOLERANCE_PATTERN, text):
         raise SafeFailure('Live evidence assistant tolerance is malformed.')
     number = Decimal(text)
+    # At most two decimals: the double nearest the text writes back as the same decimal.
     value = int(number) if number == number.to_integral_value() else float(text)
-    if tolerance_text(value) != text:
-        raise SafeFailure('Live evidence assistant tolerance is not in its release form.')
     return {'enabled': switch['value'] == 'on', 'tolerance_percent': value}

@@ -129,7 +129,7 @@ The evidence assistant's emergency switch and tolerance are an optional
 two decimals), plain values the API reads as `EVIDENCE_ASSISTANT` and
 `EVIDENCE_ASSISTANT_TOLERANCE_PERCENT`. Without it the API's defaults apply (on, 1%);
 `qa_autodeploy.py inputs` carries the live block into an exported manifest, and the
-readback holds the API to it exactly (runbook 03 §3.7).
+readback holds the API to it (the tolerance by value; runbook 03 §3.7).
 The SMTP role has only the [three documented authentication actions](https://learn.microsoft.com/azure/communication-services/quickstarts/email/send-email-smtp/smtp-authentication)
 and is assignable and assigned only on the hosted Communication resource, never the
 subscription or group. Azure supports [resource-instance assignable scopes](https://learn.microsoft.com/azure/role-based-access-control/role-definitions#assignablescopes);

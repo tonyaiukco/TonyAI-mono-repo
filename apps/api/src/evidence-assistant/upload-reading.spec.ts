@@ -154,6 +154,10 @@ describe('packageInvoices: one invoice in two files (architect review of PR B, P
     expect(packageInvoices(PO, [unsure, clean])).toEqual([clean]);
     expect(packageInvoices(PO, [clean, unsure])).toEqual([clean]);
     expect(packageInvoices(PO, [unsure])).toEqual([unsure]);
+    // Two read copies whose figures differ are both kept: the caller answers the manual check (fourth round).
+    const other = { ...clean, lines: clean.lines.map((l) => ({ ...l, litres: '999.00' })) };
+    expect(packageInvoices(PO, [clean, other])).toEqual([clean, other]);
+    expect(packageInvoices(PO, [clean, { ...clean }])).toEqual([clean]);
   });
 });
 

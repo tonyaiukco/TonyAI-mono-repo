@@ -655,9 +655,11 @@ export class EvidenceService {
             { sha256: extra.source.sha256, sourceSha256: null },
           ],
         }
-      : fuelBatchId !== null
+      : fuelBatchId !== null && checked.mimeType === 'application/pdf'
         ? // The same PDF stored whole twice — two uploads that both found the
           // reader busy — is one file too (review of PR B, second round, P2).
+          // PDFs only, the files the reader splits (D5): a photo or a sheet
+          // attached twice is stored twice, as before (fourth round).
           { subsidiaryId, ...onRecords, OR: [{ sourceSha256: checked.sha256 }, { sha256: checked.sha256, sourceSha256: null }] }
         : null;
     if (sameSource) {

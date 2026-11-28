@@ -172,9 +172,12 @@ describe('reading a PDF at a batch upload (task 7.1)', () => {
     await evidence.uploadForFuelBatch(user, batchId!, pdf(fixture('no-text.pdf')));
     const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64)]);
     await evidence.uploadForFuelBatch(user, batchId!, { ...pdf(jpeg, 'photo.jpg'), mimetype: 'image/jpeg' });
+    // The same photo again under another name is a file of its own, as before WP10: only PDFs are deduplicated (fourth round).
+    await evidence.uploadForFuelBatch(user, batchId!, { ...pdf(jpeg, 'photo-again.jpg'), mimetype: 'image/jpeg' });
     const files = await filesOf(batchId!);
     expect(files.map((f) => [f.mimeType, f.readings.map((r) => r.status)])).toEqual([
       ['application/pdf', ['no_text']],
+      ['image/jpeg', []],
       ['image/jpeg', []],
     ]);
   }, 60_000);

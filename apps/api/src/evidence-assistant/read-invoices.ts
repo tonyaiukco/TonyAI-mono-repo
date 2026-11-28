@@ -182,6 +182,7 @@ function words(row: Row): Array<{ from: number; to: number; x: number }> {
 }
 
 const INVOICE_LABEL = new RegExp(LABELS.invoiceNo.source, `${LABELS.invoiceNo.flags.replace('g', '')}g`);
+const QUANTITY_LABEL = new RegExp(LABELS.quantity.source, `${LABELS.quantity.flags.replace('g', '')}g`);
 
 function pageFacts(page: ReaderPage): PageFacts {
   const rows = rowsOf(page);
@@ -207,7 +208,10 @@ function pageFacts(page: ReaderPage): PageFacts {
     const mark = LABELS.page.exec(row.folded);
     if (mark && !pageMark) pageMark = { k: Number(mark[1]), n: Number(mark[2]) };
     const found = quantityHeader(row);
-    if (found) headers += 1;
+    // Every `Miktar (lt)` of the row counts: two tables printed side by side
+    // share a baseline, and their second column is not read (review of PR B,
+    // fourth round).
+    headers += [...row.folded.matchAll(QUANTITY_LABEL)].length;
     header ??= found;
   }
   return { rows, numbers, unknownHeader, pageMark, header, headers };
@@ -272,6 +276,10 @@ type Figures = { lines: ReadInvoiceLine[] } | { unread: 'unreadable' | 'unreadab
 /** The fuel rows of an invoice's pages: product and quantity from one table row only (D2, B13). */
 function readFigures(pages: PageFacts[]): Figures {
   let column: PageFacts['header'] = null;
+  // The column the invoice's first header sets: a page before it whose row
+  // puts a product left of that column and a figure in it may hold any
+  // product's row, a named fuel or not (review of PR B, fourth round).
+  const first = pages.find((p) => p.header !== null)?.header ?? null;
   const fuels = new Map<FileFuel, { names: string[]; litres: string[] }>();
   // A product the rule does not name is a line of its own per row, as printed (B12).
   const others: ReadInvoiceLine[] = [];
@@ -285,7 +293,7 @@ function readFigures(pages: PageFacts[]): Figures {
       // A page before the first header whose rows look like fuel rows: their
       // litres cannot be placed, so the invoice is not read rather than read
       // short (review of PR B, second round, P2).
-      if (page.rows.some(fuelShaped)) return { unread: 'unreadable' };
+      if (page.rows.some((row) => fuelShaped(row) || (first !== null && rowInColumn(row, first)))) return { unread: 'unreadable' };
       continue;
     }
     column = header;
@@ -374,6 +382,13 @@ function fuelShaped(row: Row): boolean {
   return words(row).some((w) => readQuantity({ column: 0, kind: 'text', value: slice(row, w.from, w.to) }) !== null && recogniseFuel(slice(row, 0, w.from)) !== null);
 }
 
+/** A product left of `column` and a figure in it: a row shaped like a table row of that column. */
+function rowInColumn(row: Row, column: NonNullable<PageFacts['header']>): boolean {
+  const all = words(row);
+  return all.some((w) => w.x < column.left) &&
+    all.some((w) => w.x >= column.left && w.x < column.right && readQuantity({ column: 0, kind: 'text', value: slice(row, w.from, w.to) }) !== null);
+}
+
 /**
  * Whether the invoice's printed page marks say a page of it is not here: a
  * page of it without a mark when another has one, a count that is not the
@@ -401,13 +416,7 @@ function mayHoldRows(facts: PageFacts[], own: number[], next: number): boolean {
     if (page.numbers.length > 0) return false;
     if (page.header) return true;
     if (!column) continue;
-    const rowShaped = page.rows.some((row) => {
-      const all = words(row);
-      const inColumn = all.filter((w) => w.x >= column.left && w.x < column.right);
-      const before = all.some((w) => w.x < column.left);
-      return before && inColumn.some((w) => readQuantity({ column: 0, kind: 'text', value: slice(row, w.from, w.to) }) !== null);
-    });
-    if (rowShaped) return true;
+    if (page.rows.some((row) => rowInColumn(row, column))) return true;
   }
   return false;
 }

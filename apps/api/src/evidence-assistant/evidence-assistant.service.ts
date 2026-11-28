@@ -23,7 +23,7 @@ import { EVIDENCE_BUCKET } from '../storage/buckets';
 import { compare, compareRecord, differences } from './compare';
 import { EvidenceAssistantRuntime } from './evidence-assistant-runtime';
 import { READER_VERSION, fold, isInvoiceSeries } from './invoice-layout';
-import { packageInvoices } from './package-invoice';
+import { collapseCopies, packageInvoices } from './package-invoice';
 import type { ReaderSession, TransientReason } from './pdf-reader.service';
 import { READER_LIMITS } from './reader-limits';
 import { readInvoices, type ReadInvoice } from './read-invoices';
@@ -178,15 +178,13 @@ export class EvidenceAssistantService {
     const found: Array<{ invoice: ReadInvoice; file: PackageFile }> = [];
     for (const file of files) for (const invoice of file.reading?.invoices ?? []) found.push({ invoice, file });
     const named = recordInvoiceNo(record.input);
-    // One invoice printed in two files is one; the copy that was read wins (as `packageInvoices`).
-    const byNumber = new Map<string, { invoice: ReadInvoice; file: PackageFile }>();
-    for (const entry of found) {
-      const key = fold(entry.invoice.invoiceNo.trim());
-      if (named !== null && key !== fold(named)) continue;
-      const held = byNumber.get(key);
-      if (!held || (held.invoice.unreadReason !== null && entry.invoice.unreadReason === null)) byNumber.set(key, entry);
-    }
-    const matches = [...byNumber.values()];
+    // Its number's copies, or every invoice when it names none; copies of one
+    // invoice are one, two read copies that differ are two (`collapseCopies`).
+    const copies = collapseCopies(named === null ? found : found.filter((f) => fold(f.invoice.invoiceNo.trim()) === fold(named)), (f) => f.invoice);
+    // With no number, the sole READ invoice is the record's (the spec's words):
+    // an invoice the reader could not read is no candidate beside a read one.
+    const read = copies.filter((f) => f.invoice.unreadReason === null);
+    const matches = named === null && read.length > 0 ? read : copies;
     if (matches.length > 1) return unread('several_matching_invoices');
     if (matches.length === 0) return unread(this.noMatchReason(files));
     const match = matches[0]!;
@@ -473,6 +471,10 @@ export class EvidenceAssistantService {
       const matches = packageInvoices({ source: batch.source, invoiceRef: ref }, invoices);
       if (matches.length !== 1 || matches[0]!.unreadReason) continue;
       const rows = await this.invoiceRows({ ...identity, invoiceRef: ref }, null);
+      // A neighbour shared by several accounts balances nothing: the rule holds
+      // only between invoices of one account, so both of a pair read the same
+      // (review of PR B, fourth round).
+      if (rows.accounts > 1) continue;
       out.push(differences(matches[0]!.lines, rows.litres));
     }
     return out;

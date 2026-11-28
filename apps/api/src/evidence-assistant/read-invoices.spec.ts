@@ -436,3 +436,19 @@ describe('readInvoices: the third review’s cases (review of PR B, third round)
     expect(result.invoices[0]).toMatchObject({ unreadReason: null, lines: [{ litres: '100.00' }] });
   });
 });
+
+describe('readInvoices: the fourth review’s cases (review of PR B, fourth round)', () => {
+  it('leaves an invoice unread when two quantity columns are printed side by side', () => {
+    const twin = page({ rows: [['Motorin Med', '100,00']], total: false });
+    twin.items.push(item('Ürün', 300, 620), item('Miktar (lt)', 420, 620), item('Motorin Med', 300, 600), item('50,00', 420, 600));
+    expect(readInvoices([twin]).invoices[0]).toMatchObject({ unreadReason: 'unreadable', lines: [] });
+  });
+
+  it('leaves it unread when a page before the first header holds an unnamed product’s row in that column', () => {
+    const result = readInvoices([
+      page({ header: null, rows: [['AdBlue', '50,00']], total: false, mark: 'Sayfa 1/2' }),
+      page({ rows: [['Motorin Med', '100,00']], mark: 'Sayfa 2/2' }),
+    ]);
+    expect(result.invoices[0]).toMatchObject({ unreadReason: 'unreadable', lines: [] });
+  });
+});

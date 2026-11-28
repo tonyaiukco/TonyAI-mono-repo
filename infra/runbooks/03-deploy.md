@@ -891,8 +891,9 @@ checkout of `main`, as for any owner release:
    suffix and `release` tag change; the images and secrets do not.
 4. `bash infra/scripts/deploy-apps.sh --backend <backend file> --inputs <new-manifest>`,
    then `--verify-only` once the outgoing revision has gone. The readback requires
-   both settings on the API exactly as released, as plain values, and none on the web
-   app; it fails on a setting the release does not name.
+   both settings on the API as released — the switch exactly, the tolerance as the same
+   number in any form the API accepts — as plain values, and none on the web app; it
+   fails on a setting the release does not name.
 5. **Proof.** The boot line, in the workspace's Logs view:
 
    ```kusto
@@ -924,6 +925,6 @@ fails on any assistant setting left on the API.
 
 Automatic deploys keep these settings: `deploy-qa.yml` changes image digests only,
 from the live template, and `qa_autodeploy.py inputs` reads the block back from the
-live API (refusing one setting without the other, a secret reference, or a value not
-in a release's form), so a manifest exported after this release names it and the
+live API (refusing one setting without the other, a secret reference, or a value the
+API would refuse; a tolerance written `1.10` is carried as 1.1), so a manifest exported after this release names it and the
 assistant stays as the owner left it.

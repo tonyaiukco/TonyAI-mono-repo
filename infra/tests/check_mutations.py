@@ -29,7 +29,7 @@ MUTANTS = [
     ('evidence assistant release validation skipped', 'terraform_run.py', "    validate_evidence_assistant(release)", '    pass'),
     ('evidence assistant tolerance range skipped', 'evidence_assistant_settings.py', "    if not re.fullmatch(TOLERANCE_PATTERN, text):", '    if False:'),
     ('evidence assistant switch type skipped', 'evidence_assistant_settings.py', "    if type(block['enabled']) is not bool:", '    if False:'),
-    ('evidence assistant live form accepted unchecked', 'evidence_assistant_settings.py', "    if tolerance_text(value) != text:", '    if False:'),
+    ('evidence assistant tolerance readback skipped', 'evidence_assistant_settings.py', "    return isinstance(live, str) and re.fullmatch(TOLERANCE_PATTERN, live) is not None and Decimal(live) == Decimal(expected)", '    return True'),
     ('live evidence assistant switch dropped from the export', 'qa_autodeploy.py', "        release['evidence_assistant'] = assistant", '        pass'),
     ('mail password validation skipped', 'mail_settings.py', "    if not isinstance(value, str) or not value.strip() or '\\n' in value or '\\r' in value:", '    if False:'),
     ('completed auth reconciliation skipped', 'supabase_setup.py', '        if reconcile_only:', '        if False:'),
