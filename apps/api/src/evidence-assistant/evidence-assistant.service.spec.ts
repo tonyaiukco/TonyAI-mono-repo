@@ -297,6 +297,12 @@ describe('forRecord: copies and candidates (review of PR B, fourth round)', () =
     }
   });
 
+  it('compares one invoice printed in two files with another precision or name order', async () => {
+    const named = (names: string, litres: string) => ({ ...invoice('OZK0000000000001', litres), lines: [{ product: names, fuel: 'diesel', litres }] });
+    const { svc } = service({ record: base, files: [file('a', [named('Motorin Med + Motorin Ultimate', '1200.0')]), file('b', [named('Motorin Ultimate + Motorin Med', '1200.00')])] });
+    expect(await svc.forRecord(superAdmin, base.id)).toMatchObject({ lines: [{ state: 'consistent' }] });
+  });
+
   it('compares one invoice printed identically in two files', async () => {
     const { svc } = service({ record: base, files: [file('a', [invoice('OZK0000000000001', '1200.00')]), file('b', [invoice('ozk0000000000001', '1200.00')])] });
     expect(await svc.forRecord(superAdmin, base.id)).toMatchObject({ lines: [{ state: 'consistent' }] });

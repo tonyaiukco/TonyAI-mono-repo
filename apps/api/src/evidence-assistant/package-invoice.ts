@@ -1,3 +1,4 @@
+import { Prisma } from '@tonyai/db';
 import { parseShellInvoiceRef } from '@tonyai/shared-types';
 import { fold } from './invoice-layout';
 import type { ReadInvoice } from './read-invoices';
@@ -19,8 +20,18 @@ export function shellHalfMonthDates(ref: string): { from: string; to: string } |
   return parsed.half === 1 ? { from: `${ym}-01`, to: `${ym}-15` } : { from: `${ym}-16`, to: `${ym}-${pad2(last)}` };
 }
 
-/** The figures of a read copy, in a form two copies compare by (order aside). */
-const figures = (inv: ReadInvoice) => JSON.stringify(inv.lines.map((l) => [l.product, l.fuel, l.litres]).sort());
+/**
+ * The figures of a read copy, in the form two copies compare by: each fuel's
+ * total by its exact value (`100.0` and `100.00` are one figure), whatever the
+ * order its product names were printed in; each other product's line by its
+ * folded name and exact value; order aside (review of PR B, fifth round).
+ */
+const figures = (inv: ReadInvoice) =>
+  JSON.stringify(
+    inv.lines
+      .map((l) => [l.fuel ?? `other:${fold(l.product.trim())}`, new Prisma.Decimal(l.litres).toString()])
+      .sort((a, b) => (a.join('|') < b.join('|') ? -1 : a.join('|') > b.join('|') ? 1 : 0)),
+  );
 
 /**
  * One entry per invoice number (trimmed, case-folded): copies of one invoice in

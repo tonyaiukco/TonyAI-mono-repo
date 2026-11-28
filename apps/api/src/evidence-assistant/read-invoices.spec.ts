@@ -452,3 +452,25 @@ describe('readInvoices: the fourth review’s cases (review of PR B, fourth roun
     expect(result.invoices[0]).toMatchObject({ unreadReason: 'unreadable', lines: [] });
   });
 });
+
+describe('readInvoices: the fifth review’s cases (review of PR B, fifth round)', () => {
+  it('does not add two full copies of one invoice in one PDF: unmarked pages of one number are not read', () => {
+    const copy = () => page({ no: 'OZK0000000000001', rows: [['Motorin Med', '100,00']] });
+    const result = readInvoices([copy(), copy(), page({ no: 'OZK0000000000002' })]);
+    expect(result.invoices[0]).toMatchObject({ invoiceNo: 'OZK0000000000001', pageFrom: 1, pageTo: 2, unreadReason: 'unreadable', lines: [] });
+    // Its pages are its own: the document may still be split.
+    expect(result.routable).toBe(true);
+  });
+
+  it('leaves it unread when a fuel row sits above the first page’s header in its column', () => {
+    const above = page({ rows: [['Motorin Med', '100,00']] });
+    above.items.push(item('Motorin Med', 40, 640), item('50,00', 260, 640));
+    expect(readInvoices([above]).invoices[0]).toMatchObject({ unreadReason: 'unreadable', lines: [] });
+  });
+
+  it('still reads a first page whose facts above the header hold numbers but no fuel row', () => {
+    const facts = page({ rows: [['Motorin Med', '100,00']] });
+    facts.items.push(item('Plaka sayısı', 40, 640), item('12', 260, 640));
+    expect(readInvoices([facts]).invoices[0]).toMatchObject({ unreadReason: null, lines: [{ litres: '100.00' }] });
+  });
+});

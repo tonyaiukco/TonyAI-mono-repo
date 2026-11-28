@@ -305,6 +305,10 @@ function readFigures(pages: PageFacts[]): Figures {
         if (index > 0 && words(row).some((w) => w.x >= header.left && w.x < header.right && readQuantity({ column: 0, kind: 'text', value: slice(row, w.from, w.to) }) !== null)) {
           return { unread: 'unreadable' };
         }
+        // Above the first page's header only the invoice's own facts are
+        // expected; a fuel's row there, in the header's column, is a row the
+        // table does not reach (review of PR B, fifth round).
+        if (index === 0 && header.y !== Infinity && rowInColumn(row, header) && fuelShaped(row)) return { unread: 'unreadable' };
         continue;
       }
       // Product and quantity by word: a word left of the column is the
@@ -478,6 +482,12 @@ export function readInvoices(pages: ReaderPage[]): ReadInvoicesResult {
     const next = own.length > 0 ? own[own.length - 1]! + 1 : -1;
     const spill = next >= 0 && next < facts.length && pageOwner[next] === null && mayHoldRows(facts, own, next);
     if (!isContiguous) contiguous = false;
+    // Several pages of one number with no page mark at all: a continuation
+    // cannot be told from a second full copy of the invoice, whose rows would
+    // be added twice (review of PR B, fifth round).
+    // Its pages are still its own (each prints its number), so the document may
+    // still be split; only its figures are not read.
+    const unmarked = own.length > 1 && own.every((i) => facts[i]!.pageMark === null);
     const broken = own.length > 0 && sequenceBroken(facts, own);
     if (broken) complete = false;
     const series = invoiceNo.slice(0, 3);
@@ -489,7 +499,7 @@ export function readInvoices(pages: ReaderPage[]): ReadInvoicesResult {
     };
     const details = readDetails(own.map((i) => facts[i]!));
     if (!isInvoiceSeries(series)) return { ...base, ...details, unreadReason: 'unknown_series', lines: [] };
-    if (!isContiguous || onAmbiguousPage || spill || broken) return { ...base, ...details, unreadReason: 'unreadable', lines: [] };
+    if (!isContiguous || onAmbiguousPage || spill || broken || unmarked) return { ...base, ...details, unreadReason: 'unreadable', lines: [] };
     const figures = readFigures(own.map((i) => facts[i]!));
     if ('unread' in figures) return { ...base, ...details, unreadReason: figures.unread, lines: [] };
     return { ...base, ...details, unreadReason: null, lines: figures.lines };

@@ -158,6 +158,9 @@ describe('packageInvoices: one invoice in two files (architect review of PR B, P
     const other = { ...clean, lines: clean.lines.map((l) => ({ ...l, litres: '999.00' })) };
     expect(packageInvoices(PO, [clean, other])).toEqual([clean, other]);
     expect(packageInvoices(PO, [clean, { ...clean }])).toEqual([clean]);
+    // The same figures printed with another precision, or fuel names in another order, are one copy (fifth round).
+    const precise = { ...clean, lines: clean.lines.map((l) => ({ ...l, litres: `${l.litres}0`, product: `${l.product} ` })) };
+    expect(packageInvoices(PO, [clean, precise])).toEqual([clean]);
   });
 });
 
